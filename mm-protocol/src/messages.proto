@@ -1,0 +1,845 @@
+// Copyright 2024 Colin Marc <hi@colinmarc.com>
+//
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+import "google/protobuf/timestamp.proto";
+
+package messages;
+
+// # The Magic Mirror Streaming Protocol (MMSP)
+//
+// This document describes a protocol for remote application streaming. Using
+// this protocol, a client can remotely launch and/or attach an application on a
+// server accessible only via network connection and display the output locally,
+// while sending input commands.
+//
+// ## Differences to traditional remote desktop protocols
+//
+// Individual sessions in the protocol concern applications, rather than desktop
+// environments. Although not part of the protocol itself, server
+// implementations are expected to render applications offscreen, rather than
+// displaying a central, shared desktop either in whole or part. This allows
+// multiple sessions to coexist without interfering with each other.
+//
+// Following from this, session parameters such as framerate and resolution are
+// set by the client, not the server.
+//
+// Note that nothing stops a session from containing an entire desktop
+// environment. The protocol makes no general distinction between desktop
+// environments and other applications, such as GPU-accelerated games. It does,
+// however, provide some built-in support for client-side cursor and
+// wireframe rendering, as well as clipboard operations, in order to improve the
+// remote desktop experience should the server and desktop support it. TODO: no
+// wireframe or clipboard support yet
+//
+// ## Protocol basics
+//
+// At a high level, the protocol consists of messages passed bidirectionally
+// over a QUIC connection.
+//
+// TODO NPN details
+//
+// A message is an arbitrary-length byte blob, beginning with two unsigned
+// varints. The first varint holds the total length of the rest of the message,
+// including the bytes required to hold the next varint. The second is a message
+// type. The remaining bytes are a protobuf-encoded message matching the message
+// type and this specification.
+//
+//     [ 1-5(A) bytes: prefixed length (N) ]
+//       [ 1-5(B) bytes: message type ]
+//       [ N - B bytes, protobuf-encoded ]
+//     [ max(0, 10 - N - A) bytes, padding ]
+//
+// The total length of a message must not exceed 1MiB (1048576 bytes), and the
+// message type must fit in an unsigned 32-bit integer. Neither value may be
+// zero. Therefore, the minimum size for each varint is 1 byte, and the maximum
+// is 5 bytes. The length of the message itself may be zero bytes, if the
+// message type has no required fields. However, if a message would be less than
+// 10 bytes, it should be padded with zeroes to ten bytes before being written
+// to the stream. The length N should not include those bytes.
+//
+// The protocol generally uses a single QUIC bidirectional stream for each
+// session attachment, and describes in the documentation for each message type
+// which stream it should use. The protocol also optionally makes use of the
+// [QUIC DATAGRAM extension][quic_datagram] extension, in particular for video
+// and audio frames. In the case that a message is sent in a datagram frame, the
+// max length must not exceed QUIC's maximum datagram size.
+//
+// QUIC streams are, by their nature, ordered, so messages sent in sequence in a
+// stream may be considered ordered. However, client and server messages are not
+// considered ordered with respect to each other, and messages sent as datagrams
+// are not inherently considered ordered with respect to any stream messages.
+// Where ordering is important, the protocol includes hints for the client and
+// server.
+//
+// Unless specified in the documentation below, all message fields are optional,
+// and their absence (in the form of empty values) should be handled gracefully
+// by the receiver. A field marked as required may not be empty.
+//
+// TODO extensions?
+//
+// # Message types
+//
+// ## Common types
+//
+// Some protobuf messages are reused in multiple messages below.
+
+// ### Size, Extent
+//
+// A `Size` is a width, height tuple, mainly used to describe areas. An `Extent`
+// includes a starting position. The coordinate space depends on where these
+// structs are used, but should always be oriented with [0, 0] in the top left
+// position.
+message Size {
+  uint32 width = 1;  // Required.
+  uint32 height = 2; // Required.
+}
+
+message Extent {
+  uint32 x = 1;
+  uint32 y = 2;
+  uint32 width = 3;  // Required.
+  uint32 height = 4; // Required.
+}
+
+// ### Pixel Scale
+//
+// Represents a rational number, used in the context of HiDPI displays.
+// Fractions less than one are not allowed. For example, a pixel density of 1.5
+// would be represented as 3/2.
+message PixelScale {
+  uint32 numerator = 1;   // Required.
+  uint32 denominator = 2; // Required.
+}
+
+// ### Virtual Output Params
+//
+// Represents the configuration of a virtual display, which is required to
+// launch a session.
+message VirtualDisplayParameters {
+  Size resolution = 1;     // Required.
+  uint32 framerate_hz = 3; // Required.
+  PixelScale ui_scale = 2; // Required.
+}
+
+// ### Attachment type
+//
+// This enum refers to the manner of attachment.
+enum AttachmentType {
+  ATTACHMENT_TYPE_UNKNOWN = 0;
+  ATTACHMENT_TYPE_OPERATOR = 1;
+  ATTACHMENT_TYPE_VIEWER = 2;
+}
+
+// ### Video codec
+//
+// This enum refers to the codec used for a video stream.
+enum VideoCodec {
+  VIDEO_CODEC_UNKNOWN = 0;
+  VIDEO_CODEC_H264 = 1;
+  VIDEO_CODEC_H265 = 2;
+  VIDEO_CODEC_AV1 = 3;
+}
+
+// ### Audio codec
+//
+// This enum refers to the codec used for an audio stream.
+enum AudioCodec {
+  AUDIO_CODEC_UNKNOWN = 0;
+  AUDIO_CODEC_OPUS = 1;
+}
+
+// ### Audio channels
+//
+// This defines a map of channels to speaker positions.
+message AudioChannels {
+  enum Channel {
+    CHANNEL_MONO = 0;
+    CHANNEL_FRONT_LEFT = 1;
+    CHANNEL_FRONT_RIGHT = 2;
+    CHANNEL_FRONT_CENTER = 3;
+    CHANNEL_REAR_CENTER = 4;
+    CHANNEL_REAR_LEFT = 5;
+    CHANNEL_REAR_RIGHT = 6;
+    CHANNEL_LFE = 7;
+    CHANNEL_FRONT_LEFT_OF_CENTER = 8;
+    CHANNEL_FRONT_RIGHT_OF_CENTER = 9;
+    CHANNEL_SIDE_LEFT = 10;
+    CHANNEL_SIDE_RIGHT = 11;
+  }
+
+  repeated Channel channels = 1;
+}
+
+// ## Errors and exceptions
+
+// ### 001 - Error
+//
+// This message may be sent by a server or client at any time on any stream.
+message Error {
+  enum ErrorCode {
+    ERROR_UNKNOWN = 0;
+    // Used to indicate an unrecoverable error on the server.
+    ERROR_SERVER = 10;
+    // Used to indicate a protocol violation.
+    ERROR_PROTOCOL = 20;
+    ERROR_PROTOCOL_UNEXPECTED_MESSAGE = 21;
+    ERROR_PROTOCOL_INCORRECT_STREAM = 22;
+    ERROR_PROTOCOL_UKNOWN_MESSAGE_TYPE = 23;
+    // Used to indicate that the server refuses to launch a session.
+    ERROR_SESSION_LAUNCH_FAILED = 30;
+    ERROR_SESSION_LAUNCH_REFUSED = 31;
+    // Used to indicate the session update couldn't be applied.
+    ERROR_SESSION_UPDATE_FAILED = 32;
+    // Used to indicate that the server refuses to allow the client to attach
+    // to the session.
+    ERROR_ATTACHMENT_REFUSED = 40;
+    ERROR_ATTACHMENT_PARAMS_NOT_SUPPORTED = 41;
+    // Used to indicate that the session has ended.
+    ERROR_SESSION_ENDED = 50;
+    ERROR_SESSION_ENDED_BY_CLIENT = 51;
+    ERROR_SESSION_ENDED_APPLICATION_EXIT = 52;
+    // Used for several session operations.
+    ERROR_SESSION_NOT_FOUND = 60;
+    ERROR_SESSION_INVALID_STATE = 61;
+    ERROR_SESSION_PARAMS_NOT_SUPPORTED = 62;
+    // Used to indicate a failed authentication attempt or ignored challenge.
+    ERROR_AUTHENTICATION_FAILED = 100;
+    // Used to indicate missing or insufficient credentials on another request.
+    ERROR_NOT_ALLOWED = 101;
+  }
+
+  ErrorCode err_code = 1; // Required.
+  string error_text = 3;
+}
+
+// ## Sessions and attachments
+//
+// A session represents a running application on the server. Creating a session
+// launches the application in the background. After the client *attaches* to
+// the session, then and only then must the server start sending video and audio
+// frames. These frames may either be on the attachment stream or sent
+// separately as QUIC datagrams.
+//
+// If supported by the server and application, sessions may have multiple
+// attachments, grouped into "operators" and "viewers".
+//
+// ### Render vs. streaming resolution
+//
+// Sessions are defined by a render resolution (with framerate and scale,
+// collectively referred to as the virtual display parameters), while individual
+// attachments are defined by a streaming resolution. The former results in the
+// resolution of the output texture the application renders to, while the latter
+// refers to the dimensions of the compressed video stream.
+//
+// Servers must support streaming at the exact render resolution, but they may
+// also optionally support different render and streaming resolutions. The most
+// common use case for this would be to render at a "super resolution", ie an
+// integer multiple of the streaming resolution, to improve quality in
+// environments with limited bandwidth, or to support "preview" attachments
+// which stream at a very low resolution.
+//
+// Servers must either obey the requested render resolution or reject the
+// corresponding `013 - Launch Session` or `015 - Update Session` message with
+// an error. Similarly, servers must either obey the requested streaming
+// resolution or reject the corresponding `030 - Attach` message.
+//
+// Servers must always emit encoded frames at the virtual display framerate.
+
+// ### Resolution changes
+//
+// Servers may choose to update the render resolution of a session at any time,
+// for example at the request of a client, or in the case that an app requests a
+// new resolution. Servers must inform existing attachments of the new
+// resolution using the `033 - Session Parameters Changed` message.
+// Additionally, if the streaming resolution of existing attachments is no
+// longer compatible with the new resolution, the server may indicate that in
+// the message.
+//
+// ### HiDPI passthrough
+//
+// Clients on screens with a pixel density higher than one may inform the server
+// at session creation time, or request a change to an existing session with
+// `015 - Update Session`. In any case, the render resolution specified is still
+// the final resolution, not the "logical" resolution. For example, a client
+// requesting a `render_resolution` of 2560x1600 with a UI scale of 2 would
+// still result in a render resolution of 2560x1600; the UI scale should be
+// passed as a hint to the application in whatever platform-specific way makes
+// sense. This is important because many applications are able to automatically
+// scale UI elements or make other user-experience improvements subject to UI
+// scale.
+//
+// ### Concurrent attachments
+//
+// Servers may support multiple concurrent attachments from different clients,
+// for example to support secondary "viewer" attachments. If the parameters of
+// the attachments differ, the server may choose to encode multiple streams at
+// different resolutions, or it may simply choose one (the operator's attachment
+// parameters should take precedence) and use that for all attachments.
+
+// TODO: attachments should probably be distinct for audio and video, so that
+// reattaching doesn't cause audio to skip
+
+// ### 011 - List Applications
+//
+// This message, which must originate from the client on a new stream, requests
+// a list of available applications to launch as sessions. The server must
+// either respond with an `012 - Application List` message or an `01 - Error`
+// message on the same stream.
+message ListApplications {}
+
+// ### 012 - Application List
+//
+// This message, which must originate from the server on the same stream as a
+// corresponding `11 - List Applications` message, indicates the list of
+// available applications to launch as sessions.
+message ApplicationList {
+  message Application {
+    string name = 1; // Required.
+    string description = 2;
+  }
+
+  repeated Application list = 1;
+}
+
+// ### 013 - Launch Session
+//
+// This message, which must originate from the client on a new stream, requests
+// that the server launch the application specified by `name`. The name should
+// match the name of an application returned by `012 - Application List`.
+//
+// Unless `server_side_cursor_enabled` is true, the server should avoid
+// rendering a cursor in the stream if possible.
+//
+// The server must either launch a session, replying with `014 - Session
+// Launched` once the session has started and is available to attach, or send an
+// `001 - Error` message on the same stream indicating why it refuses to do so.
+message LaunchSession {
+  // Required; must match the name of an application returned in "12 -
+  // Application List".
+  string application_name = 1;
+
+  VirtualDisplayParameters display_params = 10; // Required.
+
+  bool server_side_cursor_enabled = 20;
+}
+
+// ### 014 - Session Launched
+//
+// This message, which must originate from the server on the same stream as the
+// corresponding `013 - Launch Session` message, indicates that the session has
+// successfully launched and may be attached.
+message SessionLaunched {
+  uint64 id = 1; // Required.
+
+  // Required. Must include at least the `render_resolution` specified in the
+  // corresponding `013 - Launch Session` message.
+  repeated Size supported_streaming_resolutions = 10;
+
+  // TODO supported_sample_rate?
+}
+
+// ### 015 - Update Session
+//
+// This message, which must originate from the client on a new stream, requests
+// that the server update the parameters of a running session. An ommitted value
+// indicates that the existing setting should remain. The server must respond
+// with either `016 - Session Updated` or `001 - Error` on the same stream.
+message UpdateSession {
+  uint64 session_id = 1; // Required.
+
+  VirtualDisplayParameters display_params = 10;
+
+  // TODO: dynamic conf
+}
+
+// ### 016 - Session Updated
+//
+// This message, which must originate from the server on the same stream as the
+// corresponding `015 - Update Session` message, indicates that the requested
+// update was successfully applied.
+message SessionUpdated {}
+
+// ### 017 - List Sessions
+//
+// This message, which must originate from the client on a new stream, requests
+// a list of attachable sessions. The server must respond with either `018 -
+// Session List` or an `01 - Error` on the same stream.
+message ListSessions {}
+
+// ### 018 - Session List
+//
+// This message, which must originate from the server on the same stream as the
+// corresponding `017 - List Sessions` request, indicates a list of attachable
+// sessions to the client.
+message SessionList {
+  message Session {
+    uint64 session_id = 1;                       // Required.
+    string application_name = 2;                 // Required.
+    google.protobuf.Timestamp session_start = 3; // Required.
+
+    VirtualDisplayParameters display_params = 10; // Required.
+
+    // Required. Must include at least the `render_resolution` of the session.
+    repeated Size supported_streaming_resolutions = 13;
+
+    // TODO attachable type?
+    // TODO existing attachments?
+  }
+
+  repeated Session list = 1;
+}
+
+// ### 019 - End Session
+//
+// This message, which must originate from the client on a new stream, requests
+// that the server end the named session and detach all clients.
+//
+// If a server chooses to comply, it should send `001 - Error` messages to all
+// other attached clients (with ERR_SESSION_ENDED_BY_CLIENT), and an `022 -
+// Session Ended` message on this stream. Otherwise, it should send an `001 -
+// Error` message on this stream.
+message EndSession {
+  uint64 session_id = 1; // Required.
+}
+
+// ### 020 - Session Ended.
+//
+// This message, which must originate from the server on the same stream as the
+// corresponding `201 - End Session` message was sent, confirms that the session
+// has been ended.
+message SessionEnded {}
+
+// ### 030 - Attach
+//
+// This message, which must originate from the client on a new stream, requests
+// that the server attach the client to the named session. Upon receipt of this
+// request, the server must either refuse the attachment with an `001 - Error`
+// message, or send an `031 - Attached` message on the same stream and start
+// sending video and audio packets to the client.
+//
+// Ommitted fields indicate that the server should choose the parameters.
+//
+// The server may choose to reject the attachment for any reason, including but
+// not limited to:
+//
+//  - The output parameters, such as resolution or codec, are invalid or not
+//    supported.
+//  - The server already has a client attached to that session, and wishes to
+//    limit the number of attachments (or doesn't support multiple attachments).
+//  - The authentication so far provided doesn't grant the client access to that
+//    session with that attachment type.
+message Attach {
+  uint64 session_id = 1;              // Required.
+  AttachmentType attachment_type = 2; // Required.
+  string client_name = 3;
+
+  VideoCodec video_codec = 10;
+  Size streaming_resolution = 11;
+
+  AudioCodec audio_codec = 15;
+  AudioChannels channels = 16;
+  uint32 sample_rate_hz = 17;
+
+  bool server_side_cursor_enabled = 21;
+}
+
+// ### 031 - Attached
+//
+// This message, which must originate from the server on the same stream as the
+// original `030 - Attach` message, indicates that the
+// server accepts the client and will begin streaming with the client's
+// requested parameters. The parameters must match the parameters sent in the
+// original `030 - Attach` message, or represent the server-chosen default if
+// they were ommitted.
+message Attached {
+  uint64 session_id = 1;    // Required.
+  uint64 attachment_id = 2; // Required.
+
+  VideoCodec video_codec = 10;    // Required.
+  Size streaming_resolution = 11; // Required.
+
+  AudioCodec audio_codec = 15; // Required.
+  AudioChannels channels = 16; // Required.
+  uint32 sample_rate_hz = 17;  // Required.
+}
+
+// ### 032 - Keep Alive
+//
+// This message, which must originate from the client on the stream where the
+// original `030 - Attach` message was sent, indicates that the client
+// is still attached. The server may take the absence of a regular `Keep Alive`
+// message to indicate that the client has gone away should be considered
+// detached.
+message KeepAlive {}
+
+// ### 033 - Session Parameters Changed
+//
+// This message, which must originate from the server on the same stream as the
+// original `030 - Attach` message, indicates that the parameters of the
+// attached session have changed. If `reattach_required` is set to true, the
+// client should consider the attachment to be ended and reattach with new
+// parameters.
+message SessionParametersChanged {
+  bool reattach_required = 1;
+
+  VirtualDisplayParameters display_params = 10;
+
+  // Required. Must include at least the `render_resolution` of the session.
+  repeated Size supported_streaming_resolutions = 13;
+}
+
+// ### 035 - Detach
+//
+// This message, which must originate from the client on the stream where the
+// original `030 - Attach` message was sent, indicates that the client
+// wishes to detach and end streaming. Upon receipt of this message, the server
+// must stop streaming frames or accepting input on the attachment stream.
+message Detach {}
+
+// ## Output
+//
+// This section pertains to the application output, streamed from server to
+// client.
+//
+// Output packets, whether audio or video, are always part of a session, an
+// attachment, and a stream. A session may have multiple attachments, and an
+// attachment may periodically restart its audio or video stream, resulting in a
+// new stream. As packets may be too large to send in one datagram, they may be
+// chunked by the server. Therefore, a fourth identifier, a packet sequence
+// number, is used to group chunks in a sequence of potentially unordered
+// datagrams.
+//
+// All four identifiers (session, attachment, stream, and packet) should be
+// considered opaque to the client. However, the stream and packet sequence
+// numbers should only increase monotonically as new packets and new streams are
+// created. See the section below for more detail.
+//
+// The contents of each packet are opaque, and depend on the codec being used.
+//
+// Servers should only send packets for one video and one audio stream for one
+// attachment at a time.
+//
+// ### Datagram support
+//
+// If both server and client support the QUIC Datagram extension (RFC 9221),
+// then output packets should be sent as datagrams. If either client or server
+// do not support datagrams, the chunks must be sent on the same stream as the
+// original `030 - Attach` message was sent.
+//
+// Since datagrams are not associated with any particular QUIC stream, the
+// `session_id` and `attachment_id` fields of the below messages may be
+// necessary to disambiguate received chunks. However, to reduce overhead, a
+// server may omit both fields if sending chunks on the original attachment
+// stream, rather than as datagrams.
+//
+// ### Multiple attachments
+//
+// To determine video stream parameters in the case of multiple concurrent
+// attachments to the same session, operator streams should take precedence.
+//
+// ### Video compression
+//
+// The following apply to all supported video codecs:
+//
+//  - The server must tag the video bitstream with resolution, framerate, and
+//    YCbCr color space/range using whatever mechanism is supported by the codec
+//    (for example, PPS frames in H.264). Clients should use this information to
+//    verify that the parameters match the requested attachment parameters.
+//  - The server must use YCbCr 4:2:0 chroma subsampling for the compressed
+//    stream (this is sometimes called YUV420P, and is the default for most
+//    implementations of H264, H265, and AV1).
+//  - The server may reuse an existing compression context for a new attachment,
+//    but in this case the stream must be resumable by the client within a
+//    reasonable time frame. For H.265, for example, this means sending PPS
+//    frames with every keyframe, and keyframes every few seconds.
+//
+// ### Audio compression
+//
+// The following apply to all supported audio codecs:
+//
+// - The server must use a 10ms or smaller packet size.
+// - Audio streams must use a sample rate of between 16kHz and 48kHz.
+
+// ### 051 - Video Chunk
+//
+// This message, which must originate from the server as a datagram or on the
+// same stream as the original `030 - Attach` message, contains a part of a
+// video packet.
+message VideoChunk {
+  // Required unless sent on the same stream as the original attach message.
+  uint64 session_id = 1;
+  uint64 attachment_id = 2;
+
+  // Required. Represents the ordering of packets in a stream and the
+  // association of packets to a video stream.
+  uint64 stream_seq = 10;
+  uint64 seq = 11;
+
+  // Required. Taken together, these represent the placement of a chunk
+  // within a packet.
+  uint32 chunk = 12;
+  uint32 num_chunks = 13;
+
+  // TODO FEC
+
+  // Required. A millisecond timestamp with an arbitrary epoch, used to
+  // synchronize audio and video streams.
+  uint64 timestamp = 20;
+
+  bytes data = 99;
+}
+
+// ### 056 - Audio Chunk
+//
+// This message, which must originate from the server as a datagram or on the
+// same stream as the original `030 - Attach` message, contains a part of an
+// audio packet.
+message AudioChunk {
+  // Required unless sent on the same stream as the original attach message.
+  uint64 session_id = 1;
+  uint64 attachment_id = 2;
+
+  // Required. Represents the ordering of packets in a stream and the
+  // association of packets to an audio stream.
+  uint64 stream_seq = 10;
+  uint64 seq = 11;
+
+  // Required. Taken together, these represent the placement of a chunk
+  // within a packet.
+  uint32 chunk = 12;
+  uint32 num_chunks = 13;
+
+  // TODO FEC
+
+  // Required. A millisecond timestamp with an arbitrary epoch, used to
+  // synchronize audio and video streams.
+  uint64 timestamp = 20;
+
+  bytes data = 99;
+}
+
+// ## Input
+//
+// TODO
+
+// ### 060 - Keyboard Input
+//
+// This message, which must be sent by the client on the same stream as the
+// original `030 - Attach` message, represents keybaord input from the user.
+message KeyboardInput {
+  enum KeyState {
+    KEY_STATE_UNKNOWN = 0;
+    KEY_STATE_PRESSED = 1;
+    KEY_STATE_REPEAT = 2;
+    KEY_STATE_RELEASED = 3;
+  }
+
+  // These map to the keycodes from the W3C "UI Events" specification. It
+  // represents the key location, irrespective of keyboard layout or character
+  // output.
+  //
+  // Media and remote control keys are omitted.
+  //
+  // https://w3c.github.io/uievents-code/#code-value-tables
+  enum Key {
+    KEY_UNKNOWN = 0;
+    KEY_BACKQUOTE = 1;
+    KEY_BACKSLASH = 2;
+    KEY_BRACKET_LEFT = 3;
+    KEY_BRACKET_RIGHT = 4;
+    KEY_COMMA = 5;
+    KEY_DIGIT_0 = 10;
+    KEY_DIGIT_1 = 11;
+    KEY_DIGIT_2 = 12;
+    KEY_DIGIT_3 = 13;
+    KEY_DIGIT_4 = 14;
+    KEY_DIGIT_5 = 15;
+    KEY_DIGIT_6 = 16;
+    KEY_DIGIT_7 = 17;
+    KEY_DIGIT_8 = 18;
+    KEY_DIGIT_9 = 19;
+    KEY_EQUAL = 20;
+    KEY_INTL_BACKSLASH = 21;
+    KEY_INTL_RO = 22;
+    KEY_INTL_YEN = 23;
+    KEY_A = 30;
+    KEY_B = 31;
+    KEY_C = 32;
+    KEY_D = 33;
+    KEY_E = 34;
+    KEY_F = 35;
+    KEY_G = 36;
+    KEY_H = 37;
+    KEY_I = 38;
+    KEY_J = 39;
+    KEY_K = 40;
+    KEY_L = 41;
+    KEY_M = 42;
+    KEY_N = 43;
+    KEY_O = 44;
+    KEY_P = 45;
+    KEY_Q = 46;
+    KEY_R = 47;
+    KEY_S = 48;
+    KEY_T = 49;
+    KEY_U = 50;
+    KEY_V = 51;
+    KEY_W = 52;
+    KEY_X = 53;
+    KEY_Y = 54;
+    KEY_Z = 55;
+    KEY_MINUS = 60;
+    KEY_PERIOD = 61;
+    KEY_QUOTE = 62;
+    KEY_SEMICOLON = 63;
+    KEY_SLASH = 64;
+    KEY_ALT_LEFT = 65;
+    KEY_ALT_RIGHT = 66;
+    KEY_BACKSPACE = 67;
+    KEY_CAPS_LOCK = 68;
+    KEY_CONTEXT_MENU = 69;
+    KEY_CONTROL_LEFT = 70;
+    KEY_CONTROL_RIGHT = 71;
+    KEY_ENTER = 72;
+    KEY_META_LEFT = 73;
+    KEY_META_RIGHT = 74;
+    KEY_SHIFT_LEFT = 75;
+    KEY_SHIFT_RIGHT = 76;
+    KEY_SPACE = 77;
+    KEY_TAB = 78;
+    KEY_CONVERT = 79;
+    KEY_KANA_MODE = 80;
+    KEY_LANG_1 = 81;
+    KEY_LANG_2 = 82;
+    KEY_LANG_3 = 83;
+    KEY_LANG_4 = 84;
+    KEY_LANG_5 = 85;
+    KEY_NON_CONVERT = 86;
+    KEY_DELETE = 87;
+    KEY_END = 88;
+    KEY_HELP = 89;
+    KEY_HOME = 90;
+    KEY_INSERT = 91;
+    KEY_PAGE_DOWN = 92;
+    KEY_PAGE_UP = 93;
+    KEY_ARROW_DOWN = 94;
+    KEY_ARROW_LEFT = 95;
+    KEY_ARROW_RIGHT = 96;
+    KEY_ARROW_UP = 97;
+    KEY_NUM_LOCK = 100;
+    KEY_NUMPAD_0 = 101;
+    KEY_NUMPAD_1 = 102;
+    KEY_NUMPAD_2 = 103;
+    KEY_NUMPAD_3 = 104;
+    KEY_NUMPAD_4 = 105;
+    KEY_NUMPAD_5 = 106;
+    KEY_NUMPAD_6 = 107;
+    KEY_NUMPAD_7 = 108;
+    KEY_NUMPAD_8 = 109;
+    KEY_NUMPAD_9 = 110;
+    KEY_NUMPAD_ADD = 111;
+    KEY_NUMPAD_BACKSPACE = 112;
+    KEY_NUMPAD_CLEAR = 113;
+    KEY_NUMPAD_CLEAR_ENTRY = 114;
+    KEY_NUMPAD_COMMA = 115;
+    KEY_NUMPAD_DECIMAL = 116;
+    KEY_NUMPAD_DIVIDE = 117;
+    KEY_NUMPAD_ENTER = 118;
+    KEY_NUMPAD_EQUAL = 119;
+    KEY_NUMPAD_HASH = 120;
+    KEY_NUMPAD_MEMORY_ADD = 121;
+    KEY_NUMPAD_MEMORY_CLEAR = 122;
+    KEY_NUMPAD_MEMORY_RECALL = 123;
+    KEY_NUMPAD_MEMORY_STORE = 124;
+    KEY_NUMPAD_MEMORY_SUBTRACT = 125;
+    KEY_NUMPAD_MULTIPLY = 126;
+    KEY_NUMPAD_PAREN_LEFT = 127;
+    KEY_NUMPAD_PAREN_RIGHT = 128;
+    KEY_NUMPAD_SUBTRACT = 129;
+    KEY_ESCAPE = 200;
+    KEY_F1 = 201;
+    KEY_F2 = 202;
+    KEY_F3 = 203;
+    KEY_F4 = 204;
+    KEY_F5 = 205;
+    KEY_F6 = 206;
+    KEY_F7 = 207;
+    KEY_F8 = 208;
+    KEY_F9 = 209;
+    KEY_F10 = 210;
+    KEY_F11 = 211;
+    KEY_F12 = 212;
+    KEY_FN = 213;
+    KEY_FN_LOCK = 214;
+    KEY_PRINT_SCREEN = 215;
+    KEY_SCROLL_LOCK = 216;
+    KEY_PAUSE = 217;
+    KEY_HIRAGANA = 218;
+    KEY_KATAKANA = 219;
+  }
+
+  Key key = 1;        // Required. The physical key that was pressed.
+  KeyState state = 2; // Required.
+
+  // A unicode code point for text input, required unless the keypress would
+  // not result in a character.
+  //
+  // This may be completely unrelated to the physical key, depending on the
+  // software keyboard layout on the client side.
+  uint32 char = 3;
+}
+
+// ### 061 - Pointer Entered
+//
+// This message, which must be sent by the client on the same stream as the
+// original `030 - Attach` message, indicates that the Pointer has entered
+// the window area.
+message PointerEntered {}
+
+// ### 062 - Pointer Left
+//
+// This message, which must be sent by the client on the same stream as the
+// original `030 - Attach` message, indicates that the Pointer has left the
+// window area.
+message PointerLeft {}
+
+// ### 063 - Pointer Motion
+//
+// This message, which must be sent by the client on the same stream as the
+// original `030 - Attach` message, indicates that the Pointer has moved to a
+// new position.
+//
+// TODO: which coordinate space? what if videostreamstart had different res?
+message PointerMotion {
+  double x = 1; // Required.
+  double y = 2; // Required.
+}
+
+// ### 064 - Pointer Input
+//
+// This message, which must be sent by the client on the same stream as the
+// original `030 - Attach` message, indicates a Pointer button event.
+message PointerInput {
+  enum ButtonState {
+    BUTTON_STATE_UNKNOWN = 0;
+    BUTTON_STATE_PRESSED = 1;
+    BUTTON_STATE_RELEASED = 2;
+  }
+
+  enum Button {
+    BUTTON_UNKNOWN = 0;
+    BUTTON_LEFT = 1;
+    BUTTON_MIDDLE = 2;
+    BUTTON_RIGHT = 3;
+    BUTTON_BACK = 4;
+    BUTTON_FORWARD = 5;
+  }
+
+  Button button = 1;     // Required.
+  ButtonState state = 2; // Required.
+  double x = 3;          // Required.
+  double y = 4;          // Required.
+}

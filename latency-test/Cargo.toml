@@ -1,0 +1,46 @@
+# Copyright 2024 Colin Marc <hi@colinmarc.com>
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "latency-test"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "latency-test-app"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.75"
+clap = { version = "4.4.5", features = ["derive"] }
+
+[dependencies.bevy]
+version = "0.13"
+default-features = false
+features = [
+  #"animation",
+  #"bevy_asset",
+  #"bevy_audio",
+  #"bevy_gilrs",
+  #"bevy_scene",
+  "bevy_winit",
+  "bevy_core_pipeline",
+  #"bevy_pbr",
+  #"bevy_gltf",
+  "bevy_render",
+  "bevy_sprite",
+  #"bevy_text",
+  #"bevy_ui",
+  "multi-threaded",
+  #"png",
+  #"hdr",
+  #"vorbis",
+  #"x11",
+  #"bevy_gizmos",
+  #"android_shared_stdcxx",
+  #"tonemapping_luts",
+  #"default_font",
+  #"webgl2",
+  #"bevy_debug_stepping",
+]

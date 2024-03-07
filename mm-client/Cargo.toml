@@ -1,0 +1,60 @@
+# Copyright 2024 Colin Marc <hi@colinmarc.com>
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "mm-client"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mmclient"
+path = "src/bin/mmclient.rs"
+
+[[bin]]
+name = "latency-test"
+path = "src/bin/latency-test.rs"
+
+[dependencies]
+anyhow = "1.0.75"
+ash = "0.37.3"
+ash-window = "0.12.0"
+bytes = "1.5.0"
+cstr = "0.2.11"
+ffmpeg-next = "6.0"
+ffmpeg-sys-next = "6.0"
+quiche = { version = "0.18.0", features = ["qlog"] }
+ring = "0.16.20"
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["time", "env-filter"] }
+mm-protocol = { path = "../mm-protocol" }
+clap = { version = "4.4.5", features = ["derive"] }
+humantime = "2.1.0"
+tabwriter = "1.3.0"
+mio = { version = "0.8", features = ["net", "os-ext", "os-poll"] }
+crossbeam-channel = "0.5.8"
+raw-window-handle = "0.5.2"
+imgui-rs-vulkan-renderer = { version = "1.10.0", features = [
+    "dynamic-rendering",
+] }
+imgui = "0.11"
+imgui-winit-support = "0.11"
+font-kit = "0.11.0"
+rand = "0.8.5"
+histo = "1.0.0"
+cpal = "0.15.2"
+opus = "0.3.0"
+tracy-client = { version = "0.17", default-features = false }
+tracing-tracy = { version = "0.11", default-features = false }
+
+[dependencies.winit]
+version = "0.29"
+default-features = false
+features = ["wayland", "x11", "rwh_05"]
+
+[build-dependencies]
+shaderc = "0.8.2"
+
+[features]
+default = []
+tracy = ["tracy-client/enable"]

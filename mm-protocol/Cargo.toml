@@ -1,0 +1,20 @@
+# Copyright 2024 Colin Marc <hi@colinmarc.com>
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "mm-protocol"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bytes = "1.5.0"
+octets = "0.2.0"
+prost = "0.12.1"
+prost-types = "0.12.1"
+thiserror = "1.0.48"
+
+[build-dependencies]
+prost-build = "0.12.1"

@@ -1,0 +1,11 @@
+// Copyright 2024 Colin Marc <hi@colinmarc.com>
+//
+// SPDX-License-Identifier: MIT
+
+Cargo.lock
+/target
+/result
+/.direnv
+.vscode
+.reuse
+*.log

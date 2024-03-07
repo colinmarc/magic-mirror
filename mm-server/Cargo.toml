@@ -1,0 +1,106 @@
+# Copyright 2024 Colin Marc <hi@colinmarc.com>
+#
+# SPDX-License-Identifier: BUSL-1.1
+
+[package]
+name = "mm-server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mmserver"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.72"
+bytes = "1.4.0"
+cstr = "0.2.11"
+ffmpeg-next = { version = "6.1", optional = true }
+ffmpeg-sys-next = { version = "6.1", optional = true }
+glam = "0.24.1"
+lazy_static = "1.4.0"
+libloading = "0.8.0"
+mio = { version = "0.8", features = ["net", "os-ext", "os-poll"] }
+mio-timerfd = "0.2.0"
+quiche = { version = "0.18", features = ["boringssl-boring-crate"] }
+rcgen = "0.12.1"
+boring = "3"
+rand = "0.8.5"
+ring = "0.16.20"
+thiserror = "1.0.48"
+tracing = "0.1.37"
+tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
+mm-protocol = { path = "../mm-protocol" }
+octets = "0.2.0"
+protobuf = "3.2.0"
+listenfd = "1.0.1"
+tiny_id = "0.1.6"
+oneshot = { version = "0.1.6", default-features = false, features = ["std"] }
+threadpool = "1.8.1"
+crossbeam-channel = "0.5.8"
+scopeguard = "1.2.0"
+hashbrown = "0.14.1"
+nix = { version = "0.27.1", features = ["socket", "uio", "net"] }
+drm-fourcc = "2.2.0"
+ctrlc = "3.4.1"
+clap = { version = "4", features = ["derive"] }
+pathsearch = "0.2.0"
+unshare = "0.7.0"
+mktemp = "0.5.1"
+opus = "0.3"
+audiopus_sys = { version = "0.2", features = ["static"] }
+byteorder = "1.5.0"
+dasp = "0.11.0"
+uuid = "1.4"
+tracy-client = { version = "0.17", default-features = false }
+tracing-tracy = { version = "0.11", default-features = false }
+simple_moving_average = { version = "1.0.2", optional = true }
+paste = "1.0.14"
+serde = "1.0.197"
+toml = "0.8.10"
+ip_rfc = "0.1.0"
+regex = "1.10.3"
+converge = "0.0.5"
+serde_json = "1.0.114"
+
+[dependencies.pulseaudio]
+git = "https://github.com/colinmarc/pulseaudio-rs"
+rev = "70ddb748f20ceecc20e963e571188124aeb30186"
+
+[dependencies.svt]
+git = "https://github.com/colinmarc/svt-rs"
+rev = "ab9dbd872d8f01c2cb96d3f9fd880b26d37d1f0e"
+optional = true
+features = ["av1", "hevc"]
+
+[dependencies.ash]
+git = "https://github.com/ash-rs/ash"
+rev = "92084df65f52aa15b704279fb6d8d26a3ee71809"
+
+[dependencies.smithay]
+git = "https://github.com/colinmarc/smithay"
+rev = "6c675b519784ceaab65d338338b9e58c9d97f09c"
+default-features = false
+features = ["xwayland", "wayland_frontend", "desktop"]
+
+[build-dependencies]
+shaderc = "0.8"
+system-deps = "6"
+
+[package.metadata.system-deps]
+libavcodec = { version = "6", feature = "ffmpeg_encode" }
+
+[features]
+default = ["svt_encode"]
+svt_encode = ["dep:svt"]
+vulkan_encode = []
+ffmpeg_encode = ["dep:ffmpeg-next", "dep:ffmpeg-sys-next"]
+tracy = [
+    "dep:simple_moving_average",
+    "tracy-client/enable",
+    "tracy-client/broadcast",
+    "tracing-tracy/enable",
+]
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
