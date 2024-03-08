@@ -79,7 +79,7 @@ rev = "92084df65f52aa15b704279fb6d8d26a3ee71809"
 
 [dependencies.smithay]
 git = "https://github.com/colinmarc/smithay"
-rev = "6c675b519784ceaab65d338338b9e58c9d97f09c"
+rev = "184fd7cdc1bb4a5e1fdf96ecb6bef68e44b2e4f0"
 default-features = false
 features = ["xwayland", "wayland_frontend", "desktop"]
 
