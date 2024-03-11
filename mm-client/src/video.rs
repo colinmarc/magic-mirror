@@ -26,6 +26,7 @@ struct YUVPicture {
     y: Bytes,
     u: Bytes,
     v: Bytes,
+    pts: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,6 +144,7 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
                 trace!(
                     stream_seq = dec.stream_seq,
                     seq = pkt.seq,
+                    pts = pkt.pts,
                     len = bytes::Buf::remaining(&pkt),
                     "received full video packet",
                 );
@@ -210,10 +212,18 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
             StreamState::Streaming(_) | StreamState::Restarting(_, _) => true,
         }
     }
+
+    pub fn pts(&self) -> Option<u64> {
+        match self.state {
+            StreamState::Streaming(ref dec) | StreamState::Restarting(ref dec, _) => dec.last_pts,
+            StreamState::Empty | StreamState::Initializing(_) => None,
+        }
+    }
 }
 
 struct CPUDecoder {
     stream_seq: u64,
+    last_pts: Option<u64>,
 
     staging_buffer: VkHostBuffer,
     yuv_buffer_offsets: [usize; 3],
@@ -240,6 +250,7 @@ struct CPUDecoder {
 /// if it never receives any metadata in the (otherwise valid) video stream.
 struct DecoderInit {
     stream_seq: u64,
+    last_pts: Option<u64>,
     width: u32,
     height: u32,
     started: time::Instant,
@@ -311,6 +322,7 @@ impl DecoderInit {
 
         Ok(Self {
             stream_seq,
+            last_pts: None,
             width,
             height,
             started: time::Instant::now(),
@@ -325,6 +337,8 @@ impl DecoderInit {
     /// stream have been recovered and it's safe to call into_decoder. Returns
     /// an error only on timeout.
     fn send_packet(&mut self, buf: Undecoded) -> anyhow::Result<bool> {
+        self.last_pts = Some(buf.pts);
+
         if self.started.elapsed() > DECODER_INIT_TIMEOUT {
             return Err(anyhow!("timed out waiting for video stream metadata"));
         }
@@ -518,7 +532,11 @@ impl DecoderInit {
 
         // Send the frame we have from before.
         decoded_send
-            .send(copy_frame(&mut frame, &mut BytesMut::new()))
+            .send(copy_frame(
+                &mut frame,
+                &mut BytesMut::new(),
+                self.last_pts.unwrap(),
+            ))
             .unwrap();
 
         // Spawn another thread that receives packets on one channel and sends
@@ -539,6 +557,7 @@ impl DecoderInit {
                     let span = trace_span!("decode_loop");
                     let _guard = span.enter();
 
+                    let pts = buf.pts;
                     copy_packet(&mut packet, buf)?;
 
                     // Send the packet to the decoder.
@@ -553,7 +572,7 @@ impl DecoderInit {
                     loop {
                         match receive_frame(&mut decoder, &mut frame, hw_frame.as_mut()) {
                             Ok(()) => {
-                                let pic = copy_frame(&mut frame, &mut scratch);
+                                let pic = copy_frame(&mut frame, &mut scratch, pts);
 
                                 debug_assert_eq!(pic.y.len(), y_len);
                                 debug_assert_eq!(pic.u.len(), u_len);
@@ -589,6 +608,7 @@ impl DecoderInit {
 
         let dec = CPUDecoder {
             stream_seq: self.stream_seq,
+            last_pts: None,
 
             staging_buffer,
             yuv_buffer_offsets: buffer_offsets,
@@ -644,6 +664,8 @@ impl CPUDecoder {
             Some(v) => v,
             None => return Ok(false),
         };
+
+        self.last_pts = Some(pic.pts);
 
         unsafe {
             self.upload(pic).context("uploading frame to GPU")?;
@@ -880,7 +902,7 @@ fn copy_packet(pkt: &mut ffmpeg::Packet, buf: Undecoded) -> anyhow::Result<()> {
 }
 
 #[instrument(skip_all)]
-fn copy_frame(frame: &mut ffmpeg::frame::Video, scratch: &mut BytesMut) -> YUVPicture {
+fn copy_frame(frame: &mut ffmpeg::frame::Video, scratch: &mut BytesMut, pts: u64) -> YUVPicture {
     scratch.truncate(0);
 
     scratch.extend_from_slice(frame.data(0));
@@ -892,7 +914,7 @@ fn copy_frame(frame: &mut ffmpeg::frame::Video, scratch: &mut BytesMut) -> YUVPi
     scratch.extend_from_slice(frame.data(2));
     let v = scratch.split().freeze();
 
-    YUVPicture { y, u, v }
+    YUVPicture { y, u, v, pts }
 }
 
 #[no_mangle]

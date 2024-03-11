@@ -18,6 +18,7 @@ pub trait Chunk {
     fn chunk(&self) -> u32;
     fn num_chunks(&self) -> u32;
     fn data(&self) -> bytes::Bytes;
+    fn pts(&self) -> u64;
 }
 
 impl Chunk for protocol::VideoChunk {
@@ -47,6 +48,10 @@ impl Chunk for protocol::VideoChunk {
 
     fn data(&self) -> bytes::Bytes {
         self.data.clone()
+    }
+
+    fn pts(&self) -> u64 {
+        self.timestamp
     }
 }
 
@@ -78,10 +83,15 @@ impl Chunk for protocol::AudioChunk {
     fn data(&self) -> bytes::Bytes {
         self.data.clone()
     }
+
+    fn pts(&self) -> u64 {
+        self.timestamp
+    }
 }
 
 #[derive(Debug)]
 pub struct Packet {
+    pub pts: u64,
     pub seq: u64,
     data: VecDeque<bytes::Bytes>,
     chunk_offset: usize,
@@ -127,6 +137,7 @@ impl Buf for Packet {
 struct WipPacket {
     stream_seq: u64,
     seq: u64,
+    pts: u64,
     chunks: Vec<Option<bytes::Bytes>>,
 }
 
@@ -140,6 +151,7 @@ impl WipPacket {
     fn complete(self) -> Packet {
         let data: Vec<_> = self.chunks.into_iter().map(|c| c.unwrap()).collect();
         Packet {
+            pts: self.pts,
             seq: self.seq,
             data: data.into(),
             chunk_offset: 0,
@@ -191,6 +203,7 @@ impl PacketRing {
                 let mut wip = WipPacket {
                     stream_seq: incoming.stream_seq(),
                     seq: incoming.seq(),
+                    pts: incoming.pts(),
                     chunks: vec![None; incoming.num_chunks() as usize],
                 };
 

@@ -398,6 +398,10 @@ impl App {
                 WindowEvent::RedrawRequested => {
                     self.video_stream.flush_frames()?;
 
+                    if let Some(pts) = self.video_stream.pts() {
+                        self.audio_stream.sync(pts);
+                    }
+
                     if !self.minimized && self.video_stream.is_ready() {
                         unsafe { self.renderer.render(|ui| self.overlay.build(ui))? };
                     }

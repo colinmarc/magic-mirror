@@ -46,6 +46,7 @@ cpal = "0.15.2"
 opus = "0.3.0"
 tracy-client = { version = "0.17", default-features = false }
 tracing-tracy = { version = "0.11", default-features = false }
+dasp = { version = "0.11.0", features = ["slice", "signal", "interpolate", "interpolate-linear"] }
 
 [dependencies.winit]
 version = "0.29"

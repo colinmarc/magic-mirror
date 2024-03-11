@@ -784,12 +784,12 @@ fn writer_thread(
             WriterInput::SubmittedFrame(frame) => frame,
         };
 
+        let capture_ts = EPOCH.elapsed().as_millis() as u64;
+
         // Wait for the frame to finish encoding.
         unsafe {
             timeline_wait(device, frame.timeline, frame.tp_encoded)?;
         }
-
-        let capture_ts = EPOCH.elapsed().as_nanos() as u64;
 
         // Get the buffer offsets for the encoded data.
         let mut results = [QueryResults::default()];

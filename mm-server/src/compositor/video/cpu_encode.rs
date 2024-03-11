@@ -395,10 +395,11 @@ fn encode_thread(
         let span = trace_span!("encode_loop");
         let _guard = span.enter();
 
+        let capture_ts = EPOCH.elapsed().as_millis() as u64;
+
         // Wait for the copy operation to finish.
         unsafe { timeline_wait(&vk.device, semaphore, tp) }?;
 
-        let capture_ts = EPOCH.elapsed().as_millis() as u64;
         let pts = video_timebase.now();
 
         encoder

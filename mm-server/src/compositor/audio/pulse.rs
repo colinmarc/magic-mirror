@@ -21,7 +21,7 @@ use pulseaudio::protocol::{self as pulse, ClientInfoList};
 use tracing::{debug, error, trace, warn};
 
 use super::EncodeFrame;
-use crate::waking_sender::WakingSender;
+use crate::{compositor::EPOCH, waking_sender::WakingSender};
 
 const WAKER: mio::Token = mio::Token(0);
 const LISTENER: mio::Token = mio::Token(1);
@@ -360,6 +360,7 @@ impl PulseServer {
     fn clock_tick(&mut self) -> anyhow::Result<()> {
         let mut done_draining = Vec::new();
 
+        let capture_ts = EPOCH.elapsed().as_millis() as u64;
         let encode_len = (CAPTURE_SAMPLE_RATE as usize / CLOCK_RATE_HZ as usize)
             * CAPTURE_CHANNEL_COUNT as usize;
 
@@ -484,7 +485,8 @@ impl PulseServer {
         }
 
         // Encode the frame.
-        if let Some(frame) = frame {
+        if let Some(mut frame) = frame {
+            frame.capture_ts = capture_ts;
             self.unencoded_tx.send(frame)?;
         }
 

@@ -2,21 +2,25 @@
 //
 // SPDX-License-Identifier: MIT
 
+mod buffer;
+
 use std::{
-    collections::VecDeque,
     sync::{Arc, Mutex},
+    time,
 };
 
 use anyhow::{bail, Context as _};
 use bytes::Buf as _;
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait};
 use crossbeam_channel as crossbeam;
+use dasp::Signal;
 use tracing::{debug, error, info, trace};
 
 use crate::packet_ring::{self, PacketRing};
+use buffer::PlaybackBuffer;
 use mm_protocol as protocol;
 
-trait DecodePacket<T: Send> {
+trait DecodePacket<T> {
     fn decode(&mut self, input: &[u8], output: &mut [T]) -> anyhow::Result<usize>;
 }
 
@@ -34,40 +38,61 @@ impl DecodePacket<i16> for opus::Decoder {
     }
 }
 
-enum DecoderType {
-    F32(Decoder<f32>),
-    I16(Decoder<i16>),
+// This is a trait object so we can erase the sample/frame generic type.
+trait StreamWrapper {
+    #[allow(clippy::new_ret_no_self)]
+    fn new(
+        device: &cpal::Device,
+        conf: cpal::StreamConfig,
+    ) -> anyhow::Result<(Box<dyn StreamWrapper>, cpal::Stream)>
+    where
+        Self: Sized;
+
+    fn sync(&mut self, pts: u64);
+    fn send_packet(&mut self, packet: packet_ring::Packet) -> anyhow::Result<()>;
 }
 
-struct Decoder<T> {
-    buffer: Arc<Mutex<VecDeque<T>>>,
+struct StreamInner<F: dasp::Frame> {
+    sync_point: Arc<Mutex<Option<(u64, time::Instant)>>>,
+    _buffer: Arc<Mutex<PlaybackBuffer<F>>>,
     thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
     undecoded_tx: Option<crossbeam::Sender<packet_ring::Packet>>,
 }
 
-impl<T> Decoder<T>
+impl<F> StreamWrapper for StreamInner<F>
 where
-    T: cpal::SizedSample + Default + Send + 'static,
-    opus::Decoder: DecodePacket<T>,
+    F: dasp::Frame + Send + 'static,
+    F::Sample: cpal::SizedSample + dasp::sample::Duplex<f64> + Default,
+    opus::Decoder: DecodePacket<F::Sample>,
+    for<'a> &'a [F::Sample]: dasp::slice::ToFrameSlice<'a, F>,
 {
-    pub fn new(channels: u32, sample_rate: u32) -> anyhow::Result<Self> {
-        let ch = match channels {
-            1 => opus::Channels::Mono,
-            2 => opus::Channels::Stereo,
-            _ => bail!("unsupported number of channels: {}", channels),
+    fn new(
+        device: &cpal::Device,
+        conf: cpal::StreamConfig,
+    ) -> anyhow::Result<(Box<dyn StreamWrapper>, cpal::Stream)> {
+        let sample_rate = conf.sample_rate.0;
+
+        let mut decoder = {
+            let ch = match F::CHANNELS {
+                1 => opus::Channels::Mono,
+                2 => opus::Channels::Stereo,
+                _ => bail!("unsupported number of channels: {}", F::CHANNELS),
+            };
+
+            opus::Decoder::new(sample_rate, ch)?
         };
 
-        let mut decoder = opus::Decoder::new(sample_rate, ch)?;
-
-        let buffer: Arc<Mutex<VecDeque<T>>> = Arc::new(Mutex::new(VecDeque::new()));
-
-        let buffer_clone = buffer.clone();
+        let buffer = Arc::new(Mutex::new(PlaybackBuffer::new()));
         let (undecoded_tx, undecoded_recv) = crossbeam::unbounded::<packet_ring::Packet>();
 
+        // Spawn a thread to eagerly decode packets.
+        let buffer_clone = buffer.clone();
         let thread_handle = std::thread::Builder::new()
             .name("audio decode".into())
             .spawn(move || {
-                let mut output = vec![Default::default(); (sample_rate * channels / 100) as usize];
+                // Handles up to 100ms of decoded audio.
+                let mut output =
+                    vec![Default::default(); (sample_rate * F::CHANNELS as u32 / 10) as usize];
 
                 loop {
                     let mut packet = match undecoded_recv.recv() {
@@ -75,6 +100,7 @@ where
                         Err(crossbeam::RecvError) => return Ok(()),
                     };
 
+                    let pts = packet.pts;
                     let packet = packet.copy_to_bytes(packet.remaining());
                     match DecodePacket::decode(&mut decoder, &packet, &mut output) {
                         Ok(len) => {
@@ -82,10 +108,18 @@ where
                                 continue;
                             }
 
-                            buffer_clone
-                                .lock()
-                                .unwrap()
-                                .extend(output[..(len * channels as usize)].iter());
+                            let frames =
+                                dasp::slice::to_frame_slice(&output[..(len * F::CHANNELS)])
+                                    .expect("invalid sample count");
+
+                            let mut guard = buffer_clone.lock().unwrap();
+                            guard.buffer(pts, frames);
+
+                            #[cfg(feature = "tracy")]
+                            {
+                                let len_us = guard.len() as f64 / sample_rate as f64 * 1_000_000.0;
+                                tracy_client::plot!("audio buffer (μs)", len_us);
+                            }
                         }
                         Err(e) => {
                             error!("opus decode error: {}", e);
@@ -95,15 +129,103 @@ where
                 }
             })?;
 
-        Ok(Self {
-            buffer,
-            thread_handle: Some(thread_handle),
-            undecoded_tx: Some(undecoded_tx),
-        })
+        // The current PTS of the video stream, which we want to sync to.
+        let sync_point = Arc::new(Mutex::new(None));
+
+        let sync_point_clone = sync_point.clone();
+        let buffer_clone = buffer.clone();
+        let stream = device.build_output_stream(
+            &conf,
+            move |out, _info| {
+                let mut buffer = buffer_clone.lock().unwrap();
+
+                let frames_needed = out.len() / F::CHANNELS;
+                let frames_remaining = buffer.len(); // In frames.
+
+                let frames_per_ms = sample_rate / 1000;
+
+                if frames_remaining < frames_needed {
+                    out.fill(Default::default());
+                    // TODO: fire this only once
+                    error!("audio buffer underrun");
+                    return;
+                }
+
+                let sync_point: Option<(u64, time::Instant)> =
+                    sync_point_clone.lock().unwrap().as_ref().copied();
+                if let Some((pts, ts)) = sync_point {
+                    let target_pts = pts + ts.elapsed().as_millis() as u64;
+                    let pts = buffer.current_pts();
+
+                    let delay = target_pts as i64 - pts as i64;
+
+                    #[cfg(feature = "tracy")]
+                    tracy_client::plot!("audio drift (ms)", delay as f64);
+
+                    // Outside these bounds, skip or play silence in order to sync.
+                    const TOO_EARLY: i64 = 20;
+                    const TOO_LATE: i64 = 60;
+
+                    if delay < TOO_EARLY {
+                        // Play silence until the video catches up.
+                        out.fill(Default::default());
+                        return;
+                    } else if delay > TOO_LATE {
+                        // Skip ahead.
+                        let skip = std::cmp::min(
+                            (delay * frames_per_ms as i64) as usize,
+                            frames_remaining.saturating_sub(frames_needed * 2),
+                        );
+
+                        buffer.skip(skip);
+                    }
+                }
+
+                let mut signal = dasp::signal::from_iter(buffer.drain()).into_interleaved_samples();
+
+                for sample in out.iter_mut() {
+                    *sample = signal.next_sample();
+                }
+
+                #[cfg(feature = "tracy")]
+                {
+                    let len_us = buffer.len() as f64 / sample_rate as f64 * 1_000_000.0;
+                    tracy_client::plot!("audio buffer (μs)", len_us);
+                }
+            },
+            move |err| {
+                error!("audio playback error: {}", err);
+            },
+            None,
+        )?;
+
+        Ok((
+            Box::new(Self {
+                // decoded_packets,
+                _buffer: buffer,
+                sync_point,
+                thread_handle: Some(thread_handle),
+                undecoded_tx: Some(undecoded_tx),
+            }),
+            stream,
+        ))
+    }
+
+    fn sync(&mut self, pts: u64) {
+        *self.sync_point.lock().unwrap() = Some((pts, time::Instant::now()));
+    }
+
+    fn send_packet(&mut self, packet: packet_ring::Packet) -> anyhow::Result<()> {
+        self.undecoded_tx
+            .as_ref()
+            .unwrap()
+            .send(packet)
+            .map_err(|_| anyhow::anyhow!("audio decode thread died"))?;
+        Ok(())
     }
 }
 
-impl<T> Drop for Decoder<T> {
+impl<T: dasp::Frame> Drop for StreamInner<T> {
     fn drop(&mut self) {
         let _ = self.undecoded_tx.take();
         if let Some(handle) = self.thread_handle.take() {
@@ -124,7 +246,9 @@ pub struct AudioStream {
     device: cpal::Device,
 
     stream: Option<cpal::Stream>,
-    decoder: Option<DecoderType>,
+    inner: Option<Box<dyn StreamWrapper>>,
+    sync_point: Option<(u64, time::Instant)>,
+
     stream_waiting: bool,
 
     ring: PacketRing,
@@ -144,13 +268,20 @@ impl AudioStream {
             device,
 
             stream: None,
-            decoder: None,
+            sync_point: None,
+            inner: None,
             stream_waiting: true,
             packet_count: 0,
 
             ring: PacketRing::new(),
             stream_seq: 0,
         })
+    }
+
+    pub fn sync(&mut self, pts: u64) {
+        if let Some(inner) = &mut self.inner {
+            inner.sync(pts);
+        }
     }
 
     pub fn reset(
@@ -166,25 +297,18 @@ impl AudioStream {
 
         let (format, conf) = select_conf(&self.device, sample_rate, channels)?;
 
-        let (dec, stream) = match format {
-            cpal::SampleFormat::F32 => {
-                let dec = Decoder::new(channels, sample_rate)?;
-                let stream = build_stream::<f32>(&self.device, conf, &dec)?;
-
-                (DecoderType::F32(dec), stream)
-            }
-            cpal::SampleFormat::I16 => {
-                let dec = Decoder::new(channels, sample_rate)?;
-                let stream = build_stream::<i16>(&self.device, conf, &dec)?;
-
-                (DecoderType::I16(dec), stream)
-            }
-            _ => unreachable!(),
-        };
+        let (inner, stream) = match (format, channels) {
+            (cpal::SampleFormat::F32, 1) => StreamInner::<[f32; 1]>::new(&self.device, conf),
+            (cpal::SampleFormat::F32, 2) => StreamInner::<[f32; 2]>::new(&self.device, conf),
+            (cpal::SampleFormat::I16, 1) => StreamInner::<[i16; 1]>::new(&self.device, conf),
+            (cpal::SampleFormat::I16, 2) => StreamInner::<[i16; 2]>::new(&self.device, conf),
+            _ => bail!("unsupported sample rate / format"),
+        }?;
 
         self.stream_seq = stream_seq;
         self.stream = Some(stream);
-        self.decoder = Some(dec);
+        self.inner = Some(inner);
+        self.sync_point = None;
         self.stream_waiting = true;
         self.packet_count = 0;
 
@@ -194,26 +318,19 @@ impl AudioStream {
     pub fn recv_chunk(&mut self, chunk: protocol::AudioChunk) -> anyhow::Result<()> {
         self.ring.recv_chunk(chunk)?;
 
-        let dec = match &mut self.decoder {
-            Some(dec) => dec,
-            None => return Ok(()),
-        };
+        if let Some(inner) = &mut self.inner {
+            for packet in self.ring.drain_completed(self.stream_seq) {
+                trace!(
+                    stream_seq = self.stream_seq,
+                    seq = packet.seq,
+                    pts = packet.pts,
+                    len = bytes::Buf::remaining(&packet),
+                    "received full audio packet"
+                );
 
-        let undecoded_tx = match &dec {
-            DecoderType::F32(dec) => dec.undecoded_tx.as_ref().unwrap(),
-            DecoderType::I16(dec) => dec.undecoded_tx.as_ref().unwrap(),
-        };
-
-        for packet in self.ring.drain_completed(self.stream_seq) {
-            trace!(
-                stream_seq = self.stream_seq,
-                seq = packet.seq,
-                len = bytes::Buf::remaining(&packet),
-                "received full audio packet"
-            );
-
-            self.packet_count += 1;
-            undecoded_tx.send(packet)?;
+                self.packet_count += 1;
+                inner.send_packet(packet)?;
+            }
         }
 
         if self.stream.is_some() && self.stream_waiting && self.packet_count > 2 {
@@ -223,37 +340,6 @@ impl AudioStream {
 
         Ok(())
     }
-}
-
-fn build_stream<T: cpal::SizedSample + Default + Send + 'static>(
-    device: &cpal::Device,
-    conf: cpal::StreamConfig,
-    dec: &Decoder<T>,
-) -> anyhow::Result<cpal::Stream> {
-    debug!("using audio output configuration: {:?}", conf);
-
-    let buffer = dec.buffer.clone();
-    let stream = device.build_output_stream(
-        &conf,
-        move |out, _info| {
-            let mut buffer = buffer.lock().unwrap();
-            if buffer.len() < out.len() {
-                out.fill(Default::default());
-                error!("audio buffer underrun");
-                return;
-            }
-
-            for sample in out.iter_mut() {
-                *sample = buffer.pop_front().unwrap();
-            }
-        },
-        move |err| {
-            error!("audio playback error: {}", err);
-        },
-        None,
-    )?;
-
-    Ok(stream)
 }
 
 fn select_conf(
