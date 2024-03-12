@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+#![allow(clippy::too_many_arguments)]
+
 mod chain;
 pub(crate) use chain::*;
 
@@ -667,7 +669,6 @@ pub struct VkImage {
 }
 
 impl VkImage {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         vk: Arc<VkContext>,
         format: vk::Format,

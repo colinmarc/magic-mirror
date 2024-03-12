@@ -170,7 +170,9 @@ where
                         // Play silence until the video catches up.
                         out.fill(Default::default());
                         return;
-                    } else if delay > TOO_LATE {
+                    }
+
+                    if delay > TOO_LATE {
                         // Skip ahead.
                         let skip = std::cmp::min(
                             (delay * frames_per_ms as i64) as usize,
