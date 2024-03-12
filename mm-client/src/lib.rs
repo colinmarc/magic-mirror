@@ -4,10 +4,12 @@
 
 pub mod audio;
 pub mod conn;
+pub mod flash;
 pub mod font;
 pub mod keys;
 pub mod overlay;
 pub mod packet_ring;
 pub mod render;
+pub mod stats;
 pub mod video;
 pub mod vulkan;

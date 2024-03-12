@@ -14,9 +14,11 @@ use crossbeam_channel as crossbeam;
 use mm_protocol as protocol;
 use tracing::{debug, error, instrument, trace};
 
+use crate::stats::STATS;
+
 const DEFAULT_PORT: u16 = 9599;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum ConnEvent {
     StreamMessage(u64, protocol::MessageType),
     Datagram(protocol::MessageType),
@@ -185,6 +187,7 @@ struct InnerConn {
     partial_reads: HashMap<u64, bytes::BytesMut>,
     open_streams: HashSet<u64>,
     shutting_down: bool,
+    stats_timer: time::Instant,
 
     incoming: crossbeam::Sender<ConnEvent>,
     outgoing: crossbeam::Receiver<OutgoingMessage>,
@@ -252,6 +255,7 @@ impl InnerConn {
             partial_reads: HashMap::new(),
             open_streams: HashSet::new(),
             shutting_down: false,
+            stats_timer: time::Instant::now(),
 
             incoming,
             outgoing,
@@ -267,7 +271,13 @@ impl InnerConn {
 
         loop {
             self.poll.poll(&mut events, self.conn.timeout())?;
-            self.conn.on_timeout(); // Does nothing if we're not timed out.
+
+            let now = time::Instant::now();
+            if let Some(timeout_instant) = self.conn.timeout_instant() {
+                if now >= timeout_instant {
+                    self.conn.on_timeout();
+                }
+            }
 
             if self.conn.is_closed() || self.conn.is_draining() {
                 if self.conn.is_timed_out() {
@@ -281,6 +291,12 @@ impl InnerConn {
                 } else {
                     return Ok(());
                 }
+            }
+
+            if (now - self.stats_timer) > time::Duration::from_millis(200) {
+                self.stats_timer = now;
+                let stats = self.conn.path_stats().next().unwrap();
+                STATS.set_rtt(stats.rtt);
             }
 
             // Read incoming UDP packets and handle them.
@@ -323,7 +339,6 @@ impl InnerConn {
                             match self.incoming.send(ConnEvent::Datagram(msg)) {
                                 Ok(()) => {}
                                 Err(_) => {
-                                    debug!("connection shutting down");
                                     self.conn.close(true, 0x00, b"")?;
                                     self.shutting_down = true;
                                     break;

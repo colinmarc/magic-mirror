@@ -15,6 +15,7 @@ use clap::Parser;
 use ffmpeg_sys_next as ffmpeg_sys;
 use mm_client::audio;
 use mm_client::conn::ConnEvent;
+use mm_client::overlay::Overlay;
 use mm_client::video;
 use mm_client::video::VideoStreamEvent;
 use mm_protocol as protocol;
@@ -36,8 +37,8 @@ use winit::{
 };
 
 use mm_client::conn::*;
+use mm_client::flash::Flash;
 use mm_client::keys::winit_key_to_proto;
-use mm_client::overlay::Overlay;
 use mm_client::render::Renderer;
 use mm_client::vulkan;
 
@@ -110,6 +111,9 @@ struct Cli {
     /// Open in fullscreen mode.
     #[arg(long)]
     fullscreen: bool,
+    /// Enable the overlay, which shows various stats.
+    #[arg(long)]
+    overlay: bool,
 }
 
 struct App {
@@ -152,7 +156,8 @@ struct App {
     cursor_y: f64,
     cursor_entered: bool,
 
-    overlay: Overlay,
+    flash: Flash,
+    overlay: Option<Overlay>,
 
     _vk: Arc<vulkan::VkContext>,
 }
@@ -205,6 +210,10 @@ impl App {
                     info!(msg.session_id, "successfully (re)attached to session");
                     self.reattaching = false;
                     self.attachment = Some(msg.clone());
+
+                    if let Some(ref mut overlay) = self.overlay {
+                        overlay.update_params(&msg);
+                    }
                 }
                 protocol::MessageType::SessionUpdated(_) => {}
                 protocol::MessageType::Error(e) => {
@@ -257,6 +266,7 @@ impl App {
                                 attachment.streaming_resolution.clone().unwrap();
                             self.video_stream_seq = Some(chunk.stream_seq);
                             self.video_stream.reset(
+                                attachment.attachment_id,
                                 chunk.stream_seq,
                                 width,
                                 height,
@@ -266,7 +276,6 @@ impl App {
                     }
 
                     self.video_stream.recv_chunk(chunk)?;
-                    self.overlay.clear_message();
                 }
                 protocol::MessageType::AudioChunk(chunk) => {
                     // Detect stream restarts.
@@ -290,10 +299,9 @@ impl App {
             },
             Event::UserEvent(AppEvent::VideoStreamReady(texture, params)) => {
                 self.renderer.bind_video_texture(texture, params)?;
-                self.overlay.clear_message();
             }
             Event::UserEvent(AppEvent::VideoFrameAvailable) => {
-                if self.video_stream.flush_frames()? {
+                if self.video_stream.prepare_frame()? {
                     self.window.request_redraw();
                 }
             }
@@ -314,7 +322,7 @@ impl App {
                         // TODO: this fires when we've tabbed away.
                         bail!("timed out waiting for video frames");
                     } else {
-                        self.overlay.set_message("waiting for server...");
+                        self.flash.set_message("waiting for server...");
                     }
                 }
 
@@ -371,7 +379,7 @@ impl App {
 
                             // TODO: this is useful, but triggers when we get
                             // resized by the server, which is incorrect.
-                            self.overlay.set_message("resizing...");
+                            self.flash.set_message("resizing...");
 
                             // This will trigger a new attachment at the new
                             // resolution once the server updates and notifies
@@ -396,14 +404,20 @@ impl App {
             }
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::RedrawRequested => {
-                    self.video_stream.flush_frames()?;
-
-                    if let Some(pts) = self.video_stream.pts() {
-                        self.audio_stream.sync(pts);
-                    }
+                    self.video_stream.prepare_frame()?;
+                    self.video_stream.mark_frame_rendered();
 
                     if !self.minimized && self.video_stream.is_ready() {
-                        unsafe { self.renderer.render(|ui| self.overlay.build(ui))? };
+                        unsafe {
+                            self.renderer.render(|ui| {
+                                self.flash.build(ui)?;
+                                if let Some(ref mut overlay) = self.overlay {
+                                    overlay.build(ui)?;
+                                }
+
+                                Ok(())
+                            })?;
+                        };
                     }
 
                     self.next_frame = time::Instant::now() + MAX_FRAME_TIME;
@@ -415,6 +429,10 @@ impl App {
                     } else {
                         debug!("resize event: {}x{}", size.width, size.height);
                         if size.width != self.window_width || size.height != self.window_height {
+                            if let Some(ref mut overlay) = self.overlay {
+                                overlay.reposition();
+                            }
+
                             // Trigger a stream resize, but debounce first.
                             self.resize_cooldown = Some(time::Instant::now() + RESIZE_COOLDOWN);
                         }
@@ -560,7 +578,7 @@ impl App {
                 Err(e) => return Err(e).context("failed to end session"),
             }
 
-            self.overlay.set_message("ending session...");
+            self.flash.set_message("ending session...");
         } else {
             match self
                 .conn
@@ -570,7 +588,7 @@ impl App {
                 Err(e) => return Err(e).context("failed to detach cleanly"),
             }
 
-            self.overlay.set_message("closing...");
+            self.flash.set_message("closing...");
         }
 
         Ok(())
@@ -730,8 +748,14 @@ fn main() -> Result<()> {
 
     let now = time::Instant::now();
 
-    let mut overlay = Overlay::new();
-    overlay.set_message("connecting...");
+    let mut flash = Flash::new();
+    flash.set_message("connecting...");
+
+    let overlay = if args.overlay {
+        Some(Overlay::new(args.framerate))
+    } else {
+        None
+    };
 
     let mut app = Some(App {
         configured_codec,
@@ -773,6 +797,7 @@ fn main() -> Result<()> {
         cursor_y: 0.0,
         cursor_entered: false,
 
+        flash,
         overlay,
 
         _vk: vk,
@@ -839,11 +864,11 @@ impl From<VideoStreamEvent> for AppEvent {
 impl std::fmt::Debug for AppEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AppEvent::StreamMessage(sid, msg) => write!(f, "StreamMessage({:?}, {:?})", sid, msg),
-            AppEvent::Datagram(msg) => write!(f, "Datagram({:?})", msg),
-            AppEvent::StreamClosed(sid) => write!(f, "StreamClosed({:?})", sid),
+            AppEvent::StreamMessage(sid, msg) => write!(f, "StreamMessage({sid:?}, {msg:?})"),
+            AppEvent::Datagram(msg) => write!(f, "Datagram({msg:?})"),
+            AppEvent::StreamClosed(sid) => write!(f, "StreamClosed({sid:?})"),
             AppEvent::ConnectionClosed => write!(f, "ConnectionClosed"),
-            AppEvent::VideoStreamReady(_, params) => write!(f, "VideoStreamReady({:?})", params),
+            AppEvent::VideoStreamReady(_, params) => write!(f, "VideoStreamReady({params:?})"),
             AppEvent::VideoFrameAvailable => write!(f, "VideoFrameAvailable"),
         }
     }

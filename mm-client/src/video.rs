@@ -16,17 +16,26 @@ use tracing::{debug, error, instrument, trace, trace_span, warn};
 
 use crate::{
     packet_ring::{Packet as Undecoded, PacketRing},
+    stats::STATS,
     vulkan::*,
 };
 use mm_protocol as protocol;
 
 const DECODER_INIT_TIMEOUT: time::Duration = time::Duration::from_secs(5);
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FrameMetadata {
+    pub attachment_id: u64,
+    pub stream_seq: u64,
+    pub seq: u64,
+    pub pts: u64,
+}
+
 struct YUVPicture {
     y: Bytes,
     u: Bytes,
     v: Bytes,
-    pts: u64,
+    info: FrameMetadata,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +107,7 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
 
     pub fn reset(
         &mut self,
+        attachment_id: u64,
         stream_seq: u64,
         width: u32,
         height: u32,
@@ -111,7 +121,14 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
             "starting or restarting video stream"
         );
 
-        let init = DecoderInit::new(self.vk.clone(), stream_seq, codec, width, height)?;
+        let init = DecoderInit::new(
+            self.vk.clone(),
+            attachment_id,
+            stream_seq,
+            codec,
+            width,
+            height,
+        )?;
 
         use StreamState::*;
         let state = std::mem::replace(&mut self.state, Empty);
@@ -136,19 +153,22 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
             "received video chunk",
         );
 
+        STATS.frame_chunk_received(chunk.stream_seq, chunk.seq, chunk.data.len());
         self.ring.recv_chunk(chunk)?;
 
         // Feed the existing stream.
         if let Streaming(ref mut dec) | Restarting(ref mut dec, _) = self.state {
             for pkt in self.ring.drain_completed(dec.stream_seq) {
+                let len = bytes::Buf::remaining(&pkt);
                 trace!(
                     stream_seq = dec.stream_seq,
                     seq = pkt.seq,
                     pts = pkt.pts,
-                    len = bytes::Buf::remaining(&pkt),
+                    len,
                     "received full video packet",
                 );
 
+                STATS.full_frame_received(dec.stream_seq, pkt.seq, len);
                 dec.send_packet(pkt)?;
             }
         }
@@ -197,12 +217,21 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
         Ok(())
     }
 
-    pub fn flush_frames(&mut self) -> anyhow::Result<bool> {
+    pub fn prepare_frame(&mut self) -> anyhow::Result<bool> {
         match self.state {
             StreamState::Streaming(ref mut dec) | StreamState::Restarting(ref mut dec, _) => {
-                dec.flush_frames()
+                dec.prepare_frame()
             }
             StreamState::Empty | StreamState::Initializing(_) => Ok(false),
+        }
+    }
+
+    pub fn mark_frame_rendered(&mut self) {
+        match self.state {
+            StreamState::Streaming(ref mut dec) | StreamState::Restarting(ref mut dec, _) => {
+                dec.mark_frame_rendered()
+            }
+            StreamState::Empty | StreamState::Initializing(_) => (),
         }
     }
 
@@ -212,18 +241,11 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
             StreamState::Streaming(_) | StreamState::Restarting(_, _) => true,
         }
     }
-
-    pub fn pts(&self) -> Option<u64> {
-        match self.state {
-            StreamState::Streaming(ref dec) | StreamState::Restarting(ref dec, _) => dec.last_pts,
-            StreamState::Empty | StreamState::Initializing(_) => None,
-        }
-    }
 }
 
 struct CPUDecoder {
     stream_seq: u64,
-    last_pts: Option<u64>,
+    prepared_frame_info: Option<FrameMetadata>,
 
     staging_buffer: VkHostBuffer,
     yuv_buffer_offsets: [usize; 3],
@@ -249,20 +271,21 @@ struct CPUDecoder {
 /// to start decoding and recieves a single frame. It also handles timing out
 /// if it never receives any metadata in the (otherwise valid) video stream.
 struct DecoderInit {
+    attachment_id: u64,
     stream_seq: u64,
-    last_pts: Option<u64>,
     width: u32,
     height: u32,
     started: time::Instant,
     decoder: ffmpeg::decoder::Video,
     packet: ffmpeg::Packet,
-    first_frame: Option<ffmpeg::frame::Video>,
+    first_frame: Option<(ffmpeg::frame::Video, FrameMetadata)>,
     vk: Arc<VkContext>,
 }
 
 impl DecoderInit {
     fn new(
         vk: Arc<VkContext>,
+        attachment_id: u64,
         stream_seq: u64,
         codec: protocol::VideoCodec,
         width: u32,
@@ -321,8 +344,8 @@ impl DecoderInit {
         let packet = ffmpeg::Packet::empty();
 
         Ok(Self {
+            attachment_id,
             stream_seq,
-            last_pts: None,
             width,
             height,
             started: time::Instant::now(),
@@ -337,7 +360,12 @@ impl DecoderInit {
     /// stream have been recovered and it's safe to call into_decoder. Returns
     /// an error only on timeout.
     fn send_packet(&mut self, buf: Undecoded) -> anyhow::Result<bool> {
-        self.last_pts = Some(buf.pts);
+        let info = FrameMetadata {
+            attachment_id: self.attachment_id,
+            stream_seq: self.stream_seq,
+            seq: buf.seq,
+            pts: buf.pts,
+        };
 
         if self.started.elapsed() > DECODER_INIT_TIMEOUT {
             return Err(anyhow!("timed out waiting for video stream metadata"));
@@ -356,7 +384,7 @@ impl DecoderInit {
         match self.decoder.receive_frame(&mut frame) {
             Ok(()) => {
                 self.first_frame = match frame.format() {
-                    ffmpeg::format::Pixel::YUV420P => Some(frame),
+                    ffmpeg::format::Pixel::YUV420P => Some((frame, info)),
                     ffmpeg::format::Pixel::VIDEOTOOLBOX => {
                         let mut sw_frame = ffmpeg::frame::Video::new(
                             ffmpeg::format::Pixel::YUV420P,
@@ -375,7 +403,7 @@ impl DecoderInit {
                                 return Err(anyhow!("call to av_hwframe_transfer_data failed"));
                             }
 
-                            Some(sw_frame)
+                            Some((sw_frame, info))
                         }
                     }
                     f => return Err(anyhow!("unexpected stream format: {:?}", f)),
@@ -410,12 +438,12 @@ impl DecoderInit {
 
         // debug_assert_eq!(self.decoder.color_space(), ffmpeg::color::Space::BT709);
 
-        let output_format = first_frame.format();
+        let output_format = first_frame.0.format();
         assert_eq!(output_format, ffmpeg::format::Pixel::YUV420P);
 
         // If we're using VideoToolbox, create a "hardware" frame to use with
         // receive_frame.
-        let (mut frame, mut hw_frame) = match decoder_format {
+        let ((mut frame, info), mut hw_frame) = match decoder_format {
             ffmpeg::format::Pixel::YUV420P => (first_frame, None),
             ffmpeg::format::Pixel::VIDEOTOOLBOX => {
                 let hw_frame =
@@ -532,15 +560,13 @@ impl DecoderInit {
 
         // Send the frame we have from before.
         decoded_send
-            .send(copy_frame(
-                &mut frame,
-                &mut BytesMut::new(),
-                self.last_pts.unwrap(),
-            ))
+            .send(copy_frame(&mut frame, &mut BytesMut::new(), info))
             .unwrap();
 
         // Spawn another thread that receives packets on one channel and sends
         // completed pictures on another.
+        let attachment_id = self.attachment_id;
+        let stream_seq = self.stream_seq;
         let mut decoder = self.decoder;
         let mut packet = self.packet;
         let decoder_thread_handle = std::thread::Builder::new()
@@ -557,7 +583,13 @@ impl DecoderInit {
                     let span = trace_span!("decode_loop");
                     let _guard = span.enter();
 
-                    let pts = buf.pts;
+                    let info = FrameMetadata {
+                        attachment_id,
+                        stream_seq,
+                        seq: buf.seq,
+                        pts: buf.pts,
+                    };
+
                     copy_packet(&mut packet, buf)?;
 
                     // Send the packet to the decoder.
@@ -572,7 +604,7 @@ impl DecoderInit {
                     loop {
                         match receive_frame(&mut decoder, &mut frame, hw_frame.as_mut()) {
                             Ok(()) => {
-                                let pic = copy_frame(&mut frame, &mut scratch, pts);
+                                let pic = copy_frame(&mut frame, &mut scratch, info);
 
                                 debug_assert_eq!(pic.y.len(), y_len);
                                 debug_assert_eq!(pic.u.len(), u_len);
@@ -608,7 +640,7 @@ impl DecoderInit {
 
         let dec = CPUDecoder {
             stream_seq: self.stream_seq,
-            last_pts: None,
+            prepared_frame_info: None,
 
             staging_buffer,
             yuv_buffer_offsets: buffer_offsets,
@@ -659,19 +691,45 @@ impl CPUDecoder {
         }
     }
 
-    pub fn flush_frames(&mut self) -> anyhow::Result<bool> {
-        let pic = match self.decoded_recv.try_iter().last() {
-            Some(v) => v,
-            None => return Ok(false),
-        };
+    pub fn prepare_frame(&mut self) -> anyhow::Result<bool> {
+        // If multiple frames are ready, only grab the last one.
+        let mut iterator = self.decoded_recv.try_iter().peekable();
+        while let Some(pic) = iterator.next() {
+            if iterator.peek().is_some() {
+                STATS.frame_discarded(pic.info.stream_seq, pic.info.seq);
 
-        self.last_pts = Some(pic.pts);
+                debug!(
+                    stream_seq = pic.info.stream_seq,
+                    seq = pic.info.seq,
+                    "discarding frame"
+                );
+            } else {
+                let pic_info = pic.info;
+                unsafe {
+                    self.upload(pic).context("uploading frame to GPU")?;
+                }
 
-        unsafe {
-            self.upload(pic).context("uploading frame to GPU")?;
+                if let Some(old) = self.prepared_frame_info.replace(pic_info) {
+                    debug!(
+                        stream_seq = old.stream_seq,
+                        seq = old.seq,
+                        "overwriting uploaded frame"
+                    );
+
+                    STATS.frame_discarded(old.stream_seq, old.seq);
+                }
+
+                return Ok(true);
+            }
         }
 
-        Ok(true)
+        Ok(false)
+    }
+
+    pub fn mark_frame_rendered(&mut self) {
+        if let Some(info) = self.prepared_frame_info.take() {
+            STATS.frame_rendered(info.stream_seq, info.seq);
+        }
     }
 
     unsafe fn upload(&mut self, pic: YUVPicture) -> anyhow::Result<()> {
@@ -902,7 +960,11 @@ fn copy_packet(pkt: &mut ffmpeg::Packet, buf: Undecoded) -> anyhow::Result<()> {
 }
 
 #[instrument(skip_all)]
-fn copy_frame(frame: &mut ffmpeg::frame::Video, scratch: &mut BytesMut, pts: u64) -> YUVPicture {
+fn copy_frame(
+    frame: &mut ffmpeg::frame::Video,
+    scratch: &mut BytesMut,
+    info: FrameMetadata,
+) -> YUVPicture {
     scratch.truncate(0);
 
     scratch.extend_from_slice(frame.data(0));
@@ -914,7 +976,7 @@ fn copy_frame(frame: &mut ffmpeg::frame::Video, scratch: &mut BytesMut, pts: u64
     scratch.extend_from_slice(frame.data(2));
     let v = scratch.split().freeze();
 
-    YUVPicture { y, u, v, pts }
+    YUVPicture { y, u, v, info }
 }
 
 #[no_mangle]

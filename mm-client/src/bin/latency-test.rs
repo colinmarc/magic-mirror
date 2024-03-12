@@ -49,11 +49,11 @@ impl std::fmt::Debug for AppEvent {
         use AppEvent::*;
 
         match self {
-            StreamMessage(sid, msg) => write!(f, "StreamMessage({}, {:?})", sid, msg),
-            Datagram(msg) => write!(f, "Datagram({:?})", msg),
-            StreamClosed(sid) => write!(f, "StreamClosed({})", sid),
+            StreamMessage(sid, msg) => write!(f, "StreamMessage({sid}, {msg:?})"),
+            Datagram(msg) => write!(f, "Datagram({msg:?})"),
+            StreamClosed(sid) => write!(f, "StreamClosed({sid})"),
             ConnectionClosed => write!(f, "ConnectionClosed"),
-            VideoStreamReady(_, params) => write!(f, "VideoStreamReady({:?})", params),
+            VideoStreamReady(_, params) => write!(f, "VideoStreamReady({params:?})"),
             VideoFrameAvailable => write!(f, "VideoFrameAvailable"),
         }
     }
@@ -298,6 +298,7 @@ impl LatencyTest {
                     if self.stream_seq.is_none() && self.attachment_id.is_some() {
                         self.stream_seq = Some(chunk.stream_seq);
                         self.stream.reset(
+                            self.attachment_id.unwrap(),
                             chunk.stream_seq,
                             APP_DIMENSION,
                             APP_DIMENSION,
@@ -316,7 +317,7 @@ impl LatencyTest {
                     self.video_texture = Some(tex);
                 }
                 AppEvent::VideoFrameAvailable => {
-                    if self.stream.flush_frames()? {
+                    if self.stream.prepare_frame()? {
                         self.frames_recvd += 1;
 
                         match self.frames_recvd.cmp(&100) {
