@@ -281,8 +281,12 @@ impl LatencyTest {
                             debug!(attachment_id, session_id, "attached to session");
                         }
                     }
-                    protocol::MessageType::Error(protocol::Error { message, .. }) => {
-                        bail!("server error: {}", message);
+                    protocol::MessageType::Error(protocol::Error {
+                        err_code,
+                        error_text,
+                        ..
+                    }) => {
+                        bail!("server error: {}: {}", err_code, error_text);
                     }
                     msg => debug!("unexpected message: {}", msg),
                 },
