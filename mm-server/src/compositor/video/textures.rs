@@ -269,13 +269,13 @@ impl EncodePipeline {
             self.free_surface_texture(tex)?;
         }
 
-        // if self.dmabuf_cache.remove(&dmabuf).is_some() {
-        //     use std::os::fd::AsRawFd;
-        //     debug!(
-        //         "destroying dmabuf (fd: {:?})",
-        //         dmabuf.handles().next().unwrap().as_raw_fd(),
-        //     );
-        // }
+        if self.dmabuf_cache.remove(dmabuf).is_some() {
+            use std::os::fd::AsRawFd;
+            debug!(
+                "destroying dmabuf (fd: {:?})",
+                dmabuf.handles().next().unwrap().as_raw_fd(),
+            );
+        }
 
         Ok(())
     }
