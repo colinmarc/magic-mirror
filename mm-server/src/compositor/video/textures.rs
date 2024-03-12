@@ -15,7 +15,7 @@ use smithay::{
     },
     wayland::shm,
 };
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 
 use crate::vulkan::*;
 
@@ -264,7 +264,7 @@ impl EncodePipeline {
         if let Some(surf) = surf {
             // Keeping a reference to the texture seems worse than freeing
             // an in-use surface.
-            error!("destroying buffer for committed surface");
+            warn!("destroying buffer for committed surface");
             let tex = self.committed_surfaces.remove(&surf).unwrap();
             self.free_surface_texture(tex)?;
         }
@@ -272,8 +272,8 @@ impl EncodePipeline {
         if self.dmabuf_cache.remove(dmabuf).is_some() {
             use std::os::fd::AsRawFd;
             debug!(
-                "destroying dmabuf (fd: {:?})",
-                dmabuf.handles().next().unwrap().as_raw_fd(),
+                fd = dmabuf.handles().next().unwrap().as_raw_fd(),
+                "destroying dmabuf",
             );
         }
 
