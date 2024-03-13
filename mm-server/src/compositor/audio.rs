@@ -132,12 +132,15 @@ impl EncodePipeline {
 
                 let mut in_flight = 3;
                 for _ in 0..in_flight {
-                    done_tx
+                    if done_tx
                         .send(EncodeFrame {
                             buf: Vec::new(),
                             capture_ts: 0,
                         })
-                        .unwrap();
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
                 }
 
                 let mut closing = false;

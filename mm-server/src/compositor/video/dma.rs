@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::sync::Arc;
+use std::{os::fd::IntoRawFd, sync::Arc};
 
 use anyhow::bail;
 use ash::vk;
@@ -147,12 +147,21 @@ pub fn import_dma_texture(
 
     let (width, height) = buffer.size().into();
 
-    trace!(fourcc = ?buffer.format().code, ?format, width, height, "importing dmabuf texture");
-
     let fd = buffer.handles().next().unwrap();
+
+    trace!(
+        fourcc = ?buffer.format().code,
+        ?format, width, height,
+        fd = fd.as_raw_fd(),
+        ?buffer,
+        "importing dmabuf texture"
+    );
 
     let offset = buffer.offsets().next().unwrap();
     assert_eq!(offset, 0);
+
+    // Vulkan wants to own the file descriptor, so we create a dup'd one just for the driver.
+    let fd = fd.try_clone_to_owned()?;
 
     let image = {
         let plane_layouts = [vk::SubresourceLayout {
@@ -204,18 +213,15 @@ pub fn import_dma_texture(
 
         let mut external_mem_info = vk::ImportMemoryFdInfoKHR::default()
             .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
-            .fd(fd.as_raw_fd());
+            .fd(fd.into_raw_fd()); // Vulkan owns the fd now.
 
         // TODO: explicit memory type index
 
         let image_allocate_info = vk::MemoryAllocateInfo::default()
             .allocation_size(image_memory_req.size)
             .push_next(&mut external_mem_info);
-        unsafe {
-            vk.device
-                .allocate_memory(&image_allocate_info, None)
-                .unwrap()
-        }
+
+        unsafe { vk.device.allocate_memory(&image_allocate_info, None)? }
     };
 
     unsafe {

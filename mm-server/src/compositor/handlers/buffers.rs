@@ -15,10 +15,14 @@ use super::State;
 
 impl buffer::BufferHandler for State {
     fn buffer_destroyed(&mut self, buffer: &wl_buffer::WlBuffer) {
+        trace!(buffer = buffer.id().protocol_id(), "destroying buffer");
+
         match dmabuf::get_dmabuf(buffer) {
             Ok(dmabuf) => self.video_pipeline.remove_dmabuf(&dmabuf).unwrap(),
             Err(smithay::utils::UnmanagedResource) => (),
         }
+
+        buffer.release();
     }
 }
 

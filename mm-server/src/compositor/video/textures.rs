@@ -269,12 +269,27 @@ impl EncodePipeline {
             self.free_surface_texture(tex)?;
         }
 
-        if self.dmabuf_cache.remove(dmabuf).is_some() {
+        if let Some((image, dmabuf, descriptor_set)) = self.dmabuf_cache.remove(dmabuf) {
             use std::os::fd::AsRawFd;
             debug!(
                 fd = dmabuf.handles().next().unwrap().as_raw_fd(),
-                "destroying dmabuf",
+                "dropping dmabuf",
             );
+
+            unsafe {
+                // TODO: big hammer etc
+                self.vk
+                    .device
+                    .queue_wait_idle(self.vk.graphics_queue.queue)?;
+
+                drop(image);
+
+                self.vk
+                    .device
+                    .free_descriptor_sets(self.descriptor_pool, &[descriptor_set])?;
+
+                drop(dmabuf);
+            }
         }
 
         Ok(())
@@ -284,6 +299,7 @@ impl EncodePipeline {
         match tex {
             SurfaceTexture::Uploaded { descriptor_set, .. } => unsafe {
                 // We have to make sure the descriptor set is not in use.
+                // TODO: this is a big hammer
                 self.vk
                     .device
                     .queue_wait_idle(self.vk.graphics_queue.queue)?;
@@ -292,17 +308,9 @@ impl EncodePipeline {
                     .device
                     .free_descriptor_sets(self.descriptor_pool, &[descriptor_set])?;
             },
-            SurfaceTexture::Imported {
-                image,
-                dmabuf,
-                buffer,
-                descriptor_set,
-            } => {
+            SurfaceTexture::Imported { buffer, .. } => {
                 // TODO: is this the right place for this?
                 buffer.release();
-
-                // Put the image back in the cache.
-                self.dmabuf_cache.insert(&dmabuf, image, descriptor_set);
             }
         }
 
