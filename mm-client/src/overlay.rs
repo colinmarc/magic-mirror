@@ -102,7 +102,11 @@ impl Overlay {
                     },
                 );
 
-                stat_row(ui, "total latency:", format!("{:.1} ms", latency))
+                stat_row(
+                    ui,
+                    "bitrate:",
+                    format!("{:.1} mbps", STATS.video_bitrate() / 1_000_000.0),
+                );
             }
 
             let [width, height] = ui.window_size();
