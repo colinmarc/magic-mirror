@@ -76,21 +76,6 @@ impl CompositePipeline {
             unsafe { vk.device.create_pipeline_layout(&create_info, None)? }
         };
 
-        // TODO: wlroots uses a dynamically growing pool, maybe we should too.
-        // let descriptor_pool = {
-        //     let pool_size = vk::DescriptorPoolSize::default()
-        //         .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        //         .descriptor_count(256);
-
-        //     let pool_sizes = [pool_size];
-        //     let create_info = vk::DescriptorPoolCreateInfo::default()
-        //         .pool_sizes(&pool_sizes)
-        //         .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
-        //         .max_sets(1024);
-
-        //     unsafe { vk.device.create_descriptor_pool(&create_info, None)? }
-        // };
-
         let pipeline = {
             let vert_bytes =
                 include_bytes!(concat!(env!("OUT_DIR"), "/shaders/composite_vert.spv"));

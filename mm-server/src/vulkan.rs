@@ -637,11 +637,11 @@ fn init_tracy_context(
 pub fn select_memory_type(
     props: &vk::PhysicalDeviceMemoryProperties,
     flags: vk::MemoryPropertyFlags,
-    req: Option<vk::MemoryRequirements>,
+    memory_type_bits: Option<u32>,
 ) -> Option<u32> {
     for i in 0..props.memory_type_count {
-        if let Some(req) = req {
-            if req.memory_type_bits & (1 << i) == 0 {
+        if let Some(mask) = memory_type_bits {
+            if mask & (1 << i) == 0 {
                 continue;
             }
         }
@@ -775,7 +775,7 @@ pub unsafe fn bind_memory_for_image(
     let mem_type_index = select_memory_type(
         props,
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        Some(image_memory_req),
+        Some(image_memory_req.memory_type_bits),
     );
 
     if mem_type_index.is_none() {
@@ -786,8 +786,9 @@ pub unsafe fn bind_memory_for_image(
     }
 
     let memory = {
-        let image_allocate_info =
-            vk::MemoryAllocateInfo::default().allocation_size(image_memory_req.size);
+        let image_allocate_info = vk::MemoryAllocateInfo::default()
+            .allocation_size(image_memory_req.size)
+            .memory_type_index(mem_type_index.unwrap());
 
         unsafe {
             device

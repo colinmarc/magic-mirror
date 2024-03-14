@@ -10,7 +10,7 @@ use drm_fourcc::{DrmFormat, DrmFourcc};
 use smithay::{backend::allocator::dmabuf::Dmabuf, wayland::dmabuf};
 use tracing::{debug, trace};
 
-use crate::vulkan::{create_image_view, VkContext, VkImage};
+use crate::vulkan::{create_image_view, select_memory_type, VkContext, VkImage};
 
 // Note that Mesa will throw out a format if either the opaque or alpha version
 // is missing. For example, Argb8888 requires Xrgb8888, and vice versa.
@@ -200,22 +200,33 @@ pub fn import_dma_texture(
     };
 
     let memory = {
-        // let fd_props = unsafe {
-        //     vk.external_mem_loader
-        //         .get_memory_fd_properties(
-        //             vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
-        //             fd.as_raw_fd(),
-        //         )
-        //         .unwrap()
-        // };
+        let mut fd_props = vk::MemoryFdPropertiesKHR::default();
+
+        unsafe {
+            vk.external_mem_loader.get_memory_fd_properties(
+                vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
+                fd.as_raw_fd(),
+                &mut fd_props,
+            )?;
+        };
 
         let image_memory_req = unsafe { vk.device.get_image_memory_requirements(image) };
+        let memory_type_index = select_memory_type(
+            &vk.device_info.memory_props,
+            vk::MemoryPropertyFlags::empty(),
+            Some(image_memory_req.memory_type_bits & fd_props.memory_type_bits),
+        );
+
+        trace!(
+            ?fd_props,
+            ?memory_type_index,
+            ?image_memory_req,
+            "memory import for dmabuf"
+        );
 
         let mut external_mem_info = vk::ImportMemoryFdInfoKHR::default()
             .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
             .fd(fd.into_raw_fd()); // Vulkan owns the fd now.
-
-        // TODO: explicit memory type index
 
         let image_allocate_info = vk::MemoryAllocateInfo::default()
             .allocation_size(image_memory_req.size)

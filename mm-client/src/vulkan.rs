@@ -757,8 +757,9 @@ pub unsafe fn bind_memory_for_image(
     }
 
     let memory = {
-        let image_allocate_info =
-            vk::MemoryAllocateInfo::builder().allocation_size(image_memory_req.size);
+        let image_allocate_info = vk::MemoryAllocateInfo::builder()
+            .allocation_size(image_memory_req.size)
+            .memory_type_index(mem_type_index.unwrap());
 
         unsafe {
             device

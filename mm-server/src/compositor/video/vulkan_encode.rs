@@ -877,13 +877,13 @@ fn bind_session_memory(
             let mem_type_idx = select_memory_type(
                 &device_info.memory_props,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                Some(req.memory_requirements),
+                Some(req.memory_requirements.memory_type_bits),
             )
             .or_else(|| {
                 select_memory_type(
                     &device_info.memory_props,
                     vk::MemoryPropertyFlags::empty(),
-                    Some(req.memory_requirements),
+                    Some(req.memory_requirements.memory_type_bits),
                 )
             });
 
