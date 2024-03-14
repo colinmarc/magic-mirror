@@ -748,6 +748,8 @@ impl Drop for EncodePipeline {
         let device = &self.vk.device;
 
         unsafe {
+            device.device_wait_idle().unwrap();
+
             for frame in self.swap.iter() {
                 device.free_command_buffers(
                     self.vk.graphics_queue.command_pool,

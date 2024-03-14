@@ -76,6 +76,11 @@ impl Drop for VkExtMemoryFrame {
         unsafe {
             self.vk
                 .device
+                .queue_wait_idle(self.vk.graphics_queue.queue)
+                .unwrap();
+
+            self.vk
+                .device
                 .free_command_buffers(self.vk.graphics_queue.command_pool, &[self.copy_cb]);
             self.vk.device.destroy_fence(self.copy_fence, None);
         }
