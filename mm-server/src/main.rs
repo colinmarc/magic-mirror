@@ -81,6 +81,7 @@ fn main() -> Result<()> {
         config::Config::new(args.config.as_ref(), &args.include_apps).context("error in config")?;
 
     // Override with command line flags.
+    cfg.bug_report_dir = bug_report_dir;
     if let Some(bind) = args.bind {
         cfg.server.bind = bind;
     } else if args.bind_systemd {
