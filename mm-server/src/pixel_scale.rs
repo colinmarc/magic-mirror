@@ -9,6 +9,8 @@ use mm_protocol as protocol;
 pub struct PixelScale(pub u32, pub u32);
 
 impl PixelScale {
+    pub const ONE: Self = Self(1, 1);
+
     pub fn is_fractional(&self) -> bool {
         (self.0 % self.1) != 0
     }
@@ -54,11 +56,5 @@ impl From<PixelScale> for smithay::output::Scale {
         } else {
             Self::Integer((scale.0 / scale.1) as i32)
         }
-    }
-}
-
-impl Default for PixelScale {
-    fn default() -> Self {
-        Self(1, 1)
     }
 }

@@ -87,7 +87,7 @@ pub fn validate_ui_scale(ui_scale: Option<protocol::PixelScale>) -> Result<Pixel
             Ok(s) => Ok(s),
             Err(_) => Err(ValidationError::Invalid("invalid UI scale".into())),
         },
-        None => Ok(PixelScale::default()),
+        None => Ok(PixelScale::ONE),
     }
 }
 

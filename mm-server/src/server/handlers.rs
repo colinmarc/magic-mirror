@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use crate::compositor::{ControlMessage, DisplayParams};
+use crate::{
+    compositor::{ControlMessage, DisplayParams},
+    pixel_scale::PixelScale,
+};
 use crossbeam_channel::{select, Receiver};
 use hashbrown::HashMap;
 use mm_protocol as protocol;
@@ -82,7 +85,7 @@ fn launch_session(
     msg: protocol::LaunchSession,
     response: &WakingSender<protocol::MessageType>,
 ) {
-    let display_params = match validate_display_params(msg.display_params) {
+    let mut display_params = match validate_display_params(msg.display_params) {
         Ok(p) => p,
         Err(ve) => {
             send_validation_error(response, ve, false);
@@ -116,6 +119,14 @@ fn launch_session(
             return;
         }
     };
+
+    // Check force_1x_scale. The way this configuration value works is that by
+    // setting the scale to 1.0, logical resolution in wayland will always be
+    // the same as physical resolution. This should prevent any server-side
+    // upscaling.
+    if application_config.force_1x_scale {
+        display_params.ui_scale = PixelScale::ONE;
+    }
 
     let bug_report_dir = guard.cfg.bug_report_dir.clone();
     drop(guard);
@@ -172,7 +183,7 @@ fn update_session(
     msg: protocol::UpdateSession,
     response: &WakingSender<protocol::MessageType>,
 ) {
-    let display_params = match validate_display_params(msg.display_params) {
+    let mut display_params = match validate_display_params(msg.display_params) {
         Ok(p) => p,
         Err(ve) => {
             send_validation_error(response, ve, false);
@@ -181,6 +192,7 @@ fn update_session(
     };
 
     let mut state = state.lock().unwrap();
+
     let session = match state.sessions.get_mut(&msg.session_id) {
         Some(s) => s,
         None => {
@@ -188,6 +200,10 @@ fn update_session(
             return;
         }
     };
+
+    if session.application_config.force_1x_scale {
+        display_params.ui_scale = PixelScale::ONE;
+    }
 
     if session.display_params != display_params {
         match session.update_display_params(display_params) {

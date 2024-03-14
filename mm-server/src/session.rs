@@ -29,6 +29,7 @@ pub struct Session {
     pub id: u64,
     pub display_params: DisplayParams,
     pub application_name: String,
+    pub application_config: super::config::AppConfig,
     pub started: time::SystemTime,
     pub started_instant: time::Instant,
     pub detached_since: Option<time::Instant>,
@@ -106,6 +107,7 @@ impl Session {
         Ok(Self {
             id,
             application_name: application_name.to_string(),
+            application_config: application_config.clone(),
             display_params,
             started: time::SystemTime::now(),
             started_instant: time::Instant::now(),
