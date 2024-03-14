@@ -60,7 +60,7 @@ impl Default for VideoStreamParams {
 }
 
 pub enum VideoStreamEvent {
-    VideoStreamReady(VkImage, VideoStreamParams),
+    VideoStreamReady(Arc<VkImage>, VideoStreamParams),
     VideoFrameAvailable,
 }
 
@@ -250,7 +250,8 @@ struct CPUDecoder {
     staging_buffer: VkHostBuffer,
     yuv_buffer_offsets: [usize; 3],
     yuv_buffer_strides: [usize; 3],
-    video_texture: VkImage,
+    // This is reference-counted because we share it with the renderer.
+    video_texture: Arc<VkImage>,
     sampler_conversion: vk::SamplerYcbcrConversion,
     texture_width: u32,
     texture_height: u32,
@@ -423,7 +424,7 @@ impl DecoderInit {
     fn into_decoder<T>(
         self,
         proxy: winit::event_loop::EventLoopProxy<T>,
-    ) -> anyhow::Result<(CPUDecoder, VkImage, VideoStreamParams)>
+    ) -> anyhow::Result<(CPUDecoder, Arc<VkImage>, VideoStreamParams)>
     where
         T: From<VideoStreamEvent> + Send,
     {
@@ -539,8 +540,8 @@ impl DecoderInit {
             }
         };
 
-        let video_texture = create_image(
-            &self.vk.device,
+        let video_texture = Arc::new(VkImage::new(
+            self.vk.clone(),
             texture_format,
             width,
             height,
@@ -548,7 +549,8 @@ impl DecoderInit {
                 | vk::ImageUsageFlags::SAMPLED
                 | vk::ImageUsageFlags::TRANSFER_SRC,
             vk::SharingMode::EXCLUSIVE,
-        )?;
+            vk::ImageCreateFlags::empty(),
+        )?);
 
         // Uploads happen on the present queue.
         let upload_cb = create_command_buffer(&self.vk.device, self.vk.present_queue.command_pool)?;
@@ -645,7 +647,7 @@ impl DecoderInit {
             staging_buffer,
             yuv_buffer_offsets: buffer_offsets,
             yuv_buffer_strides: buffer_strides,
-            video_texture,
+            video_texture: video_texture.clone(),
             sampler_conversion,
             texture_width: width,
             texture_height: height,
@@ -896,7 +898,6 @@ impl Drop for CPUDecoder {
             device.queue_wait_idle(self.vk.present_queue.queue).ok();
 
             device.destroy_sampler_ycbcr_conversion(self.sampler_conversion, None);
-            destroy_image(device, &self.video_texture);
             destroy_host_buffer(device, &self.staging_buffer);
             device.destroy_fence(self.upload_fence, None);
             device.destroy_query_pool(self.upload_ts_pool.pool, None);

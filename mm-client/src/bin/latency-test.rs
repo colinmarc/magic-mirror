@@ -40,7 +40,7 @@ pub enum AppEvent {
     Datagram(protocol::MessageType),
     StreamClosed(u64),
     ConnectionClosed,
-    VideoStreamReady(VkImage, VideoStreamParams),
+    VideoStreamReady(Arc<VkImage>, VideoStreamParams),
     VideoFrameAvailable,
 }
 
@@ -87,7 +87,7 @@ struct LatencyTest {
     stream: VideoStream<AppEvent>,
     attachment_id: Option<u64>,
     stream_seq: Option<u64>,
-    video_texture: Option<VkImage>,
+    video_texture: Option<Arc<VkImage>>,
 
     codec: protocol::VideoCodec,
 
@@ -425,7 +425,7 @@ impl LatencyTest {
 
     unsafe fn submit_copy(&mut self) -> anyhow::Result<()> {
         let device = &self.vk.device;
-        let texture = self.video_texture.unwrap();
+        let texture = self.video_texture.as_ref().unwrap();
 
         // Reset the command buffer.
         device.reset_command_buffer(self.copy_cb, vk::CommandBufferResetFlags::empty())?;

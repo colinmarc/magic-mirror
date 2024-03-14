@@ -4,9 +4,12 @@
 //
 // SPDX-License-Identifier: MIT
 
-use std::ffi::{c_void, CStr, CString};
+use std::{
+    ffi::{c_void, CStr, CString},
+    sync::Arc,
+};
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, bail, Context};
 use ash::{
     extensions::{
         ext::DebugUtils,
@@ -41,6 +44,7 @@ pub struct VkDeviceInfo {
     pub supports_h264: bool,
     pub supports_h265: bool,
     pub supports_av1: bool,
+    pub memory_props: vk::PhysicalDeviceMemoryProperties,
     pub host_visible_mem_type_index: u32,
     pub host_mem_is_cached: bool,
     pub selected_extensions: Vec<CString>,
@@ -163,24 +167,26 @@ impl VkDeviceInfo {
         }
 
         // We want HOST_CACHED | HOST_COHERENT, but we can make do with just HOST_VISIBLE.
+        let memory_props = unsafe { instance.get_physical_device_memory_properties(device) };
         let (host_visible_mem_type_index, host_mem_is_cached) = {
-            let memory_props = unsafe { instance.get_physical_device_memory_properties(device) };
             let mut cached = true;
-            let mut idx = memory_type_index(
-                &memory_props.memory_types,
+            let mut idx = select_memory_type(
+                &memory_props,
                 vk::MemoryPropertyFlags::HOST_VISIBLE
                     | vk::MemoryPropertyFlags::HOST_CACHED
                     | vk::MemoryPropertyFlags::HOST_COHERENT,
+                None,
             );
 
             if idx.is_none() {
-                idx = memory_type_index(
-                    &memory_props.memory_types,
-                    vk::MemoryPropertyFlags::HOST_VISIBLE,
+                idx = select_memory_type(
+                    &memory_props,
+                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+                    None,
                 );
 
                 if idx.is_none() {
-                    return Err(anyhow::anyhow!("no host visible memory type found"));
+                    bail!("no host visible memory type found");
                 }
 
                 cached = false;
@@ -198,6 +204,7 @@ impl VkDeviceInfo {
             supports_h264,
             supports_h265,
             supports_av1,
+            memory_props,
             host_visible_mem_type_index,
             host_mem_is_cached,
             selected_extensions,
@@ -569,12 +576,28 @@ fn init_tracy_context(
     }
 }
 
-fn memory_type_index(types: &[vk::MemoryType], flags: vk::MemoryPropertyFlags) -> Option<u32> {
-    types
-        .iter()
-        .enumerate()
-        .find(|(_, memory_type)| memory_type.property_flags.contains(flags))
-        .map(|(index, _)| index as u32)
+pub fn select_memory_type(
+    props: &vk::PhysicalDeviceMemoryProperties,
+    flags: vk::MemoryPropertyFlags,
+    req: Option<vk::MemoryRequirements>,
+) -> Option<u32> {
+    for i in 0..props.memory_type_count {
+        if let Some(req) = req {
+            if req.memory_type_bits & (1 << i) == 0 {
+                continue;
+            }
+        }
+
+        if flags.is_empty()
+            || props.memory_types[i as usize]
+                .property_flags
+                .contains(flags)
+        {
+            return Some(i);
+        }
+    }
+
+    None
 }
 
 fn get_queue_with_command_pool(device: &ash::Device, idx: u32) -> Result<VkQueue, vk::Result> {
@@ -614,76 +637,155 @@ pub fn create_command_buffer(
     Ok(cb)
 }
 
-#[derive(Copy, Clone)]
 pub struct VkImage {
-    pub format: vk::Format,
     pub image: vk::Image,
     pub memory: vk::DeviceMemory,
+    pub format: vk::Format,
+    pub width: u32,
+    pub height: u32,
+    vk: Arc<VkContext>,
 }
 
-pub fn create_image(
-    device: &ash::Device,
-    format: vk::Format,
-    width: u32,
-    height: u32,
-    usage: vk::ImageUsageFlags,
-    sharing_mode: vk::SharingMode,
-) -> Result<VkImage, vk::Result> {
-    let image = {
-        let create_info = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(format)
-            .extent(vk::Extent3D {
-                width,
-                height,
-                depth: 1,
-            })
-            .mip_levels(1)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::LINEAR)
-            .usage(usage)
-            .sharing_mode(sharing_mode)
-            .initial_layout(vk::ImageLayout::UNDEFINED);
+impl VkImage {
+    pub fn new(
+        vk: Arc<VkContext>,
+        format: vk::Format,
+        width: u32,
+        height: u32,
+        usage: vk::ImageUsageFlags,
+        sharing_mode: vk::SharingMode,
+        flags: vk::ImageCreateFlags,
+    ) -> anyhow::Result<Self> {
+        let image = {
+            let create_info = vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(format)
+                .extent(vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(usage)
+                .sharing_mode(sharing_mode)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .flags(flags);
 
-        unsafe { device.create_image(&create_info, None)? }
-    };
+            unsafe {
+                vk.device
+                    .create_image(&create_info, None)
+                    .context("VkCreateImage")?
+            }
+        };
+
+        let memory =
+            unsafe { bind_memory_for_image(&vk.device, &vk.device_info.memory_props, image)? };
+
+        Ok(Self {
+            image,
+            memory,
+            format,
+            width,
+            height,
+            vk,
+        })
+    }
+
+    pub fn wrap(
+        vk: Arc<VkContext>,
+        image: vk::Image,
+        memory: vk::DeviceMemory,
+        format: vk::Format,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            image,
+            memory,
+            format,
+            width,
+            height,
+            vk,
+        }
+    }
+
+    pub fn extent(&self) -> vk::Extent2D {
+        vk::Extent2D {
+            width: self.width,
+            height: self.height,
+        }
+    }
+
+    pub fn rect(&self) -> vk::Rect2D {
+        vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: self.extent(),
+        }
+    }
+}
+
+impl Drop for VkImage {
+    fn drop(&mut self) {
+        unsafe {
+            self.vk.device.destroy_image(self.image, None);
+            self.vk.device.free_memory(self.memory, None);
+        }
+    }
+}
+
+pub unsafe fn bind_memory_for_image(
+    device: &ash::Device,
+    props: &vk::PhysicalDeviceMemoryProperties,
+    image: vk::Image,
+) -> anyhow::Result<vk::DeviceMemory> {
+    let image_memory_req = unsafe { device.get_image_memory_requirements(image) };
+
+    let mem_type_index = select_memory_type(
+        props,
+        vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        Some(image_memory_req),
+    );
+
+    if mem_type_index.is_none() {
+        bail!(
+            "no appropriate memory type found for reqs: {:?}",
+            image_memory_req
+        );
+    }
 
     let memory = {
-        let image_memory_req = unsafe { device.get_image_memory_requirements(image) };
+        let image_allocate_info =
+            vk::MemoryAllocateInfo::builder().allocation_size(image_memory_req.size);
 
-        let image_allocate_info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(image_memory_req.size)
-            .memory_type_index(0);
-
-        unsafe { device.allocate_memory(&image_allocate_info, None)? }
+        unsafe {
+            device
+                .allocate_memory(&image_allocate_info, None)
+                .context("VkAllocateMemory")?
+        }
     };
 
     unsafe {
-        device.bind_image_memory(image, memory, 0)?;
+        device
+            .bind_image_memory(image, memory, 0)
+            .context("VkBindImageMemory")?;
     }
 
-    Ok(VkImage {
-        format,
-        image,
-        memory,
-    })
+    Ok(memory)
 }
 
-pub unsafe fn destroy_image(device: &ash::Device, image: &VkImage) {
-    device.destroy_image(image.image, None);
-    device.free_memory(image.memory, None);
-}
-
-pub fn create_image_view(
+pub unsafe fn create_image_view(
     device: &ash::Device,
-    image: &VkImage,
-    yuv_sampler_conversion: Option<vk::SamplerYcbcrConversion>,
-) -> Result<vk::ImageView, vk::Result> {
+    image: vk::Image,
+    format: vk::Format,
+    sampler_conversion: Option<vk::SamplerYcbcrConversion>,
+) -> anyhow::Result<vk::ImageView> {
     let mut create_info = vk::ImageViewCreateInfo::builder()
-        .image(image.image)
+        .image(image)
         .view_type(vk::ImageViewType::TYPE_2D)
-        .format(image.format)
+        .format(format)
         .components(vk::ComponentMapping {
             r: vk::ComponentSwizzle::IDENTITY,
             g: vk::ComponentSwizzle::IDENTITY,
@@ -693,21 +795,21 @@ pub fn create_image_view(
         .subresource_range(vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
-            level_count: 1,
+            level_count: vk::REMAINING_MIP_LEVELS,
             base_array_layer: 0,
-            layer_count: 1,
+            layer_count: vk::REMAINING_ARRAY_LAYERS,
         });
 
-    if let Some(conv) = yuv_sampler_conversion {
-        let mut sampler_info = vk::SamplerYcbcrConversionInfo::builder()
-            .conversion(conv)
-            .build();
-
-        create_info = create_info.push_next(&mut sampler_info);
-        unsafe { device.create_image_view(&create_info, None) }
-    } else {
-        unsafe { device.create_image_view(&create_info, None) }
+    let mut sampler_conversion_info;
+    if let Some(sampler_conversion) = sampler_conversion {
+        sampler_conversion_info =
+            vk::SamplerYcbcrConversionInfo::builder().conversion(sampler_conversion);
+        create_info = create_info.push_next(&mut sampler_conversion_info);
     }
+
+    device
+        .create_image_view(&create_info, None)
+        .context("VkCreateImageView")
 }
 
 #[derive(Copy, Clone)]

@@ -53,7 +53,7 @@ struct Swapchain {
 
     sampler_conversion: vk::SamplerYcbcrConversion,
     sampler: vk::Sampler,
-    video_texture_view: Option<vk::ImageView>,
+    bound_video_texture: Option<(Arc<VkImage>, vk::ImageView)>,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     pipeline_layout: vk::PipelineLayout,
@@ -77,7 +77,7 @@ struct SwapImage {
 
 struct VideoTexture {
     params: VideoStreamParams,
-    texture: VkImage,
+    texture: Arc<VkImage>,
 }
 
 impl Renderer {
@@ -257,9 +257,16 @@ impl Renderer {
             unsafe { device.create_sampler(&create_info, None)? }
         };
 
-        let video_texture_view = if let Some(tex) = self.video_texture.as_ref() {
-            let view = create_image_view(&self.vk.device, &tex.texture, Some(sampler_conversion))?;
-            Some(view)
+        let bound_video_texture = if let Some(tex) = self.video_texture.as_ref() {
+            let view = create_image_view(
+                &self.vk.device,
+                tex.texture.image,
+                tex.texture.format,
+                Some(sampler_conversion),
+            )?;
+
+            // Increment the reference count on the texture.
+            Some((tex.texture.clone(), view))
         } else {
             None
         };
@@ -429,10 +436,10 @@ impl Renderer {
                     .unwrap();
 
                 // TODO: do the write in bind_video_texture?
-                if let Some(view) = video_texture_view {
+                if let Some((_, view)) = bound_video_texture.as_ref() {
                     let info = vk::DescriptorImageInfo::builder()
                         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .image_view(view);
+                        .image_view(*view);
 
                     let image_info = &[info.build()];
                     let sampler_write = vk::WriteDescriptorSet::builder()
@@ -472,27 +479,7 @@ impl Renderer {
         let swapchain_images = swapchain_images
             .into_iter()
             .map(|image| {
-                let image_view = {
-                    let create_info = vk::ImageViewCreateInfo::builder()
-                        .image(image)
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .format(surface_format.format)
-                        .components(vk::ComponentMapping {
-                            r: vk::ComponentSwizzle::IDENTITY,
-                            g: vk::ComponentSwizzle::IDENTITY,
-                            b: vk::ComponentSwizzle::IDENTITY,
-                            a: vk::ComponentSwizzle::IDENTITY,
-                        })
-                        .subresource_range(vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::COLOR,
-                            base_mip_level: 0,
-                            level_count: 1,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        });
-
-                    unsafe { device.create_image_view(&create_info, None)? }
-                };
+                let image_view = create_image_view(device, image, surface_format.format, None)?;
 
                 Ok(SwapImage {
                     image,
@@ -511,7 +498,7 @@ impl Renderer {
             descriptor_set_layout,
             sampler_conversion,
             sampler,
-            video_texture_view,
+            bound_video_texture,
             pipeline_layout,
             pipeline,
         };
@@ -583,7 +570,7 @@ impl Renderer {
 
     pub fn bind_video_texture(
         &mut self,
-        texture: VkImage,
+        texture: Arc<VkImage>,
         params: VideoStreamParams,
     ) -> Result<()> {
         // TODO: no need to recreate the sampler if the params match.
@@ -858,8 +845,10 @@ impl Renderer {
         device.destroy_sampler(swapchain.sampler, None);
         device.destroy_sampler_ycbcr_conversion(swapchain.sampler_conversion, None);
 
-        if let Some(view) = swapchain.video_texture_view.take() {
+        if let Some((_img, view)) = swapchain.bound_video_texture.take() {
             device.destroy_image_view(view, None);
+            // We probably drop the last reference to the image here, which then
+            // gets destroyed.
         }
 
         device.destroy_pipeline(swapchain.pipeline, None);

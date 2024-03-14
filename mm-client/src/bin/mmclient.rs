@@ -833,7 +833,7 @@ pub enum AppEvent {
     Datagram(MessageType),
     StreamClosed(u64),
     ConnectionClosed,
-    VideoStreamReady(vulkan::VkImage, video::VideoStreamParams),
+    VideoStreamReady(Arc<vulkan::VkImage>, video::VideoStreamParams),
     VideoFrameAvailable,
 }
 
