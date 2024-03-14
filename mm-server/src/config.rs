@@ -78,6 +78,7 @@ mod parsed {
     }
 
     #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
+    #[serde(deny_unknown_fields)]
     pub(super) struct ServerConfig {
         pub(super) bind: Option<String>,
         pub(super) bind_systemd: Option<bool>,
@@ -88,12 +89,14 @@ mod parsed {
     }
 
     #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
+    #[serde(deny_unknown_fields)]
     pub(super) struct DefaultAppSettings {
         pub(super) xwayland: Option<bool>,
         pub(super) force_1x_scale: Option<bool>,
     }
 
     #[derive(Debug, Clone, PartialEq, Deserialize)]
+    #[serde(deny_unknown_fields)]
     pub(super) struct AppConfig {
         pub(super) command: Vec<String>,
         pub(super) environment: Option<HashMap<String, String>>,

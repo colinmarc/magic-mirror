@@ -77,8 +77,8 @@ fn main() -> Result<()> {
     }
 
     // Load config.
-    let mut cfg =
-        config::Config::new(args.config.as_ref(), &args.include_apps).context("error in config")?;
+    let mut cfg = config::Config::new(args.config.as_ref(), &args.include_apps)
+        .context("failed to read config")?;
 
     // Override with command line flags.
     cfg.bug_report_dir = bug_report_dir;

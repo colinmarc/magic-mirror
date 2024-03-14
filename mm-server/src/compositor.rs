@@ -772,7 +772,11 @@ fn spawn_client(
     // let dbus_socket = Path::join(Path::new(xdg_runtime_dir), "dbus");
     // envs.push(("DBUS_SESSION_BUS_ADDRESS".into(), dbus_socket.into()));
 
-    debug!("launching child process: {:?}", exe_path);
+    debug!(
+        exe = exe_path.to_string_lossy().to_string(),
+        env = ?envs,
+        "launching child process"
+    );
 
     let mut command = unshare::Command::new(&exe_path);
     let command = command
