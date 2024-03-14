@@ -117,6 +117,7 @@ fn launch_session(
         }
     };
 
+    let bug_report_dir = guard.cfg.bug_report_dir.clone();
     drop(guard);
 
     let session = match Session::launch(
@@ -124,6 +125,7 @@ fn launch_session(
         &msg.application_name,
         &application_config,
         display_params,
+        bug_report_dir,
     ) {
         Ok(s) => s,
         Err(e) => {
@@ -253,9 +255,8 @@ fn attach(
         }
     };
 
-    let (cfg, handle, display_params) = {
+    let (handle, display_params, bug_report_dir) = {
         let mut state = state.lock().unwrap();
-        let cfg = state.cfg.clone();
 
         let session = match state.sessions.get_mut(&session_id) {
             Some(s) => s,
@@ -275,7 +276,11 @@ fn attach(
         }
 
         match session.attach(true, video_params, audio_params) {
-            Ok(handle) => (cfg, handle, session.display_params),
+            Ok(handle) => (
+                handle,
+                session.display_params,
+                session.bug_report_dir.clone(),
+            ),
             Err(e) => {
                 error!("failed to attach to session: {}", e);
                 send_err(
@@ -340,7 +345,7 @@ fn attach(
     let worst_case_bitrate =
         (video_params.width as f64 * video_params.height as f64 * 3.0 / 2.0) as f64 * 8.0 / 1000.0;
 
-    let mut debug_outputs = if cfg.bug_report_dir.is_some() {
+    let mut debug_outputs = if bug_report_dir.is_some() {
         Some(HashMap::<u64, std::fs::File>::new())
     } else {
         None
@@ -502,7 +507,7 @@ fn attach(
 
                         if let Some(ref mut debug_outputs) = debug_outputs {
                             let file = debug_outputs.entry(stream_seq).or_insert_with(|| {
-                                let dir = cfg.bug_report_dir.clone().unwrap();
+                                let dir = bug_report_dir.clone().unwrap();
                                 let ext = format!("{video_codec:?}").to_lowercase();
                                 let path = dir.join(format!("attachment-{}-{}.{}", handle.attachment_id, stream_seq, ext));
                                 std::fs::File::create(path).unwrap()

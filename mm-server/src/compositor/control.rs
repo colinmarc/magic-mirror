@@ -2,22 +2,12 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::ffi::OsString;
-
 use crossbeam_channel::Sender;
 
 use crate::{
     codec::{AudioCodec, VideoCodec},
     pixel_scale::PixelScale,
 };
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AppLaunchConfig {
-    pub exe_path: OsString,
-    pub args: Vec<OsString>,
-    pub env: Vec<(OsString, OsString)>,
-    pub enable_xwayland: bool,
-}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct DisplayParams {

@@ -14,7 +14,7 @@ use std::{
     ffi::{OsStr, OsString},
     io::{BufRead, BufReader},
     os::fd::AsRawFd,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time,
 };
@@ -22,6 +22,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use crossbeam_channel as crossbeam;
 use lazy_static::*;
+use pathsearch::find_executable_in_path;
 use smithay::{
     reexports::wayland_server::{self, Resource},
     wayland::xwayland_shell,
@@ -29,7 +30,9 @@ use smithay::{
 };
 use tracing::{debug, info, trace, trace_span};
 
-use crate::{pixel_scale::PixelScale, vulkan::VkContext, waking_sender::WakingSender};
+use crate::{
+    config::AppConfig, pixel_scale::PixelScale, vulkan::VkContext, waking_sender::WakingSender,
+};
 pub use control::*;
 use window::Window;
 use xserver::XWaylandLoop;
@@ -96,13 +99,15 @@ pub struct Compositor {
     control_messages_send: WakingSender<ControlMessage>,
     attachments: AttachedClients,
 
+    bug_report_dir: Option<PathBuf>,
+
     // At the bottom for drop order.
     display: wayland_server::Display<State>,
     num_clients: usize,
 }
 
 pub struct State {
-    launch_config: AppLaunchConfig,
+    launch_config: AppConfig,
     display_params: DisplayParams,
     new_display_params: Option<DisplayParams>,
     output: smithay::output::Output,
@@ -148,8 +153,9 @@ impl wayland_server::backend::ClientData for ClientState {
 impl Compositor {
     pub fn new(
         vk: Arc<VkContext>,
-        launch_config: AppLaunchConfig,
+        launch_config: AppConfig,
         display_params: DisplayParams,
+        bug_report_dir: Option<PathBuf>,
     ) -> Result<Self> {
         let poll = mio::Poll::new()?;
         let display = wayland_server::Display::new()?;
@@ -229,7 +235,7 @@ impl Compositor {
         ))?;
 
         // Bind the xwayland sockets.
-        let xwayland = if state.launch_config.enable_xwayland {
+        let xwayland = if state.launch_config.xwayland {
             Some(XWaylandLoop::new(dh.clone())?)
         } else {
             None
@@ -251,6 +257,7 @@ impl Compositor {
             control_messages_recv: recv,
             control_messages_send: send,
             attachments,
+            bug_report_dir,
         })
     }
 
@@ -296,6 +303,18 @@ impl Compositor {
             .register(&mut pipe_recv, CHILD, mio::Interest::READABLE)?;
         let mut child_output = BufReader::new(&mut pipe_recv);
 
+        let mut child_debug_log = if let Some(bug_report_dir) = self.bug_report_dir.as_ref() {
+            let exe_name = Path::new(&self.state.launch_config.command[0])
+                .file_name()
+                .unwrap();
+            let path =
+                bug_report_dir.join(format!("{}-{}.log", exe_name.to_string_lossy(), child.id()));
+
+            Some(std::fs::File::create(path)?)
+        } else {
+            None
+        };
+
         let mut ready = Some(ready);
         let start = time::Instant::now();
 
@@ -340,6 +359,10 @@ impl Compositor {
                             buf.clear();
                             match child_output.read_line(&mut buf) {
                                 Ok(_) => {
+                                    if let Some(child_debug_log) = &mut child_debug_log {
+                                        std::io::Write::write_all(child_debug_log, buf.as_bytes())?;
+                                    }
+
                                     let buf = buf.trim();
                                     if !buf.is_empty() {
                                         trace!(target: "mmserver::compositor::child", "{}", buf);
@@ -716,7 +739,7 @@ fn create_headless_output(
 }
 
 fn spawn_client(
-    launch_config: AppLaunchConfig,
+    app_config: AppConfig,
     xdg_runtime_dir: &OsStr,
     socket_name: &OsStr,
     x11_display: Option<u32>,
@@ -726,7 +749,12 @@ fn spawn_client(
     let stdout = unshare::Stdio::dup_file(&pipe)?;
     let stderr = unshare::Stdio::dup_file(&pipe)?;
 
-    let mut envs = launch_config.env.clone();
+    let mut args = app_config.command.clone();
+    let exe = args.remove(0);
+    let exe_path =
+        find_executable_in_path(&exe).ok_or(anyhow!("command {:?} not in PATH", &exe))?;
+
+    let mut envs: Vec<(OsString, OsString)> = app_config.env.clone().into_iter().collect();
     envs.push(("WAYLAND_DISPLAY".into(), socket_name.into()));
 
     if let Some(x11_display) = x11_display {
@@ -744,11 +772,11 @@ fn spawn_client(
     // let dbus_socket = Path::join(Path::new(xdg_runtime_dir), "dbus");
     // envs.push(("DBUS_SESSION_BUS_ADDRESS".into(), dbus_socket.into()));
 
-    debug!("launching child process: {:?}", launch_config.exe_path);
+    debug!("launching child process: {:?}", exe_path);
 
-    let mut command = unshare::Command::new(&launch_config.exe_path);
+    let mut command = unshare::Command::new(&exe_path);
     let command = command
-        .args(&launch_config.args)
+        .args(&args)
         .envs(envs)
         .stdin(unshare::Stdio::null())
         .stdout(stdout)
@@ -758,7 +786,7 @@ fn spawn_client(
         Ok(child) => Ok(child),
         Err(e) => Err(anyhow!(
             "failed to spawn child process '{}': {:#}",
-            launch_config.exe_path.to_string_lossy(),
+            exe_path.to_string_lossy(),
             e
         )),
     }

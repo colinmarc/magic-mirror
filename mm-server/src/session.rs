@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use std::{
+    path::PathBuf,
     sync::{Arc, Mutex},
     time,
 };
@@ -19,8 +20,8 @@ use crate::waking_sender::WakingSender;
 use crate::{
     codec::probe_codec,
     compositor::{
-        AppLaunchConfig, AudioStreamParams, Compositor, CompositorEvent, ControlMessage,
-        DisplayParams, VideoStreamParams,
+        AudioStreamParams, Compositor, CompositorEvent, ControlMessage, DisplayParams,
+        VideoStreamParams,
     },
 };
 
@@ -36,6 +37,9 @@ pub struct Session {
     comp_thread_handle: std::thread::JoinHandle<Result<()>>,
     control_sender: WakingSender<ControlMessage>,
     operator_attachment_id: Option<u64>,
+
+    pub bug_report_dir: Option<PathBuf>,
+
     vk: Arc<VkContext>,
 }
 
@@ -53,34 +57,35 @@ impl Session {
         application_name: &str,
         application_config: &super::config::AppConfig,
         display_params: DisplayParams,
+        bug_report_dir: Option<PathBuf>,
     ) -> Result<Self> {
         let id = generate_id();
 
-        let mut args = application_config.command.clone();
-        let exe = args.remove(0);
-        let exe_path = find_executable_in_path(&exe)
-            .ok_or(anyhow!("command {:?} not in PATH", &exe))?
-            .into();
+        // Do an early check that the executable exists.
+        let exe = application_config.command.first().unwrap();
+        find_executable_in_path(exe).ok_or(anyhow!("command {:?} not in PATH", exe))?;
 
-        let env = application_config.env.clone().into_iter().collect();
-
-        let launch_config = AppLaunchConfig {
-            exe_path,
-            args,
-            env,
-            enable_xwayland: application_config.xwayland,
-        };
+        // Create a folder in the bug report directory just for this session.
+        let mut bug_report_dir = bug_report_dir;
+        if let Some(ref mut dir) = bug_report_dir {
+            dir.push(format!("session-{}", id));
+            std::fs::create_dir_all(dir)?;
+        }
 
         // Launch the compositor, which in turn launches the app.
         let (ready_send, ready_recv) = oneshot::channel();
         let vk_clone = vk.clone();
+        let app_cfg = application_config.clone();
+        let bug_report_dir_clone = bug_report_dir.clone();
         let comp_thread_handle = std::thread::spawn(move || {
             tracy_client::set_thread_name!("Compositor");
 
             let span = debug_span!("session", session_id = id);
             let _guard = span.enter();
 
-            let mut compositor = Compositor::new(vk_clone, launch_config, display_params)?;
+            let mut compositor =
+                Compositor::new(vk_clone, app_cfg, display_params, bug_report_dir_clone)?;
+
             compositor.run(ready_send)
         });
 
@@ -109,6 +114,7 @@ impl Session {
             operator_attachment_id: None,
             comp_thread_handle,
             control_sender,
+            bug_report_dir,
             vk,
         })
     }
@@ -172,6 +178,7 @@ impl Session {
 
         self.operator_attachment_id = Some(id);
         self.detached_since = None;
+
         Ok(Attachment {
             attachment_id: id,
             events: events_recv,
