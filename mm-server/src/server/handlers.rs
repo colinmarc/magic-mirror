@@ -472,6 +472,9 @@ fn attach(
             recv(&handle.events) -> event => {
                 match event {
                     Ok(CompositorEvent::Shutdown) => {
+                        // The session ended, probably because the app exited.
+                        state.lock().unwrap().sessions.remove(&session_id);
+
                         outgoing.send(protocol::SessionEnded {}.into()).ok();
                         return;
                     }
