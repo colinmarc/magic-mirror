@@ -68,6 +68,7 @@ impl Session {
             exe_path,
             args,
             env,
+            enable_xwayland: application_config.xwayland,
         };
 
         // Launch the compositor, which in turn launches the app.

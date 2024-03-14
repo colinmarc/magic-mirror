@@ -89,7 +89,7 @@ pub struct Compositor {
     xdg_runtime_dir: mktemp::Temp,
     socket_name: OsString,
     listening_socket: wayland_server::ListeningSocket,
-    xwayland: XWaylandLoop,
+    xwayland: Option<XWaylandLoop>,
     poll: mio::Poll,
     state: State,
     control_messages_recv: crossbeam::Receiver<ControlMessage>,
@@ -229,7 +229,11 @@ impl Compositor {
         ))?;
 
         // Bind the xwayland sockets.
-        let xwayland = XWaylandLoop::new(dh.clone())?;
+        let xwayland = if state.launch_config.enable_xwayland {
+            Some(XWaylandLoop::new(dh.clone())?)
+        } else {
+            None
+        };
 
         let waker = Arc::new(mio::Waker::new(poll.registry(), WAKER)?);
         let (send, recv) = crossbeam::unbounded();
@@ -282,7 +286,7 @@ impl Compositor {
             self.state.launch_config.clone(),
             self.xdg_runtime_dir.as_os_str(),
             &self.socket_name,
-            self.xwayland.x11_display,
+            self.xwayland.as_ref().map(|xw| xw.x11_display),
             pipe_send,
         )
         .context("failed to start application process")?;
@@ -352,7 +356,10 @@ impl Compositor {
                         }
                     }
                     DISPLAY => {
-                        self.xwayland.dispatch(&mut self.state)?;
+                        if let Some(xwayland) = &mut self.xwayland {
+                            xwayland.dispatch(&mut self.state)?;
+                        }
+
                         self.display.dispatch_clients(&mut self.state)?;
                     }
                     TIMER => {
@@ -360,10 +367,13 @@ impl Compositor {
 
                         // TODO: this shouldn't be necessary.
                         self.display.dispatch_clients(&mut self.state)?;
-                        self.xwayland.dispatch(&mut self.state)?;
 
-                        // Bookkeeping for X11 windows.
-                        self.state.map_delayed_xwindows()?;
+                        if let Some(xwayland) = &mut self.xwayland {
+                            xwayland.dispatch(&mut self.state)?;
+
+                            // Bookkeeping for X11 windows.
+                            self.state.map_delayed_xwindows()?;
+                        }
 
                         // TODO: first frame?
                         if !self.state.window_stack.is_empty() {
@@ -709,7 +719,7 @@ fn spawn_client(
     launch_config: AppLaunchConfig,
     xdg_runtime_dir: &OsStr,
     socket_name: &OsStr,
-    x11_display: u32,
+    x11_display: Option<u32>,
     pipe: mio::unix::pipe::Sender,
 ) -> anyhow::Result<unshare::Child> {
     // This gets dropped when we return, closing the write side (in this process)
@@ -718,7 +728,10 @@ fn spawn_client(
 
     let mut envs = launch_config.env.clone();
     envs.push(("WAYLAND_DISPLAY".into(), socket_name.into()));
-    envs.push(("DISPLAY".into(), format!(":{}", x11_display).into()));
+
+    if let Some(x11_display) = x11_display {
+        envs.push(("DISPLAY".into(), format!(":{}", x11_display).into()));
+    }
 
     envs.push(("XDG_RUNTIME_DIR".into(), xdg_runtime_dir.into()));
 

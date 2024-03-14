@@ -16,6 +16,7 @@ pub struct AppLaunchConfig {
     pub exe_path: OsString,
     pub args: Vec<OsString>,
     pub env: Vec<(OsString, OsString)>,
+    pub enable_xwayland: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
