@@ -198,7 +198,7 @@ impl CompositePipeline {
         };
 
         let image_info = vk::DescriptorImageInfo::default()
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image_layout(vk::ImageLayout::GENERAL)
             .image_view(image.view);
 
         let image_infos = [image_info];

@@ -40,7 +40,7 @@ threadpool = "1.8.1"
 crossbeam-channel = "0.5.8"
 scopeguard = "1.2.0"
 hashbrown = "0.14.1"
-nix = { version = "0.27.1", features = ["socket", "uio", "net"] }
+nix = { version = "0.27.1", features = ["socket", "uio", "net", "ioctl"] }
 drm-fourcc = "2.2.0"
 ctrlc = "3.4.1"
 clap = { version = "4", features = ["derive"] }

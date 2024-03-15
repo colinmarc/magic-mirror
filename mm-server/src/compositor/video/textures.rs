@@ -19,21 +19,24 @@ use tracing::{debug, error, trace, warn};
 
 use crate::vulkan::*;
 
-use super::{dma::import_dma_texture, EncodePipeline};
+use super::{dmabuf::import_dma_texture, EncodePipeline};
 
-pub struct DmabufCache(
-    HashMap<dmabuf::WeakDmabuf, (Rc<VkImage>, dmabuf::Dmabuf, vk::DescriptorSet)>,
-);
+#[derive(Clone)]
+pub struct DmabufCacheEntry {
+    pub image: Rc<VkImage>,
+    pub dmabuf: dmabuf::Dmabuf,
+    pub semaphore: vk::Semaphore,
+    pub descriptor_set: vk::DescriptorSet,
+}
+
+pub struct DmabufCache(HashMap<dmabuf::WeakDmabuf, DmabufCacheEntry>);
 
 impl DmabufCache {
     pub fn new() -> Self {
         Self(HashMap::new())
     }
 
-    pub fn get(
-        &self,
-        dmabuf: &dmabuf::Dmabuf,
-    ) -> Option<(Rc<VkImage>, dmabuf::Dmabuf, vk::DescriptorSet)> {
+    pub fn get(&self, dmabuf: &dmabuf::Dmabuf) -> Option<DmabufCacheEntry> {
         self.0.get(&dmabuf.weak()).cloned()
     }
 
@@ -42,15 +45,20 @@ impl DmabufCache {
         dmabuf: &dmabuf::Dmabuf,
         image: Rc<VkImage>,
         descriptor_set: vk::DescriptorSet,
-    ) -> Option<(Rc<VkImage>, dmabuf::Dmabuf, vk::DescriptorSet)> {
-        self.0
-            .insert(dmabuf.weak(), (image, dmabuf.clone(), descriptor_set))
+        semaphore: vk::Semaphore,
+    ) -> Option<DmabufCacheEntry> {
+        self.0.insert(
+            dmabuf.weak(),
+            DmabufCacheEntry {
+                image,
+                dmabuf: dmabuf.clone(),
+                semaphore,
+                descriptor_set,
+            },
+        )
     }
 
-    pub fn remove(
-        &mut self,
-        dmabuf: &dmabuf::Dmabuf,
-    ) -> Option<(Rc<VkImage>, dmabuf::Dmabuf, vk::DescriptorSet)> {
+    pub fn remove(&mut self, dmabuf: &dmabuf::Dmabuf) -> Option<DmabufCacheEntry> {
         self.0.remove(&dmabuf.weak())
     }
 
@@ -81,6 +89,7 @@ pub enum SurfaceTexture {
         dmabuf: dmabuf::Dmabuf,
         buffer: wl_buffer::WlBuffer,
         image: Rc<VkImage>,
+        semaphore: vk::Semaphore,
         descriptor_set: vk::DescriptorSet,
     },
 }
@@ -203,12 +212,19 @@ impl EncodePipeline {
         if !self.dmabuf_cache.contains_key(&buffer) {
             let texture =
                 import_dma_texture(self.vk.clone(), &buffer, vk::ImageUsageFlags::SAMPLED)?;
+
             let descriptor_set = self
                 .composite_pipeline
                 .ds_for_texture(&texture, self.descriptor_pool)?;
 
+            let semaphore = unsafe {
+                self.vk
+                    .device
+                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?
+            };
+
             self.dmabuf_cache
-                .insert(&buffer, Rc::new(texture), descriptor_set);
+                .insert(&buffer, Rc::new(texture), descriptor_set, semaphore);
         }
 
         Ok(())
@@ -220,7 +236,12 @@ impl EncodePipeline {
         buffer: &wl_buffer::WlBuffer,
         dmabuf: dmabuf::Dmabuf,
     ) -> anyhow::Result<()> {
-        let (image, _, descriptor_set) = self
+        let DmabufCacheEntry {
+            image,
+            descriptor_set,
+            semaphore,
+            ..
+        } = self
             .dmabuf_cache
             .get(&dmabuf)
             .ok_or(anyhow!("dmabuf not imported"))?;
@@ -229,6 +250,7 @@ impl EncodePipeline {
             surface.clone(),
             SurfaceTexture::Imported {
                 dmabuf,
+                semaphore,
                 buffer: buffer.clone(),
                 image,
                 descriptor_set,
@@ -269,24 +291,28 @@ impl EncodePipeline {
             self.free_surface_texture(tex)?;
         }
 
-        if let Some((image, dmabuf, descriptor_set)) = self.dmabuf_cache.remove(dmabuf) {
+        if let Some(DmabufCacheEntry {
+            image,
+            dmabuf,
+            descriptor_set,
+            semaphore,
+        }) = self.dmabuf_cache.remove(dmabuf)
+        {
             use std::os::fd::AsRawFd;
             debug!(
                 fd = dmabuf.handles().next().unwrap().as_raw_fd(),
                 "dropping dmabuf",
             );
 
+            let device = &self.vk.device;
             unsafe {
                 // TODO: big hammer etc
-                self.vk
-                    .device
-                    .queue_wait_idle(self.vk.graphics_queue.queue)?;
+                device.queue_wait_idle(self.vk.graphics_queue.queue)?;
 
                 drop(image);
 
-                self.vk
-                    .device
-                    .free_descriptor_sets(self.descriptor_pool, &[descriptor_set])?;
+                device.free_descriptor_sets(self.descriptor_pool, &[descriptor_set])?;
+                self.vk.device.destroy_semaphore(semaphore, None);
 
                 drop(dmabuf);
             }

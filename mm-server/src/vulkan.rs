@@ -15,7 +15,7 @@ use std::ffi::{c_void, CStr, CString};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use ash::extensions::{ext, khr::ExternalMemoryFd as ExternalMemoryFdExt};
+use ash::extensions::{ext, khr};
 use ash::vk;
 use tracing::{debug, error, info, warn};
 
@@ -30,8 +30,9 @@ pub enum Vendor {
 
 pub struct VkContext {
     pub entry: ash::Entry,
-    pub external_mem_loader: ExternalMemoryFdExt,
-    pub video_loaders: Option<(VideoQueueExt, VideoEncodeQueueExt)>,
+    pub external_memory_api: khr::ExternalMemoryFd,
+    pub external_semaphore_api: khr::ExternalSemaphoreFd,
+    pub video_apis: Option<(VideoQueueExt, VideoEncodeQueueExt)>,
 
     pub instance: ash::Instance,
     pub debug: Option<VkDebugContext>,
@@ -177,10 +178,13 @@ impl VkDeviceInfo {
         };
 
         let mut selected_extensions = vec![
+            // All required for dma-buf import.
             vk::KhrExternalMemoryFdFn::NAME.to_owned(),
+            vk::KhrExternalSemaphoreFdFn::NAME.to_owned(),
             vk::ExtExternalMemoryDmaBufFn::NAME.to_owned(),
             vk::ExtImageDrmFormatModifierFn::NAME.to_owned(),
             vk::ExtPhysicalDeviceDrmFn::NAME.to_owned(),
+            vk::ExtQueueFamilyForeignFn::NAME.to_owned(),
         ];
 
         for ext in selected_extensions.iter() {
@@ -253,6 +257,26 @@ impl VkDeviceInfo {
 
             (idx.unwrap(), cached)
         };
+
+        // Make sure we have the features needed for dmabuf import.
+        let mut semaphore_props = vk::ExternalSemaphoreProperties::default();
+        unsafe {
+            let info = vk::PhysicalDeviceExternalSemaphoreInfo::default()
+                .handle_type(vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD);
+
+            instance.get_physical_device_external_semaphore_properties(
+                device,
+                &info,
+                &mut semaphore_props,
+            );
+        }
+
+        if !semaphore_props
+            .external_semaphore_features
+            .contains(vk::ExternalSemaphoreFeatureFlags::IMPORTABLE)
+        {
+            bail!("no support found for importable semaphores");
+        }
 
         Ok(Self {
             pdevice: device,
@@ -491,9 +515,10 @@ impl VkContext {
             warn!("no cache-coherent memory type found on device!");
         }
 
-        let external_mem_loader = ExternalMemoryFdExt::new(&instance, &device);
+        let external_memory_api = khr::ExternalMemoryFd::new(&instance, &device);
+        let external_semaphore_api = khr::ExternalSemaphoreFd::new(&instance, &device);
 
-        let video_loaders = if device_info.encode_family.is_some() {
+        let video_apis = if device_info.encode_family.is_some() {
             let video_queue = VideoQueueExt::new(&entry, &instance, &device);
             let video_encode_queue = VideoEncodeQueueExt::new(&instance, &device);
 
@@ -504,8 +529,9 @@ impl VkContext {
 
         Ok(Self {
             entry,
-            external_mem_loader,
-            video_loaders,
+            external_memory_api,
+            external_semaphore_api,
+            video_apis,
             instance,
             device,
             device_info,

@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{os::fd::IntoRawFd, sync::Arc};
+use std::{
+    os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd},
+    sync::Arc,
+};
 
-use anyhow::bail;
+use anyhow::{bail, Context};
 use ash::vk;
 use drm_fourcc::{DrmFormat, DrmFourcc};
 use smithay::{backend::allocator::dmabuf::Dmabuf, wayland::dmabuf};
@@ -130,7 +133,6 @@ pub fn import_dma_texture(
     usage: vk::ImageUsageFlags,
 ) -> anyhow::Result<VkImage> {
     use smithay::backend::allocator::Buffer;
-    use std::os::fd::AsRawFd;
 
     assert_eq!(buffer.num_planes(), 1);
 
@@ -203,7 +205,7 @@ pub fn import_dma_texture(
         let mut fd_props = vk::MemoryFdPropertiesKHR::default();
 
         unsafe {
-            vk.external_mem_loader.get_memory_fd_properties(
+            vk.external_memory_api.get_memory_fd_properties(
                 vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT,
                 fd.as_raw_fd(),
                 &mut fd_props,
@@ -250,4 +252,100 @@ pub fn import_dma_texture(
         width as u32,
         height as u32,
     ))
+}
+
+#[allow(dead_code)]
+mod ioctl {
+    pub(super) const DMA_BUF_SYNC_READ: u32 = 1 << 0;
+    pub(super) const DMA_BUF_SYNC_WRITE: u32 = 1 << 1;
+
+    #[repr(C)]
+    #[allow(non_camel_case_types)]
+    pub(super) struct dma_buf_export_sync_file {
+        pub flags: u32,
+        pub fd: i32,
+    }
+
+    #[repr(C)]
+    #[allow(non_camel_case_types)]
+    pub(super) struct dma_buf_import_sync_file {
+        pub flags: u32,
+        pub fd: i32,
+    }
+
+    nix::ioctl_readwrite!(export_sync_file, b'b', 2, dma_buf_export_sync_file);
+    nix::ioctl_write_ptr!(import_sync_file, b'b', 3, dma_buf_import_sync_file);
+}
+
+/// Retrieves a dmabuf fence, and uses it to set a semaphore. The semaphore will
+/// be triggered when the dmabuf texture is safe to read. Note that the spec
+/// insists that the semaphore must be waited on once set this way.
+pub fn import_dmabuf_fence_as_semaphore(
+    vk: Arc<VkContext>,
+    semaphore: vk::Semaphore,
+    dmabuf: Dmabuf,
+) -> anyhow::Result<()> {
+    assert_eq!(dmabuf.num_planes(), 1);
+
+    let fd = dmabuf.handles().next().unwrap();
+    let sync_fd = export_sync_file(fd, ioctl::DMA_BUF_SYNC_READ)?;
+
+    let import_info = vk::ImportSemaphoreFdInfoKHR::default()
+        .semaphore(semaphore)
+        .handle_type(vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD)
+        .flags(vk::SemaphoreImportFlags::TEMPORARY)
+        .fd(sync_fd.into_raw_fd()); // Vulkan owns the fd now.
+
+    unsafe {
+        vk.external_semaphore_api
+            .import_semaphore_fd(&import_info)?;
+    }
+
+    Ok(())
+}
+
+/// Retrieves the fd of a sync file for a dmabuf.
+pub fn export_sync_file(dmabuf: impl AsRawFd, flags: u32) -> anyhow::Result<OwnedFd> {
+    let mut data = ioctl::dma_buf_export_sync_file { flags, fd: -1 };
+
+    let res = unsafe {
+        ioctl::export_sync_file(dmabuf.as_raw_fd(), &mut data)
+            .context("error in dma_buf_export_sync_file ioctl")?
+    };
+
+    if res != 0 {
+        bail!("ioctl dma_buf_export_sync_file failed: {}", res);
+    } else {
+        let fd = unsafe { OwnedFd::from_raw_fd(data.fd) };
+        Ok(fd)
+    }
+}
+
+/// Attaches a sync file to a dmabuf.
+// TODO: the kernel docs and online resources state that we need to use this to
+// attach a "render finished" semaphore back onto the client buffers once we
+// start rendering. I think that's unecessary as long as we wait to call
+// `wl_buffer.release` until long after we're done compositing, which we do as
+// of this writing.
+#[allow(dead_code)]
+pub fn attach_sync_file(
+    dmabuf: impl AsRawFd,
+    flags: u32,
+    sync_file: OwnedFd,
+) -> anyhow::Result<()> {
+    let data = ioctl::dma_buf_import_sync_file {
+        flags,
+        fd: sync_file.as_raw_fd(),
+    };
+
+    let res = unsafe {
+        ioctl::import_sync_file(dmabuf.as_raw_fd(), &data)
+            .context("error in dma_buf_import_sync_file ioctl")?
+    };
+
+    if res != 0 {
+        bail!("ioctl dma_buf_import_sync_file failed: {}", res);
+    } else {
+        Ok(())
+    }
 }

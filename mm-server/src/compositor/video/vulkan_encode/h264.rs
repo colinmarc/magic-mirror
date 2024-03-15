@@ -70,7 +70,7 @@ impl H264Encoder {
         width: u32,
         height: u32,
     ) -> anyhow::Result<Self> {
-        let (video_loader, encode_loader) = vk.video_loaders.as_ref().unwrap();
+        let (video_loader, encode_loader) = vk.video_apis.as_ref().unwrap();
 
         let profile_idc = 100; // HIGH
 

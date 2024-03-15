@@ -10,7 +10,7 @@ use ash::vk;
 mod composite;
 mod convert;
 mod cpu_encode;
-mod dma;
+mod dmabuf;
 mod textures;
 mod timebase;
 mod vulkan_encode;
@@ -25,7 +25,7 @@ use crate::{codec::VideoCodec, vulkan::*};
 
 use super::{AttachedClients, DisplayParams, VideoStreamParams};
 
-pub use dma::dmabuf_feedback;
+pub use dmabuf::dmabuf_feedback;
 use textures::*;
 use vulkan_encode::VulkanEncoder;
 
@@ -92,12 +92,13 @@ impl Encoder {
 
 pub struct SwapFrame {
     convert_ds: vk::DescriptorSet, // Should be dropped first.
+    texture_semas: Vec<vk::Semaphore>,
 
     /// An RGBA image to composite to.
     blend_image: VkImage,
     /// A YUV image we copy to before passing on to the encoder.
     encode_image: VkImage,
-    _plane_views: Vec<VkPlaneView>,
+    plane_views: Vec<VkPlaneView>,
 
     staging_cb: vk::CommandBuffer,
     render_cb: vk::CommandBuffer,
@@ -324,7 +325,7 @@ impl EncodePipeline {
                     &[frame.staging_cb, frame.render_cb],
                 );
 
-                for view in &frame._plane_views {
+                for view in &frame.plane_views {
                     device.destroy_image_view(view.view, None);
                 }
 
@@ -427,6 +428,8 @@ impl EncodePipeline {
             0,
         );
 
+        let mut texture_semas = Vec::new();
+
         // Upload any updated shm textures, and transition all surface textures to be readable.
         for (_, tex) in self.committed_surfaces.iter() {
             match tex {
@@ -448,8 +451,8 @@ impl EncodePipeline {
                             None,
                             vk::ImageLayout::UNDEFINED,
                             vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                            vk::PipelineStageFlags2::TOP_OF_PIPE,
-                            vk::AccessFlags2::empty(),
+                            vk::PipelineStageFlags2::NONE,
+                            vk::AccessFlags2::NONE,
                             vk::PipelineStageFlags2::TRANSFER,
                             vk::AccessFlags2::TRANSFER_WRITE,
                         );
@@ -472,19 +475,49 @@ impl EncodePipeline {
                         vk::AccessFlags2::SHADER_READ,
                     );
                 }
-                SurfaceTexture::Imported { image, .. } => {
-                    // Transition the image to be readable.
+                SurfaceTexture::Imported {
+                    dmabuf,
+                    image,
+                    semaphore,
+                    ..
+                } => {
+                    // Grab a semaphore for explicit sync.
+                    dmabuf::import_dmabuf_fence_as_semaphore(
+                        self.vk.clone(),
+                        *semaphore,
+                        dmabuf.clone(),
+                    )?;
+
+                    texture_semas.push(semaphore);
+
+                    // Transition the image to be readable. A special queue,
+                    // EXTERNAL, is used in a queue transfer to indicate
+                    // acquiring the texture from the wayland client.
                     insert_image_barrier(
                         device,
                         frame.render_cb,
                         image.image,
-                        None,
+                        Some((vk::QUEUE_FAMILY_FOREIGN_EXT, self.vk.graphics_queue.family)),
                         vk::ImageLayout::UNDEFINED,
-                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                        vk::PipelineStageFlags2::TOP_OF_PIPE,
-                        vk::AccessFlags2::empty(),
+                        vk::ImageLayout::GENERAL,
+                        vk::PipelineStageFlags2::NONE,
+                        vk::AccessFlags2::NONE,
                         vk::PipelineStageFlags2::FRAGMENT_SHADER,
                         vk::AccessFlags2::SHADER_READ,
+                    );
+
+                    // Release the image at the end.
+                    insert_image_barrier(
+                        device,
+                        frame.render_cb,
+                        image.image,
+                        Some((self.vk.graphics_queue.family, vk::QUEUE_FAMILY_FOREIGN_EXT)),
+                        vk::ImageLayout::GENERAL,
+                        vk::ImageLayout::GENERAL,
+                        vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                        vk::AccessFlags2::SHADER_READ,
+                        vk::PipelineStageFlags2::NONE,
+                        vk::AccessFlags2::NONE,
                     );
                 }
             }
@@ -513,8 +546,8 @@ impl EncodePipeline {
             None,
             vk::ImageLayout::UNDEFINED,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            vk::PipelineStageFlags2::TOP_OF_PIPE,
-            vk::AccessFlags2::empty(),
+            vk::PipelineStageFlags2::NONE,
+            vk::AccessFlags2::NONE,
             vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
             vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
         );
@@ -603,8 +636,8 @@ impl EncodePipeline {
                 Some((src_queue_family, self.vk.graphics_queue.family)),
                 vk::ImageLayout::VIDEO_ENCODE_SRC_KHR,
                 vk::ImageLayout::GENERAL,
-                vk::PipelineStageFlags2::empty(),
-                vk::AccessFlags2::empty(),
+                vk::PipelineStageFlags2::NONE,
+                vk::AccessFlags2::NONE,
                 vk::PipelineStageFlags2::COMPUTE_SHADER,
                 vk::AccessFlags2::SHADER_STORAGE_WRITE,
             );
@@ -617,8 +650,8 @@ impl EncodePipeline {
                 None,
                 vk::ImageLayout::UNDEFINED,
                 vk::ImageLayout::GENERAL,
-                vk::PipelineStageFlags2::TOP_OF_PIPE,
-                vk::AccessFlags2::empty(),
+                vk::PipelineStageFlags2::NONE,
+                vk::AccessFlags2::NONE,
                 vk::PipelineStageFlags2::COMPUTE_SHADER,
                 vk::AccessFlags2::SHADER_STORAGE_WRITE,
             );
@@ -656,6 +689,7 @@ impl EncodePipeline {
 
         let staging_signal_infos = [vk::SemaphoreSubmitInfo::default()
             .semaphore(frame.timeline)
+            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
             .value(frame.tp_staging_done)];
 
         let staging_submit_info = vk::SubmitInfo2::default()
@@ -667,7 +701,7 @@ impl EncodePipeline {
             // Record the end timestamp.
             device.cmd_write_timestamp(
                 frame.staging_cb,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                vk::PipelineStageFlags::ALL_COMMANDS,
                 frame.staging_ts_pool.pool,
                 1,
             );
@@ -685,7 +719,7 @@ impl EncodePipeline {
         // Record the end timestamp.
         device.cmd_write_timestamp(
             frame.render_cb,
-            vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+            vk::PipelineStageFlags::ALL_COMMANDS,
             frame.render_ts_pool.pool,
             1,
         );
@@ -698,13 +732,22 @@ impl EncodePipeline {
 
         let render_cb_infos =
             [vk::CommandBufferSubmitInfoKHR::default().command_buffer(frame.render_cb)];
-        let render_wait_infos = [vk::SemaphoreSubmitInfo::default()
+        let mut render_wait_infos = vec![vk::SemaphoreSubmitInfo::default()
             .semaphore(frame.timeline)
-            .value(frame.tp_staging_done)
-            .stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)];
+            .stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+            .value(frame.tp_staging_done)];
         let render_signal_infos = [vk::SemaphoreSubmitInfo::default()
             .semaphore(frame.timeline)
+            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
             .value(frame.tp_render_done)];
+
+        for sema in frame.texture_semas.drain(..) {
+            render_wait_infos.push(
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(sema)
+                    .stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER),
+            );
+        }
 
         let render_submit_info = vk::SubmitInfo2::default()
             .command_buffer_infos(&render_cb_infos)
@@ -756,7 +799,7 @@ impl Drop for EncodePipeline {
                     &[frame.staging_cb, frame.render_cb],
                 );
 
-                for view in &frame._plane_views {
+                for view in &frame.plane_views {
                     device.destroy_image_view(view.view, None);
                 }
 
@@ -904,9 +947,10 @@ fn new_swapframe(
 
     Ok(SwapFrame {
         convert_ds,
+        texture_semas: Vec::new(),
         blend_image,
         encode_image,
-        _plane_views: plane_views,
+        plane_views,
         staging_cb: allocate_command_buffer(&vk.device, vk.graphics_queue.command_pool)?,
         render_cb: allocate_command_buffer(&vk.device, vk.graphics_queue.command_pool)?,
         shm_uploads_queued: false,

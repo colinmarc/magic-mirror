@@ -112,7 +112,7 @@ impl EncoderInner {
             bail!("no vulkan video support")
         }
 
-        let (video_loader, _encode_loader) = vk.video_loaders.as_ref().unwrap();
+        let (video_loader, _encode_loader) = vk.video_apis.as_ref().unwrap();
         let encode_family = vk.device_info.encode_family.unwrap();
 
         if capabilities.max_coded_extent.width < width
@@ -327,7 +327,7 @@ impl EncoderInner {
             bail!("session parameters not yet created");
         }
 
-        let (video_loader, encode_loader) = self.vk.video_loaders.as_ref().unwrap();
+        let (video_loader, encode_loader) = self.vk.video_apis.as_ref().unwrap();
         let encode_queue_family = self.vk.encode_queue.as_ref().unwrap().family;
 
         // "Acquire" a buffer to copy to. This provides backpressure if the
@@ -606,7 +606,7 @@ impl Drop for EncoderInner {
             }
         }
 
-        let (video_loader, _) = self.vk.video_loaders.as_ref().unwrap();
+        let (video_loader, _) = self.vk.video_apis.as_ref().unwrap();
 
         unsafe {
             self.vk
@@ -733,6 +733,7 @@ impl Drop for EncoderOutputFrame {
             device.queue_wait_idle(encode_queue.queue).unwrap();
             device.free_command_buffers(encode_queue.command_pool, &[self.encode_cb]);
             device.destroy_semaphore(self.timeline, None);
+            device.destroy_query_pool(self.query_pool, None);
         }
     }
 }
