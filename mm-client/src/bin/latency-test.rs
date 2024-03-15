@@ -147,7 +147,7 @@ fn main() -> anyhow::Result<()> {
         protocol::LaunchSession {
             application_name: "latency-test".to_string(),
             display_params: Some(protocol::VirtualDisplayParameters {
-                resolution: Some(resolution),
+                resolution: Some(resolution.clone()),
                 framerate_hz: framerate,
                 ..Default::default()
             }),
@@ -165,6 +165,7 @@ fn main() -> anyhow::Result<()> {
             attachment_type: protocol::AttachmentType::Operator.into(),
             client_name: "latency-test".to_string(),
             video_codec: codec.into(),
+            streaming_resolution: Some(resolution),
             server_side_cursor_enabled: false,
             ..Default::default()
         },
