@@ -499,7 +499,7 @@ impl EncodePipeline {
                         image.image,
                         Some((vk::QUEUE_FAMILY_FOREIGN_EXT, self.vk.graphics_queue.family)),
                         vk::ImageLayout::UNDEFINED,
-                        vk::ImageLayout::GENERAL,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                         vk::PipelineStageFlags2::NONE,
                         vk::AccessFlags2::NONE,
                         vk::PipelineStageFlags2::FRAGMENT_SHADER,
@@ -512,7 +512,7 @@ impl EncodePipeline {
                         frame.render_cb,
                         image.image,
                         Some((self.vk.graphics_queue.family, vk::QUEUE_FAMILY_FOREIGN_EXT)),
-                        vk::ImageLayout::GENERAL,
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
                         vk::ImageLayout::GENERAL,
                         vk::PipelineStageFlags2::FRAGMENT_SHADER,
                         vk::AccessFlags2::SHADER_READ,
@@ -789,6 +789,9 @@ impl EncodePipeline {
 impl Drop for EncodePipeline {
     fn drop(&mut self) {
         let device = &self.vk.device;
+
+        // Drop the encoder, since it consumes some of the shared resources below.
+        drop(std::mem::replace(&mut self.encoder, Encoder::None));
 
         unsafe {
             device.device_wait_idle().unwrap();
