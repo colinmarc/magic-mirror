@@ -1111,9 +1111,9 @@ pub fn insert_image_barrier(
         .subresource_range(vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
-            level_count: 1,
+            level_count: vk::REMAINING_MIP_LEVELS,
             base_array_layer: 0,
-            layer_count: 1,
+            layer_count: vk::REMAINING_ARRAY_LAYERS,
         })];
 
     unsafe {

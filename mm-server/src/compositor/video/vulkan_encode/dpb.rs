@@ -11,6 +11,7 @@ use crate::vulkan::*;
 
 #[derive(Debug, Copy, Clone)]
 pub struct DpbPicture {
+    pub image: vk::Image,
     pub picture_resource_info: vk::VideoPictureResourceInfoKHR<'static>,
     pub index: usize,
     pub currently_active: bool,
@@ -42,6 +43,7 @@ impl DpbLayerBuffer {
         let mut slots = Vec::with_capacity(size);
         for i in 0..size {
             slots.push(DpbPicture {
+                image: image.image,
                 picture_resource_info: vk::VideoPictureResourceInfoKHR::default()
                     .image_view_binding(image.view)
                     .coded_extent(vk::Extent2D { width, height })

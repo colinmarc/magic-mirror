@@ -349,13 +349,13 @@ impl EncoderInner {
             Some((self.vk.graphics_queue.family, encode_queue_family)),
             vk::ImageLayout::GENERAL,
             vk::ImageLayout::VIDEO_ENCODE_SRC_KHR,
-            vk::PipelineStageFlags2::empty(),
-            vk::AccessFlags2::empty(),
+            vk::PipelineStageFlags2::NONE,
+            vk::AccessFlags2::NONE,
             vk::PipelineStageFlags2::VIDEO_ENCODE_KHR,
             vk::AccessFlags2::VIDEO_ENCODE_READ_KHR,
         );
 
-        // Bind the setup picture and any reference pictures
+        // Bind the setup picture and any reference pictures.
         let setup_pic = self.dpb.setup_pic();
         let ref_pics = frame_state
             .ref_ids
@@ -473,18 +473,53 @@ impl EncoderInner {
                 .reference_slots(&reference_slots)
                 .push_next(codec_pic_info);
 
-            // Transition the DPB image.
-            insert_image_barrier(
-                &self.vk.device,
+            // Transition the DPB images/layers we need.
+            let mut dpb_barriers = Vec::new();
+            for pic in &ref_pics {
+                dpb_barriers.push(
+                    vk::ImageMemoryBarrier2::default()
+                        .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                        .src_access_mask(vk::AccessFlags2::NONE)
+                        .dst_stage_mask(vk::PipelineStageFlags2::VIDEO_ENCODE_KHR)
+                        .dst_access_mask(vk::AccessFlags2::VIDEO_ENCODE_READ_KHR)
+                        .old_layout(vk::ImageLayout::UNDEFINED)
+                        .new_layout(vk::ImageLayout::VIDEO_ENCODE_DPB_KHR)
+                        .image(pic.image)
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            base_mip_level: 0,
+                            level_count: vk::REMAINING_MIP_LEVELS,
+                            // For multiple-layers-in-one-image DPB, just the layer referenced.
+                            base_array_layer: pic.picture_resource_info.base_array_layer,
+                            layer_count: 1,
+                        }),
+                );
+            }
+
+            dpb_barriers.push(
+                vk::ImageMemoryBarrier2::default()
+                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .src_access_mask(vk::AccessFlags2::NONE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::VIDEO_ENCODE_KHR)
+                    .dst_access_mask(
+                        vk::AccessFlags2::VIDEO_ENCODE_WRITE_KHR
+                            | vk::AccessFlags2::VIDEO_ENCODE_READ_KHR,
+                    )
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::VIDEO_ENCODE_DPB_KHR)
+                    .image(setup_pic.image)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: vk::REMAINING_MIP_LEVELS,
+                        base_array_layer: setup_pic.picture_resource_info.base_array_layer,
+                        layer_count: 1,
+                    }),
+            );
+
+            self.vk.device.cmd_pipeline_barrier2(
                 frame.encode_cb,
-                self.dpb.image.image,
-                None,
-                vk::ImageLayout::UNDEFINED,
-                vk::ImageLayout::VIDEO_ENCODE_DPB_KHR,
-                vk::PipelineStageFlags2::TOP_OF_PIPE,
-                vk::AccessFlags2::empty(),
-                vk::PipelineStageFlags2::VIDEO_ENCODE_KHR,
-                vk::AccessFlags2::VIDEO_ENCODE_READ_KHR,
+                &vk::DependencyInfo::default().image_memory_barriers(&dpb_barriers),
             );
 
             // Update state as if the operation succeeded.

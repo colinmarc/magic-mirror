@@ -291,7 +291,7 @@ impl H264Encoder {
         }
 
         let pattern = if self.layers > 1 {
-            vk::VideoEncodeH264RateControlFlagsEXT::REFERENCE_PATTERN_DYADIC
+            vk::VideoEncodeH264RateControlFlagsEXT::TEMPORAL_LAYER_PATTERN_DYADIC
         } else {
             vk::VideoEncodeH264RateControlFlagsEXT::REFERENCE_PATTERN_FLAT
         };
@@ -376,6 +376,7 @@ impl H264Encoder {
             primary_pic_type,
             frame_num: self.frame_num,
             PicOrderCnt: frame_state.gop_position as i32,
+            temporal_id: frame_state.id as u8,
             pRefLists: &ref_lists_info,
             ..std::mem::zeroed()
         };
@@ -397,7 +398,7 @@ impl H264Encoder {
             .map(|id| vk::native::StdVideoEncodeH264ReferenceInfo {
                 FrameNum: self.pic_metadata[*id as usize].frame_num,
                 PicOrderCnt: self.pic_metadata[*id as usize].pic_order_cnt,
-                // temporal_id: *id as u8,
+                temporal_id: *id as u8,
                 ..std::mem::zeroed()
             })
             .collect::<Vec<_>>();
