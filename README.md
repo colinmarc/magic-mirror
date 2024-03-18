@@ -26,7 +26,7 @@ And then on the client:
 
 ```shell
 $ cargo build --bin mmclient --release
-$ target/release/mmclient "<ip>:9599" steam-bigpicture --resolution 1080
+$ target/release/mmclient "<ip>:9599" steam-bigpicture --codec h264 --resolution 1080
 ```
 
 This will work over the local network or a private IP space like Tailscale. To serve over the public internet, TLS is required. See [mmserver.default.toml](mmserver.default.toml) for more detail on that and other configuration options.
