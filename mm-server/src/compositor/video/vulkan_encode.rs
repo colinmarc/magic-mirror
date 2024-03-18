@@ -153,7 +153,7 @@ impl EncoderInner {
         let session = {
             let create_info = vk::VideoSessionCreateInfoKHR::default()
                 .queue_family_index(encode_family)
-                .flags(vk::VideoSessionCreateFlagsKHR::default())
+                .flags(vk::VideoSessionCreateFlagsKHR::ALLOW_ENCODE_PARAMETER_OPTIMIZATIONS)
                 .video_profile(profile)
                 .picture_format(input_format)
                 .reference_picture_format(input_format)
