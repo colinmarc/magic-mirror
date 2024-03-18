@@ -373,7 +373,7 @@ impl InnerConn {
                 let mut closed = Vec::new();
                 self.open_streams.retain(|sid| {
                     if self.conn.stream_finished(*sid) {
-                        debug!("stream {} finished", sid);
+                        trace!(sid, "stream finished");
                         closed.push(*sid);
                         false
                     } else {
