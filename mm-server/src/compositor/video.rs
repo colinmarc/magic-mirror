@@ -57,7 +57,7 @@ impl Encoder {
         let use_vulkan = match codec {
             #[cfg(feature = "vulkan_encode")]
             VideoCodec::H264 if vk.device_info.supports_h264 => true,
-            // Codec::H265 if vk.device_info.supports_h265 => true,
+            VideoCodec::H265 if vk.device_info.supports_h265 => true,
             _ => false,
         };
 

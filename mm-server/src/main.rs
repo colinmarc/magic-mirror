@@ -81,7 +81,7 @@ fn main() -> Result<()> {
         .context("failed to read config")?;
 
     // Override with command line flags.
-    cfg.bug_report_dir = bug_report_dir;
+    cfg.bug_report_dir = bug_report_dir.clone();
     if let Some(bind) = args.bind {
         cfg.server.bind = bind;
     } else if args.bind_systemd {
@@ -112,6 +112,10 @@ fn main() -> Result<()> {
 
     info!("listening on {:?}", srv.local_addr()?);
     srv.run().context("server exited")?;
+
+    if let Some(dir) = &bug_report_dir {
+        info!("bug report files saved to: {:?}", dir);
+    }
 
     Ok(())
 }

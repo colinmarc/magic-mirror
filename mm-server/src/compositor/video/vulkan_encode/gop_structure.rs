@@ -20,11 +20,10 @@ pub struct GopFrame {
 /// This is also called a "dyadic" structure by the Vulkan spec (42.17.11. H.264
 /// Encode Rate Control).
 ///
-/// Each hierarchical layer corresponds to a DPB slot, and each frame references
-/// at most one other frame. The pattern repeats every (2^(layers-1)) frames,
-/// but an intra frame is only used once per GOP. Note that a 1-layer structure
-/// is equivalent to a flat P structure, with each frame referencing the one
-/// before.
+/// Each frame references at most one other frame. The pattern repeats every
+/// (2^(layers-1)) frames, but an intra frame is only used once per GOP. Note
+/// that a 1-layer structure is equivalent to a flat P structure, with each
+/// frame referencing the one before.
 pub struct HierarchicalP {
     pub layers: u32,
     pub gop_size: u32,

@@ -42,7 +42,7 @@ Note that with the `ffmpeg` feature, linking against a system-installed `ffmpeg`
 | Codec | CPU |  AMD  | NVIDIA | Intel |
 | ----- | :-: | :---: | :----: | :---: |
 | H.264 |  ❌  | ✔️[^1]|   🚧    | ❔[^2] |
-| H.265 |  ✔️ |   ❌   |   ❌    |   ❌   |
+| H.265 |  ✔️ |  ✔️[^1]|   🚧    |   ❌   |
 |  AV1  |  ✔️ |   ❌   |   ❌    |   ❌   |
 
 [^1]: Requires [this draft MR](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/25900).

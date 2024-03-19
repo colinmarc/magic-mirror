@@ -189,7 +189,7 @@ impl H264Encoder {
             level_idc,
             chroma_format_idc: StdVideoH264ChromaFormatIdc_STD_VIDEO_H264_CHROMA_FORMAT_IDC_420,
 
-            max_num_ref_frames: 4, // TODO
+            max_num_ref_frames: 1,
             pic_order_cnt_type: StdVideoH264PocType_STD_VIDEO_H264_POC_TYPE_0,
             log2_max_pic_order_cnt_lsb_minus4: 4, // TODO no idea what this means
 
@@ -309,9 +309,7 @@ impl H264Encoder {
         // Doesn't have a push_next method, because we're supposed to call it on the parent struct.
         rc_info.p_next = <*mut _>::cast(&mut h264_rc_info);
 
-        let weight_table = vk::native::StdVideoEncodeH264WeightTable {
-            ..std::mem::zeroed()
-        };
+        let weight_table: vk::native::StdVideoEncodeH264WeightTable = std::mem::zeroed();
 
         let slice_type = if frame_state.is_keyframe {
             vk::native::StdVideoH264SliceType_STD_VIDEO_H264_SLICE_TYPE_I

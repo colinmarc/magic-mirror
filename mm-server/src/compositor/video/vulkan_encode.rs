@@ -22,13 +22,18 @@ use super::{begin_cb, timeline_signal, timeline_wait};
 
 mod dpb;
 mod gop_structure;
+
 mod h264;
 use h264::H264Encoder;
+
+mod h265;
+use h265::H265Encoder;
 
 const DEFAULT_GOP_SIZE: u32 = 64;
 
 pub enum VulkanEncoder {
     H264(H264Encoder),
+    H265(H265Encoder),
 }
 
 impl VulkanEncoder {
@@ -48,6 +53,13 @@ impl VulkanEncoder {
                 width,
                 height,
             )?)),
+            VideoCodec::H265 => Ok(Self::H265(H265Encoder::new(
+                vk,
+                attached_clients,
+                stream_seq,
+                width,
+                height,
+            )?)),
             _ => bail!("unsupported codec"),
         }
     }
@@ -61,18 +73,21 @@ impl VulkanEncoder {
     ) -> anyhow::Result<()> {
         match self {
             Self::H264(encoder) => encoder.submit_encode(image, semaphore, tp_acquire, tp_release),
+            Self::H265(encoder) => encoder.submit_encode(image, semaphore, tp_acquire, tp_release),
         }
     }
 
     pub fn input_format(&self) -> vk::Format {
         match self {
             Self::H264(encoder) => encoder.input_format(),
+            Self::H265(encoder) => encoder.input_format(),
         }
     }
 
     pub fn create_encode_image(&mut self) -> anyhow::Result<VkImage> {
         match self {
             Self::H264(encoder) => encoder.create_encode_image(),
+            Self::H265(encoder) => encoder.create_encode_image(),
         }
     }
 }
