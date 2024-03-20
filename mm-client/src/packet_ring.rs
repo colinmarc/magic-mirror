@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 
 use tracing::warn;
 
-const RING_TARGET_SIZE: usize = 3;
+const RING_TARGET_SIZE: usize = 5;
 
 pub trait Chunk {
     fn session_id(&self) -> u64;
@@ -214,7 +214,7 @@ impl PacketRing {
                 if let Some(idx) = self
                     .ring
                     .iter()
-                    .position(|p| p.stream_seq == wip.stream_seq && p.seq > wip.stream_seq)
+                    .position(|p| p.stream_seq == wip.stream_seq && p.seq > wip.seq)
                 {
                     self.ring.insert(idx, wip);
                 } else {
@@ -223,9 +223,8 @@ impl PacketRing {
 
                 loop {
                     let front = self.ring.front().unwrap();
-                    if front.is_complete()
-                        || self.ring.len() <= (RING_TARGET_SIZE + front.chunks.len())
-                    {
+
+                    if front.is_complete() || self.ring.len() <= RING_TARGET_SIZE {
                         break;
                     }
 
