@@ -190,10 +190,19 @@ impl App {
                     return Ok(false);
                 }
                 protocol::MessageType::SessionParametersChanged(params) => {
-                    if params.display_params.is_none()
-                        || params.display_params.as_ref().unwrap().resolution.is_none()
-                        || params.display_params.as_ref().unwrap().ui_scale.is_none()
+                    if let Some(protocol::VirtualDisplayParameters {
+                        resolution: Some(res),
+                        ui_scale: Some(scale),
+                        ..
+                    }) = &params.display_params
                     {
+                        debug!(
+                            width = res.width,
+                            height = res.height,
+                            scale = (scale.numerator as f64 / scale.denominator as f64),
+                            "session parameters changed"
+                        )
+                    } else {
                         bail!("session parameters changed without valid display params");
                     }
 
@@ -377,8 +386,6 @@ impl App {
                                     / desired_ui_scale.denominator as f64
                             );
 
-                            // TODO: this is useful, but triggers when we get
-                            // resized by the server, which is incorrect.
                             self.flash.set_message("resizing...");
 
                             // This will trigger a new attachment at the new

@@ -107,9 +107,10 @@ pub struct Compositor {
 }
 
 pub struct State {
-    launch_config: AppConfig,
+    app_config: AppConfig,
     display_params: DisplayParams,
     new_display_params: Option<DisplayParams>,
+    ui_scale: PixelScale, // Can differ from display_params if we force 1x scale.
     output: smithay::output::Output,
     window_stack: Vec<Window>,
 
@@ -153,7 +154,7 @@ impl wayland_server::backend::ClientData for ClientState {
 impl Compositor {
     pub fn new(
         vk: Arc<VkContext>,
-        launch_config: AppConfig,
+        app_config: AppConfig,
         display_params: DisplayParams,
         bug_report_dir: Option<PathBuf>,
     ) -> Result<Self> {
@@ -185,12 +186,22 @@ impl Compositor {
         let xwayland_shell_state =
             smithay::wayland::xwayland_shell::XWaylandShellState::new::<State>(&dh);
 
-        let output = create_headless_output(
-            &dh,
-            display_params.width,
-            display_params.height,
-            display_params.ui_scale,
-        );
+        // Check force_1x_scale. The way this configuration value works is that
+        // by setting the scale to 1.0, logical resolution in wayland will
+        // always be the same as physical resolution. This should prevent any
+        // server-side upscaling.
+        //
+        // Note that we still store the client's requested scale as the official
+        // scale properties; this is treated as an implementation detail in the
+        // compositor.
+        let ui_scale = if app_config.force_1x_scale {
+            PixelScale::ONE
+        } else {
+            display_params.ui_scale
+        };
+
+        let output =
+            create_headless_output(&dh, display_params.width, display_params.height, ui_scale);
 
         // This is used for the child app to find and connect to our
         // wayland/pipewire/etc sockets.
@@ -203,9 +214,10 @@ impl Compositor {
         let audio_pipeline = audio::EncodePipeline::new(attachments.clone(), &xdg_runtime_dir)?;
 
         let state = State {
-            launch_config,
+            app_config,
             display_params,
             new_display_params: None,
+            ui_scale,
             output,
             compositor_state,
             dmabuf_state,
@@ -235,7 +247,7 @@ impl Compositor {
         ))?;
 
         // Bind the xwayland sockets.
-        let xwayland = if state.launch_config.xwayland {
+        let xwayland = if state.app_config.xwayland {
             Some(XWaylandLoop::new(dh.clone())?)
         } else {
             None
@@ -290,7 +302,7 @@ impl Compositor {
         // Spawn the client with a pipe as stdout/stderr.
         let (pipe_send, mut pipe_recv) = mio::unix::pipe::new()?;
         let mut child = spawn_client(
-            self.state.launch_config.clone(),
+            self.state.app_config.clone(),
             self.xdg_runtime_dir.as_os_str(),
             &self.socket_name,
             self.xwayland.as_ref().map(|xw| xw.x11_display),
@@ -304,7 +316,7 @@ impl Compositor {
         let mut child_output = BufReader::new(&mut pipe_recv);
 
         let mut child_debug_log = if let Some(bug_report_dir) = self.bug_report_dir.as_ref() {
-            let exe_name = Path::new(&self.state.launch_config.command[0])
+            let exe_name = Path::new(&self.state.app_config.command[0])
                 .file_name()
                 .unwrap();
             let path =
@@ -337,7 +349,13 @@ impl Compositor {
 
                             // Notify the parent thread that we're ready.
                             if let Some(chan) = ready.take() {
-                                debug!("compositor ready");
+                                debug!(
+                                    width = self.state.display_params.width,
+                                    height = self.state.display_params.height,
+                                    framerate = self.state.display_params.framerate,
+                                    scale = %self.state.ui_scale,
+                                    "compositor ready"
+                                );
                                 chan.send(self.control_messages_send.clone())?;
                             }
                         }
@@ -516,8 +534,7 @@ impl Compositor {
                             Ok(ControlMessage::PointerMotion(x, y)) => {
                                 let location: smithay::utils::Point<f64, smithay::utils::Physical> =
                                     (x, y).into();
-                                let scale: smithay::output::Scale =
-                                    self.state.display_params.ui_scale.into();
+                                let scale: smithay::output::Scale = self.state.ui_scale.into();
 
                                 let handle = self.state.pointer_handle.clone();
                                 let (focus, location) = if let Some(window) =
@@ -555,8 +572,6 @@ impl Compositor {
                                 } else {
                                     (None, location.to_logical(scale.fractional_scale()))
                                 };
-
-                                // debug!("focus: {:?} location: {:?}", focus, location);
 
                                 handle.motion(
                                     &mut self.state,
@@ -649,14 +664,27 @@ impl Compositor {
     fn update_display_params(&mut self, params: DisplayParams) -> anyhow::Result<()> {
         let old = self.state.display_params;
 
+        let new_ui_scale = if self.state.app_config.force_1x_scale {
+            PixelScale::ONE
+        } else {
+            params.ui_scale
+        };
+
         let size_changed = old.width != params.width || old.height != params.height;
-        let scale_changed = old.ui_scale != params.ui_scale;
+        let scale_changed = old.ui_scale != new_ui_scale;
         let framerate_changed = old.framerate != params.framerate;
 
         if size_changed || scale_changed || framerate_changed {
             debug!(
-                "resizing output to {}x{}@{} (scale factor: {:.1})",
-                params.width, params.height, params.framerate, params.ui_scale
+                old_width = old.width,
+                new_width = params.width,
+                old_height = old.height,
+                new_height = params.height,
+                old_framerate = old.framerate,
+                new_framerate = params.framerate,
+                old_ui_scale = %old.ui_scale,
+                new_ui_scale = %new_ui_scale,
+                "resizing output",
             );
 
             let mode = smithay::output::Mode {
@@ -664,7 +692,7 @@ impl Compositor {
                 refresh: (params.framerate * 1000) as i32,
             };
 
-            let output_scale = params.ui_scale.into();
+            let output_scale = new_ui_scale.into();
             self.state
                 .output
                 .change_current_state(Some(mode), None, Some(output_scale), None);
@@ -678,7 +706,7 @@ impl Compositor {
                 }
 
                 if window.visible {
-                    window.configure_activated(params.width, params.height, params.ui_scale)?;
+                    window.configure_activated(params.width, params.height, new_ui_scale)?;
                 }
             }
 
@@ -689,6 +717,15 @@ impl Compositor {
                 });
             self.state.display_params = params;
         } else {
+            // Simulate a param change if we are forcing 1x scale.
+            if params.ui_scale != old.ui_scale {
+                self.attachments
+                    .dispatch(CompositorEvent::DisplayParamsChanged {
+                        params,
+                        reattach: false,
+                    });
+            }
+
             for toplevel in self.state.xdg_shell_state.toplevel_surfaces().iter() {
                 self.state.output.enter(toplevel.wl_surface());
             }

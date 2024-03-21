@@ -15,8 +15,6 @@ use lazy_static::lazy_static;
 use pathsearch::find_executable_in_path;
 use tracing::{debug_span, info};
 
-use crate::vulkan::VkContext;
-use crate::waking_sender::WakingSender;
 use crate::{
     codec::probe_codec,
     compositor::{
@@ -24,6 +22,7 @@ use crate::{
         VideoStreamParams,
     },
 };
+use crate::{vulkan::VkContext, waking_sender::WakingSender};
 
 pub struct Session {
     pub id: u64,

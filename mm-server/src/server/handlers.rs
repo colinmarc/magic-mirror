@@ -2,10 +2,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use crate::{
-    compositor::{ControlMessage, DisplayParams},
-    pixel_scale::PixelScale,
-};
+use crate::compositor::{ControlMessage, DisplayParams};
 use crossbeam_channel::{select, Receiver};
 use hashbrown::HashMap;
 use mm_protocol as protocol;
@@ -85,7 +82,7 @@ fn launch_session(
     msg: protocol::LaunchSession,
     response: &WakingSender<protocol::MessageType>,
 ) {
-    let mut display_params = match validate_display_params(msg.display_params) {
+    let display_params = match validate_display_params(msg.display_params) {
         Ok(p) => p,
         Err(ve) => {
             send_validation_error(response, ve, false);
@@ -119,14 +116,6 @@ fn launch_session(
             return;
         }
     };
-
-    // Check force_1x_scale. The way this configuration value works is that by
-    // setting the scale to 1.0, logical resolution in wayland will always be
-    // the same as physical resolution. This should prevent any server-side
-    // upscaling.
-    if application_config.force_1x_scale {
-        display_params.ui_scale = PixelScale::ONE;
-    }
 
     let bug_report_dir = guard.cfg.bug_report_dir.clone();
     drop(guard);
@@ -183,7 +172,7 @@ fn update_session(
     msg: protocol::UpdateSession,
     response: &WakingSender<protocol::MessageType>,
 ) {
-    let mut display_params = match validate_display_params(msg.display_params) {
+    let display_params = match validate_display_params(msg.display_params) {
         Ok(p) => p,
         Err(ve) => {
             send_validation_error(response, ve, false);
@@ -201,10 +190,7 @@ fn update_session(
         }
     };
 
-    if session.application_config.force_1x_scale {
-        display_params.ui_scale = PixelScale::ONE;
-    }
-
+    trace!(?session.display_params, ?display_params, "update_session");
     if session.display_params != display_params {
         match session.update_display_params(display_params) {
             Ok(()) => (),
@@ -217,6 +203,8 @@ fn update_session(
                 );
             }
         }
+    } else {
+        debug!("display params unchanged; ignoring update");
     }
 
     let msg = protocol::SessionUpdated {};
@@ -359,7 +347,7 @@ fn attach(
 
     #[cfg(feature = "tracy")]
     let worst_case_bitrate =
-        (video_params.width as f64 * video_params.height as f64 * 3.0 / 2.0) as f64 * 8.0 / 1000.0;
+        (video_params.width as f64 * video_params.height as f64 * 3.0 / 2.0) * 8.0 / 1000.0;
 
     let mut debug_outputs = if bug_report_dir.is_some() {
         Some(HashMap::<u64, std::fs::File>::new())
