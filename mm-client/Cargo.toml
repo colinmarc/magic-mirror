@@ -66,3 +66,7 @@ shaderc = "0.8.2"
 [features]
 default = []
 tracy = ["tracy-client/enable"]
+
+[patch.crates-io]
+imgui = { git = "https://github.com/colinmarc/imgui-rs" }
+imgui-winit-support = { git = "https://github.com/colinmarc/imgui-rs" }

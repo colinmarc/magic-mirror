@@ -37,6 +37,7 @@ features = [
   #"hdr",
   #"vorbis",
   #"x11",
+  "wayland",
   #"bevy_gizmos",
   #"android_shared_stdcxx",
   #"tonemapping_luts",

@@ -3,9 +3,8 @@
 // SPDX-License-Identifier: MIT
 
 Cargo.lock
-/target
-/result
-/.direnv
+target
+*/target
 .vscode
 .reuse
 *.log

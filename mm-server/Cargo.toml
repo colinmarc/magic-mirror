@@ -104,3 +104,6 @@ tracy = [
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
+
+[patch.crates-io]
+mio-timerfd = { git = "https://github.com/colinmarc/mio-timerfd.git" }
