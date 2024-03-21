@@ -15,6 +15,7 @@ use super::SurfaceTexture;
 pub const BLEND_FORMAT: vk::Format = vk::Format::B8G8R8A8_UNORM;
 
 #[derive(Copy, Clone, Debug)]
+#[repr(C)]
 #[allow(dead_code)]
 struct SurfacePC {
     // Should be in texture coords: [0, 1].

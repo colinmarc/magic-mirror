@@ -24,6 +24,12 @@ use crate::vulkan::*;
 
 const FONT_SIZE: f32 = 8.0;
 
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+struct PushConstants {
+    aspect: glam::Vec2,
+}
+
 pub struct Renderer {
     width: u32,
     height: u32,
@@ -301,8 +307,15 @@ impl Renderer {
         };
 
         let pipeline_layout = {
+            let pc_ranges = [vk::PushConstantRange::builder()
+                .stage_flags(vk::ShaderStageFlags::VERTEX)
+                .offset(0)
+                .size(std::mem::size_of::<PushConstants>() as u32)
+                .build()];
             let set_layouts = [descriptor_set_layout];
-            let create_info = vk::PipelineLayoutCreateInfo::builder().set_layouts(&set_layouts);
+            let create_info = vk::PipelineLayoutCreateInfo::builder()
+                .set_layouts(&set_layouts)
+                .push_constant_ranges(&pc_ranges);
 
             unsafe { device.create_pipeline_layout(&create_info, None)? }
         };
@@ -326,7 +339,7 @@ impl Renderer {
             let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
 
             let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
-                .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+                .topology(vk::PrimitiveTopology::TRIANGLE_STRIP)
                 .primitive_restart_enable(false);
 
             let viewport = vk::Viewport::builder()
@@ -656,8 +669,8 @@ impl Renderer {
             device,
             frame.render_cb,
             present_image.image,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::AccessFlags::empty(),
+            vk::PipelineStageFlags::NONE,
+            vk::AccessFlags::NONE,
             vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
             vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
             vk::ImageLayout::UNDEFINED,
@@ -703,8 +716,46 @@ impl Renderer {
             );
         }
 
+        let window_aspect = self.width as f32 / self.height as f32;
+        let texture_aspect = swapchain
+            .bound_video_texture
+            .as_ref()
+            .map_or(0.0, |(t, _)| t.width as f32 / t.height as f32);
+
+        if self.video_texture.is_none() || window_aspect != texture_aspect {
+            // TODO Draw the background
+            // https://www.toptal.com/designers/subtlepatterns/prism/
+        }
+
         // Draw the video texture.
-        if let Some(_tex) = self.video_texture.as_ref() {
+        if let Some((texture, _)) = &swapchain.bound_video_texture {
+            let aspect = if window_aspect > texture_aspect {
+                // Screen too wide.
+                let scale = self.height as f32 / texture.height as f32;
+                (self.width as f32 / (texture.width as f32 * scale), 1.0)
+            } else if window_aspect < texture_aspect {
+                // Screen too tall.
+                let scale = self.width as f32 / texture.width as f32;
+                (1.0, self.height as f32 / (texture.height as f32 * scale))
+            } else {
+                (1.0, 1.0)
+            };
+
+            let pc = PushConstants {
+                aspect: aspect.into(),
+            };
+
+            device.cmd_push_constants(
+                frame.render_cb,
+                swapchain.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX,
+                0,
+                std::slice::from_raw_parts(
+                    &pc as *const _ as *const u8,
+                    std::mem::size_of::<PushConstants>(),
+                ),
+            );
+
             device.cmd_bind_descriptor_sets(
                 frame.render_cb,
                 vk::PipelineBindPoint::GRAPHICS,
@@ -714,11 +765,9 @@ impl Renderer {
                 &[],
             );
 
-            // Draw the video texture (using the giant triangle trick).
-            // TODO letterboxing, background
-            device.cmd_draw(frame.render_cb, 3, 1, 0, 0);
+            // Draw the video texture.
+            device.cmd_draw(frame.render_cb, 4, 1, 0, 0);
         }
-
         // Draw the overlay.
         {
             self.imgui_platform
