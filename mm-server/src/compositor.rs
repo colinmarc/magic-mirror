@@ -28,7 +28,7 @@ use smithay::{
     wayland::xwayland_shell,
     xwayland,
 };
-use tracing::{debug, info, trace, trace_span};
+use tracing::{debug, info, trace, trace_span, warn};
 
 use crate::{
     config::AppConfig, pixel_scale::PixelScale, vulkan::VkContext, waking_sender::WakingSender,
@@ -88,6 +88,8 @@ const CHILD: mio::Token = mio::Token(4);
 
 const ACCEPT_TIMEOUT: time::Duration = time::Duration::from_secs(10);
 
+const SHUTDOWN_TIMEOUT: time::Duration = time::Duration::from_secs(30);
+
 pub struct Compositor {
     xdg_runtime_dir: mktemp::Temp,
     socket_name: OsString,
@@ -100,6 +102,9 @@ pub struct Compositor {
     attachments: AttachedClients,
 
     bug_report_dir: Option<PathBuf>,
+
+    /// A timer for waiting for the app to shut down.
+    shutting_down: Option<time::Instant>,
 
     // At the bottom for drop order.
     display: wayland_server::Display<State>,
@@ -269,6 +274,7 @@ impl Compositor {
             control_messages_recv: recv,
             control_messages_send: send,
             attachments,
+            shutting_down: None,
             bug_report_dir,
         })
     }
@@ -361,14 +367,17 @@ impl Compositor {
                         }
                     }
                     CHILD if event.is_read_closed() => {
-                        if child.wait()?.success() {
-                            // If the child exited with zero, the user
-                            // probably pressed quit.
-                            info!("child process exited cleanly");
-                            self.attachments.shutdown();
-                            return Ok(());
-                        } else {
-                            bail!("child process exited with error");
+                        let exit_status = child.wait()?;
+                        info!(
+                            exit_status = exit_status.code().unwrap_or_default(),
+                            "child process exited"
+                        );
+
+                        match exit_status {
+                            unshare::ExitStatus::Exited(c) if c != 0 => {
+                                bail!("child process exited with error code {}", c)
+                            }
+                            _ => return Ok(()),
                         }
                     }
                     CHILD if event.is_readable() => {
@@ -429,6 +438,16 @@ impl Compositor {
                             bail!("timed out waiting for client");
                         }
 
+                        // Check if we need to hard kill the client.
+                        if let Some(shutting_down) = self.shutting_down {
+                            if shutting_down.elapsed() > SHUTDOWN_TIMEOUT {
+                                warn!("graceful shutdown failed, killing client");
+
+                                signal_child(child.id() as i32, nix::sys::signal::SIGKILL)?;
+                                return Ok(());
+                            }
+                        }
+
                         // Check if we need to rebuild the video capture pipeline.
                         if let Some(new_params) = self.state.new_display_params.take() {
                             self.update_display_params(new_params)?;
@@ -446,12 +465,14 @@ impl Compositor {
                         match self.control_messages_recv.try_recv() {
                             Ok(ControlMessage::Stop) => {
                                 self.attachments.shutdown();
+                                self.state.video_pipeline.stop_stream();
+                                self.state.audio_pipeline.stop_stream();
 
-                                // TODO graceful shutdown
-                                child.kill()?;
+                                trace!("shutting down");
+                                self.shutting_down = Some(time::Instant::now());
 
-                                debug!("stopping compositor event loop");
-                                return Ok(());
+                                // Give the app a chance to clean up.
+                                signal_child(child.id() as i32, nix::sys::signal::SIGTERM)?;
                             }
                             Ok(ControlMessage::Attach {
                                 id,
@@ -825,14 +846,34 @@ fn spawn_client(
         .stdout(stdout)
         .stderr(stderr);
 
+    let command = unsafe {
+        command.pre_exec(|| {
+            // Creates a new process group.
+            nix::unistd::setsid()?;
+            Ok(())
+        })
+    };
+
     match command.spawn() {
-        Ok(child) => Ok(child),
+        Ok(child) => {
+            trace!(pid = child.id(), "child process started");
+            Ok(child)
+        }
         Err(e) => Err(anyhow!(
             "failed to spawn child process '{}': {:#}",
             exe_path.to_string_lossy(),
             e
         )),
     }
+}
+
+fn signal_child(pid: i32, sig: nix::sys::signal::Signal) -> anyhow::Result<()> {
+    // Signal the whole process group. We used setsid, so the group should be
+    // the same as the child pid.
+    let pid = nix::unistd::Pid::from_raw(pid);
+    nix::sys::signal::killpg(pid, Some(sig))?;
+
+    Ok(())
 }
 
 fn gen_socket_name() -> OsString {
