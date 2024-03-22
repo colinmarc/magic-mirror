@@ -152,9 +152,7 @@ struct App {
     last_frame_received: time::Instant,
 
     cursor_modifiers: ModifiersState,
-    cursor_x: f64,
-    cursor_y: f64,
-    cursor_entered: bool,
+    cursor_pos: Option<(f64, f64)>,
 
     flash: Flash,
     overlay: Option<Overlay>,
@@ -503,34 +501,41 @@ impl App {
                     }
                 }
                 WindowEvent::CursorMoved { position, .. } => {
-                    // Convert the position to a coordinate in the remote display.
-                    let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
-                    self.cursor_x =
-                        position.x * (remote_size.width as f64 / self.window_width as f64);
-                    self.cursor_y =
-                        position.y * (remote_size.height as f64 / self.window_height as f64);
+                    // Returns coordinates in the [0.0, 1.0] range.
+                    let new_position = if let Some((x, y)) =
+                        self.renderer.to_texture_coords(position)
+                    {
+                        // Convert the position to physical coordinates in the remote display.
+                        let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
+                        let cursor_x = x * remote_size.width as f64;
+                        let cursor_y = y * remote_size.height as f64;
 
-                    let msg = protocol::PointerMotion {
-                        x: self.cursor_x,
-                        y: self.cursor_y,
+                        let msg = protocol::PointerMotion {
+                            x: cursor_x,
+                            y: cursor_y,
+                        };
+
+                        self.conn.send(msg, Some(self.attachment_sid), false)?;
+
+                        Some((cursor_x, cursor_y))
+                    } else {
+                        None
                     };
 
-                    self.conn.send(msg, Some(self.attachment_sid), false)?;
-                }
-                WindowEvent::CursorEntered { .. } => {
-                    self.cursor_entered = true;
-                    let msg = protocol::PointerEntered {};
-                    self.conn.send(msg, Some(self.attachment_sid), false)?;
-                }
-                WindowEvent::CursorLeft { .. } => {
-                    self.cursor_entered = false;
-                    let msg = protocol::PointerLeft {};
-                    self.conn.send(msg, Some(self.attachment_sid), false)?;
+                    if new_position.is_some() && self.cursor_pos.is_none() {
+                        let msg = protocol::PointerEntered {};
+                        self.conn.send(msg, Some(self.attachment_sid), false)?;
+                    } else if new_position.is_none() && self.cursor_pos.is_some() {
+                        let msg = protocol::PointerLeft {};
+                        self.conn.send(msg, Some(self.attachment_sid), false)?;
+                    }
+
+                    self.cursor_pos = new_position;
                 }
                 WindowEvent::MouseInput { state, button, .. } => {
                     use protocol::pointer_input::*;
 
-                    if !self.cursor_entered {
+                    if self.cursor_pos.is_none() {
                         return Ok(true);
                     }
 
@@ -551,11 +556,12 @@ impl App {
                         ElementState::Released => ButtonState::Released,
                     };
 
+                    let (cursor_x, cursor_y) = self.cursor_pos.unwrap();
                     let msg = protocol::PointerInput {
                         button: button.into(),
                         state: state.into(),
-                        x: self.cursor_x,
-                        y: self.cursor_y,
+                        x: cursor_x,
+                        y: cursor_y,
                     };
 
                     self.conn.send(msg, Some(self.attachment_sid), false)?;
@@ -800,9 +806,7 @@ fn main() -> Result<()> {
         last_frame_received: now,
 
         cursor_modifiers: ModifiersState::default(),
-        cursor_x: 0.0,
-        cursor_y: 0.0,
-        cursor_entered: false,
+        cursor_pos: None,
 
         flash,
         overlay,

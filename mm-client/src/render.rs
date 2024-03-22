@@ -60,6 +60,10 @@ struct Swapchain {
     sampler_conversion: vk::SamplerYcbcrConversion,
     sampler: vk::Sampler,
     bound_video_texture: Option<(Arc<VkImage>, vk::ImageView)>,
+    /// The normalized relationship between the output and the video texture,
+    /// after scaling. For example, a 500x500 video texture in a 1000x500
+    /// swapchain would have the aspect (2.0, 1.0), as would a 250x250 texture.
+    aspect: (f64, f64),
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     pipeline_layout: vk::PipelineLayout,
@@ -275,6 +279,12 @@ impl Renderer {
             Some((tex.texture.clone(), view))
         } else {
             None
+        };
+
+        let aspect = if let Some((tex, _)) = bound_video_texture.as_ref() {
+            calculate_aspect(self.width, self.height, tex.width, tex.height)
+        } else {
+            (1.0, 1.0)
         };
 
         let descriptor_set_layout = {
@@ -512,6 +522,7 @@ impl Renderer {
             sampler_conversion,
             sampler,
             bound_video_texture,
+            aspect,
             pipeline_layout,
             pipeline,
         };
@@ -590,6 +601,43 @@ impl Renderer {
         self.video_texture = Some(VideoTexture { params, texture });
         self.swapchain_dirty = true;
         Ok(())
+    }
+
+    // Takes a position in the output texture and returns a position in the
+    // video texture in the space [0.0, 1.0]. Returns None if there's no video
+    // texture or if the position is outside the video texture (i.e. in the
+    // letterbox).
+    pub fn to_texture_coords(
+        &self,
+        position: winit::dpi::PhysicalPosition<f64>,
+    ) -> Option<(f64, f64)> {
+        if let Some(Swapchain {
+            bound_video_texture: Some((_, _)),
+            aspect,
+            ..
+        }) = self.swapchain.as_ref()
+        {
+            // Calculate coordinates in [-1.0, 1.0];
+            let (clip_x, clip_y) = (
+                (position.x / self.width as f64) * 2.0 - 1.0,
+                (position.y / self.height as f64) * 2.0 - 1.0,
+            );
+
+            // Stretch the space to account for letterboxing.
+            let clip_x = clip_x * aspect.0;
+            let clip_y = clip_y * aspect.1;
+
+            if clip_x.abs() > 1.0 || clip_y.abs() > 1.0 {
+                return None;
+            }
+
+            // Convert to texture coordinates.
+            let x = (clip_x + 1.0) / 2.0;
+            let y = (clip_y + 1.0) / 2.0;
+            Some((x, y))
+        } else {
+            None
+        }
     }
 
     #[instrument(skip_all, level = "trace")]
@@ -716,33 +764,15 @@ impl Renderer {
             );
         }
 
-        let window_aspect = self.width as f32 / self.height as f32;
-        let texture_aspect = swapchain
-            .bound_video_texture
-            .as_ref()
-            .map_or(0.0, |(t, _)| t.width as f32 / t.height as f32);
-
-        if self.video_texture.is_none() || window_aspect != texture_aspect {
+        if self.video_texture.is_none() || swapchain.aspect != (1.0, 1.0) {
             // TODO Draw the background
             // https://www.toptal.com/designers/subtlepatterns/prism/
         }
 
         // Draw the video texture.
-        if let Some((texture, _)) = &swapchain.bound_video_texture {
-            let aspect = if window_aspect > texture_aspect {
-                // Screen too wide.
-                let scale = self.height as f32 / texture.height as f32;
-                (self.width as f32 / (texture.width as f32 * scale), 1.0)
-            } else if window_aspect < texture_aspect {
-                // Screen too tall.
-                let scale = self.width as f32 / texture.width as f32;
-                (1.0, self.height as f32 / (texture.height as f32 * scale))
-            } else {
-                (1.0, 1.0)
-            };
-
+        if let Some((_texture, _)) = &swapchain.bound_video_texture {
             let pc = PushConstants {
-                aspect: aspect.into(),
+                aspect: glam::Vec2::new(swapchain.aspect.0 as f32, swapchain.aspect.1 as f32),
             };
 
             device.cmd_push_constants(
@@ -943,4 +973,25 @@ fn import_imgui_font(
     }]);
 
     Ok(id)
+}
+
+fn calculate_aspect(width: u32, height: u32, tex_width: u32, tex_height: u32) -> (f64, f64) {
+    let width = width as f64;
+    let height = height as f64;
+    let tex_width = tex_width as f64;
+    let tex_height = tex_height as f64;
+
+    let window_aspect = width / height;
+    let texture_aspect = tex_width / tex_height;
+    if window_aspect > texture_aspect {
+        // Screen too wide.
+        let scale = height / tex_height;
+        (width / (tex_width * scale), 1.0)
+    } else if window_aspect < texture_aspect {
+        // Screen too tall.
+        let scale = width / tex_width;
+        (1.0, height / (tex_height * scale))
+    } else {
+        (1.0, 1.0)
+    }
 }
