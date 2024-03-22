@@ -664,6 +664,7 @@ impl Compositor {
     fn update_display_params(&mut self, params: DisplayParams) -> anyhow::Result<()> {
         let old = self.state.display_params;
 
+        let old_ui_scale = self.state.ui_scale;
         let new_ui_scale = if self.state.app_config.force_1x_scale {
             PixelScale::ONE
         } else {
@@ -671,7 +672,7 @@ impl Compositor {
         };
 
         let size_changed = old.width != params.width || old.height != params.height;
-        let scale_changed = old.ui_scale != new_ui_scale;
+        let scale_changed = old_ui_scale != new_ui_scale;
         let framerate_changed = old.framerate != params.framerate;
 
         if size_changed || scale_changed || framerate_changed {
@@ -682,7 +683,7 @@ impl Compositor {
                 new_height = params.height,
                 old_framerate = old.framerate,
                 new_framerate = params.framerate,
-                old_ui_scale = %old.ui_scale,
+                old_ui_scale = %old_ui_scale,
                 new_ui_scale = %new_ui_scale,
                 "resizing output",
             );
@@ -716,6 +717,7 @@ impl Compositor {
                     reattach: size_changed || framerate_changed,
                 });
             self.state.display_params = params;
+            self.state.ui_scale = new_ui_scale;
         } else {
             // Simulate a param change if we are forcing 1x scale.
             if params.ui_scale != old.ui_scale {
