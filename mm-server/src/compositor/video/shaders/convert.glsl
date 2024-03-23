@@ -32,6 +32,17 @@ vec3 rgb_to_ycbcr(vec3 color) {
     );
 }
 
+float rgb709_unlinear(float s) {
+    return mix(4.5*s, 1.099*pow(s, 1.0/2.2) - 0.099, s >= 0.018);
+}
+
+vec3 unlinearize(vec3 color) {
+    return vec3(
+        rgb709_unlinear(color.r),
+        rgb709_unlinear(color.g),
+        rgb709_unlinear(color.b));
+}
+
 void main() {
     vec2 self_id = gl_GlobalInvocationID.xy;
     ivec2 coords = ivec2(self_id.x*2, self_id.y*2);
@@ -44,7 +55,7 @@ void main() {
         for(j = 0; j < 2; j += 1) {
             ivec2 texel_coords = coords + ivec2(j, k);
             vec4 texel = texelFetch(blend_image, texel_coords, 0);
-            vec3 yuv = rgb_to_ycbcr(texel.rgb);
+            vec3 yuv = rgb_to_ycbcr(unlinearize(texel.rgb));
     
             imageStore(luminance, texel_coords, vec4(yuv.x));
             
