@@ -27,6 +27,7 @@ struct ColorspacePC {
 pub struct ConvertPipeline {
     semiplanar: bool,
     descriptor_set_layout: vk::DescriptorSetLayout,
+    sampler: vk::Sampler,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     vk: Arc<VkContext>,
@@ -47,13 +48,26 @@ impl ConvertPipeline {
             )?
         };
 
+        let sampler = {
+            let create_info = vk::SamplerCreateInfo::default()
+                .mag_filter(vk::Filter::LINEAR)
+                .min_filter(vk::Filter::LINEAR)
+                .address_mode_u(vk::SamplerAddressMode::REPEAT)
+                .address_mode_v(vk::SamplerAddressMode::REPEAT)
+                .address_mode_w(vk::SamplerAddressMode::REPEAT);
+
+            unsafe { vk.device.create_sampler(&create_info, None)? }
+        };
+
         let descriptor_set_layout = unsafe {
+            let samplers = [sampler];
             let mut bindings = vec![
                 vk::DescriptorSetLayoutBinding::default()
                     .binding(0)
-                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .descriptor_count(1)
-                    .stage_flags(vk::ShaderStageFlags::COMPUTE),
+                    .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                    .immutable_samplers(&samplers),
                 vk::DescriptorSetLayoutBinding::default()
                     .binding(1)
                     .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
@@ -123,6 +137,7 @@ impl ConvertPipeline {
         Ok(Self {
             semiplanar,
             descriptor_set_layout,
+            sampler,
             pipeline_layout,
             pipeline,
             vk,
@@ -198,7 +213,7 @@ impl ConvertPipeline {
             .dst_set(ds)
             .dst_binding(0)
             .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .image_info(&blend_image_infos);
 
         let y_image_infos = [vk::DescriptorImageInfo::default()

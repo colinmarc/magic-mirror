@@ -880,7 +880,7 @@ fn new_swapframe(
         false,
         encode_image.width,
         encode_image.height,
-        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::STORAGE,
+        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
         vk::SharingMode::EXCLUSIVE,
         vk::ImageCreateFlags::empty(),
     )?;

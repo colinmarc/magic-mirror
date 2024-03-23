@@ -4,7 +4,7 @@
 
 #version 450
 
-layout( binding = 0, rgba8 ) uniform readonly image2D rgb;
+layout( binding = 0 ) uniform sampler2D blend_image;
 layout( binding = 1, r8 ) uniform writeonly image2D luminance;
 
 #ifdef SEMIPLANAR
@@ -43,7 +43,7 @@ void main() {
     for(k = 0; k < 2; k += 1) {
         for(j = 0; j < 2; j += 1) {
             ivec2 texel_coords = coords + ivec2(j, k);
-            vec4 texel = imageLoad(rgb, texel_coords);
+            vec4 texel = texelFetch(blend_image, texel_coords, 0);
             vec3 yuv = rgb_to_ycbcr(texel.rgb);
     
             imageStore(luminance, texel_coords, vec4(yuv.x));
