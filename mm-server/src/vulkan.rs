@@ -733,7 +733,7 @@ impl VkImage {
         let memory =
             unsafe { bind_memory_for_image(&vk.device, &vk.device_info.memory_props, image)? };
 
-        let view = unsafe { create_image_view(&vk.device, image, format, ignore_alpha, None)? };
+        let view = unsafe { create_image_view(&vk.device, image, format, ignore_alpha)? };
 
         Ok(Self {
             image,
@@ -837,7 +837,6 @@ pub unsafe fn create_image_view(
     image: vk::Image,
     format: vk::Format,
     ignore_alpha: bool,
-    sampler_conversion: Option<vk::SamplerYcbcrConversion>,
 ) -> anyhow::Result<vk::ImageView> {
     let alpha_swizzle = if ignore_alpha {
         vk::ComponentSwizzle::ONE
@@ -862,13 +861,6 @@ pub unsafe fn create_image_view(
             base_array_layer: 0,
             layer_count: vk::REMAINING_ARRAY_LAYERS,
         });
-
-    let mut sampler_conversion_info;
-    if let Some(sampler_conversion) = sampler_conversion {
-        sampler_conversion_info =
-            vk::SamplerYcbcrConversionInfo::default().conversion(sampler_conversion);
-        create_info = create_info.push_next(&mut sampler_conversion_info);
-    }
 
     device
         .create_image_view(&create_info, None)
@@ -1073,14 +1065,6 @@ pub fn allocate_command_buffer(
     };
 
     Ok(cb)
-}
-
-pub fn format_bpp(format: vk::Format) -> usize {
-    match format {
-        vk::Format::R8G8B8A8_UNORM => 4,
-        vk::Format::B8G8R8A8_UNORM => 4,
-        _ => unimplemented!(),
-    }
 }
 
 pub fn insert_image_barrier(

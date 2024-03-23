@@ -241,7 +241,7 @@ pub fn import_dma_texture(
         vk.device.bind_image_memory(image, memory, 0)?;
     }
 
-    let view = unsafe { create_image_view(&vk.device, image, format, ignore_alpha, None)? };
+    let view = unsafe { create_image_view(&vk.device, image, format, ignore_alpha)? };
 
     Ok(VkImage::wrap(
         vk.clone(),

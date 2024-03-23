@@ -122,7 +122,10 @@ impl EncodePipeline {
             }
         };
 
-        let bpp = format_bpp(format);
+        let bpp = match format {
+            vk::Format::B8G8R8A8_UNORM => 4,
+            _ => unreachable!(),
+        };
 
         let params = ShmBufferParameters {
             format,
