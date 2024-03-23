@@ -54,11 +54,14 @@ impl Encoder {
         height: u32,
         framerate: u32,
     ) -> anyhow::Result<Self> {
-        let use_vulkan = match codec {
-            #[cfg(feature = "vulkan_encode")]
-            VideoCodec::H264 if vk.device_info.supports_h264 => true,
-            VideoCodec::H265 if vk.device_info.supports_h265 => true,
-            _ => false,
+        let use_vulkan = if cfg!(feature = "vulkan_encode") {
+            match codec {
+                VideoCodec::H264 if vk.device_info.supports_h264 => true,
+                VideoCodec::H265 if vk.device_info.supports_h265 => true,
+                _ => false,
+            }
+        } else {
+            false
         };
 
         if use_vulkan {

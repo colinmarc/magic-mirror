@@ -83,7 +83,7 @@ pub fn probe_codec(_vk: Arc<VkContext>, codec: VideoCodec) -> bool {
     #[cfg(feature = "vulkan_encode")]
     match codec {
         VideoCodec::H264 if _vk.device_info.supports_h264 => return true,
-        // Codec::H265 if vk.device_info.supports_h265 => true,
+        VideoCodec::H265 if _vk.device_info.supports_h265 => return true,
         _ => (),
     }
 
