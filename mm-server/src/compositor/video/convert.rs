@@ -281,6 +281,7 @@ impl Drop for ConvertPipeline {
                 .queue_wait_idle(self.vk.graphics_queue.queue)
                 .unwrap();
 
+            device.destroy_sampler(self.sampler, None);
             device.destroy_pipeline(self.pipeline, None);
             device.destroy_pipeline_layout(self.pipeline_layout, None);
             device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
