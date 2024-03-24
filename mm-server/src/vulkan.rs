@@ -844,7 +844,7 @@ pub unsafe fn create_image_view(
         vk::ComponentSwizzle::IDENTITY
     };
 
-    let mut create_info = vk::ImageViewCreateInfo::default()
+    let create_info = vk::ImageViewCreateInfo::default()
         .image(image)
         .view_type(vk::ImageViewType::TYPE_2D)
         .format(format)

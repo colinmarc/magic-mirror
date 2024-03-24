@@ -252,7 +252,6 @@ struct CPUDecoder {
     yuv_buffer_strides: [usize; 3],
     // This is reference-counted because we share it with the renderer.
     video_texture: Arc<VkImage>,
-    sampler_conversion: vk::SamplerYcbcrConversion,
     texture_width: u32,
     texture_height: u32,
 
@@ -512,34 +511,6 @@ impl DecoderInit {
             }
         };
 
-        let sampler_conversion = {
-            let ycbcr_model = match color_space {
-                ffmpeg::color::Space::BT709 => vk::SamplerYcbcrModelConversion::YCBCR_709,
-                ffmpeg::color::Space::BT2020NCL => vk::SamplerYcbcrModelConversion::YCBCR_2020,
-                _ => unreachable!(),
-            };
-
-            let ycbcr_range = match color_range {
-                ffmpeg::color::Range::MPEG => vk::SamplerYcbcrRange::ITU_NARROW,
-                ffmpeg::color::Range::JPEG => vk::SamplerYcbcrRange::ITU_FULL,
-                _ => unreachable!(),
-            };
-
-            let create_info = vk::SamplerYcbcrConversionCreateInfo::builder()
-                .format(texture_format)
-                .ycbcr_model(ycbcr_model)
-                .ycbcr_range(ycbcr_range)
-                .chroma_filter(vk::Filter::LINEAR)
-                .x_chroma_offset(vk::ChromaLocation::MIDPOINT)
-                .y_chroma_offset(vk::ChromaLocation::MIDPOINT);
-
-            unsafe {
-                self.vk
-                    .device
-                    .create_sampler_ycbcr_conversion(&create_info, None)?
-            }
-        };
-
         let video_texture = Arc::new(VkImage::new(
             self.vk.clone(),
             texture_format,
@@ -648,7 +619,6 @@ impl DecoderInit {
             yuv_buffer_offsets: buffer_offsets,
             yuv_buffer_strides: buffer_strides,
             video_texture: video_texture.clone(),
-            sampler_conversion,
             texture_width: width,
             texture_height: height,
             upload_cb,
@@ -897,7 +867,6 @@ impl Drop for CPUDecoder {
         unsafe {
             device.queue_wait_idle(self.vk.present_queue.queue).ok();
 
-            device.destroy_sampler_ycbcr_conversion(self.sampler_conversion, None);
             destroy_host_buffer(device, &self.staging_buffer);
             device.destroy_fence(self.upload_fence, None);
             device.destroy_query_pool(self.upload_ts_pool.pool, None);
