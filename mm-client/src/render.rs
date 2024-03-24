@@ -108,11 +108,7 @@ impl Renderer {
         let imgui_font = font::load_ui_font()?;
         let imgui_fontid_big = import_imgui_font(&mut imgui, &imgui_font, FONT_SIZE, scale_factor)?;
 
-        let surface_format = unsafe {
-            vk.surface_loader
-                .get_physical_device_surface_formats(vk.pdevice, vk.surface)
-                .unwrap()[0]
-        };
+        let surface_format = select_surface_format(vk.clone())?;
 
         let imgui_renderer = imgui_vulkan::Renderer::with_default_allocator(
             &vk.instance,
@@ -155,11 +151,8 @@ impl Renderer {
         let start = time::Instant::now();
         let device = &self.vk.device;
 
-        let surface_format = self
-            .vk
-            .surface_loader
-            .get_physical_device_surface_formats(self.vk.pdevice, self.vk.surface)
-            .unwrap()[0];
+        let surface_format = select_surface_format(self.vk.clone())?;
+        trace!(?surface_format, "surface format");
 
         let surface_capabilities = self
             .vk
@@ -935,6 +928,30 @@ impl Renderer {
             .swapchain_loader
             .destroy_swapchain(swapchain.swapchain, None)
     }
+}
+
+fn select_surface_format(vk: Arc<VkContext>) -> Result<vk::SurfaceFormatKHR, vk::Result> {
+    let surface_formats = unsafe {
+        vk.surface_loader
+            .get_physical_device_surface_formats(vk.pdevice, vk.surface)?
+    };
+
+    let preferred_formats = [
+        vk::Format::R16G16B16A16_SFLOAT,
+        vk::Format::R8G8B8A8_UNORM,
+        vk::Format::B8G8R8A8_UNORM,
+    ];
+
+    for preferred_format in &preferred_formats {
+        for surface_format in &surface_formats {
+            if surface_format.format == *preferred_format {
+                return Ok(*surface_format);
+            }
+        }
+    }
+
+    // Just pick the first format.
+    Ok(surface_formats[0])
 }
 
 impl Drop for Renderer {
