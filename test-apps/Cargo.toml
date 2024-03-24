@@ -1,0 +1,63 @@
+# Copyright 2024 Colin Marc <hi@colinmarc.com>
+#
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "latency-test"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "latency-test"
+path = "bin/latency-test.rs"
+
+[[bin]]
+name = "color-test"
+path = "bin/color-test.rs"
+
+[dependencies]
+anyhow = "1.0.75"
+ash = "0.37.3"
+ash-window = "0.12.0"
+raw-window-handle = "0.5.2"
+clap = { version = "4.4.5", features = ["derive"] }
+glam = "0.27.0"
+
+[dependencies.winit]
+version = "0.29"
+default-features = false
+features = ["wayland", "rwh_05"]
+
+[dependencies.bevy]
+version = "0.13"
+default-features = false
+features = [
+    #"animation",
+    #"bevy_asset",
+    #"bevy_audio",
+    #"bevy_gilrs",
+    #"bevy_scene",
+    "bevy_winit",
+    "bevy_core_pipeline",
+    #"bevy_pbr",
+    #"bevy_gltf",
+    "bevy_render",
+    "bevy_sprite",
+    #"bevy_text",
+    #"bevy_ui",
+    "multi-threaded",
+    #"png",
+    #"hdr",
+    #"vorbis",
+    #"x11",
+    "wayland",
+    #"bevy_gizmos",
+    #"android_shared_stdcxx",
+    #"tonemapping_luts",
+    #"default_font",
+    #"webgl2",
+    #"bevy_debug_stepping",
+]
+
+[build-dependencies]
+shaderc = "0.8.2"
