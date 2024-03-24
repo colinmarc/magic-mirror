@@ -11,8 +11,8 @@ use clap::Parser;
 const SIZE: f32 = 32.0;
 
 #[derive(Debug, Parser, Resource)]
-#[command(name = "mmclient")]
-#[command(about = "The Magic Mirror reference client", long_about = None)]
+#[command(name = "latency-test")]
+#[command(about = "The Magic Mirror latency test app", long_about = None)]
 struct Cli {
     /// Mouse mode.
     #[arg(long)]
@@ -22,9 +22,6 @@ struct Cli {
 #[derive(Component)]
 struct Box(i8);
 
-#[derive(Resource)]
-struct MouseMode(bool);
-
 fn main() {
     let args = Cli::parse();
 
@@ -33,7 +30,7 @@ fn main() {
             primary_window: Some(Window {
                 title: "Latency Test".to_string(),
                 resolution: WindowResolution::new(SIZE * 8.0, SIZE * 8.0),
-                present_mode: PresentMode::Mailbox,
+                present_mode: PresentMode::Immediate,
                 ..Default::default()
             }),
             ..Default::default()
