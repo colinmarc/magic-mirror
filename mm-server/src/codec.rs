@@ -88,7 +88,7 @@ pub fn probe_codec(_vk: Arc<VkContext>, codec: VideoCodec) -> bool {
     }
 
     #[cfg(feature = "ffmpeg_encode")]
-    if codec != VideoCodec::Av1 && ffmpeg::encoder::find(codec.into()).is_some() {
+    if ffmpeg::encoder::find(codec.into()).is_some() {
         return true;
     }
 
