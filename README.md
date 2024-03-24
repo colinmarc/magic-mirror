@@ -14,6 +14,7 @@ This is a game streaming or remote desktop tool for Linux, featuring:
 ### Quickstart
 
 ```shell
+$ cd mm-server
 $ cargo build --bin mmserver --release --features vulkan_encode
 $ cat >> steam-bigpicture.toml <<EOF
 command = ["steam", "-gamepadui"]
@@ -25,6 +26,7 @@ $ target/release/mmserver --bind "<your local ip>:9599" -i steam-bigpicture.toml
 And then on the client:
 
 ```shell
+$ cd mm-client
 $ cargo build --bin mmclient --release
 $ target/release/mmclient "<ip>:9599" steam-bigpicture --codec h264 --resolution 1080
 ```
