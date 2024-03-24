@@ -12,7 +12,7 @@ use crate::vulkan::*;
 
 use super::SurfaceTexture;
 
-pub const BLEND_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
+pub const BLEND_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
