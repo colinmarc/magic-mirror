@@ -8,8 +8,8 @@ use std::{
     time,
 };
 
-use anyhow::anyhow;
 use anyhow::Result;
+use anyhow::{anyhow, Context};
 use crossbeam_channel as crossbeam;
 use lazy_static::lazy_static;
 use pathsearch::find_executable_in_path;
@@ -69,7 +69,8 @@ impl Session {
         let mut bug_report_dir = bug_report_dir;
         if let Some(ref mut dir) = bug_report_dir {
             dir.push(format!("session-{}", id));
-            std::fs::create_dir_all(dir)?;
+            std::fs::create_dir_all(dir)
+                .context("failed to create session-specific bug report dir")?;
         }
 
         // Launch the compositor, which in turn launches the app.

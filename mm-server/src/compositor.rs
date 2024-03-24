@@ -164,7 +164,7 @@ impl Compositor {
         bug_report_dir: Option<PathBuf>,
     ) -> Result<Self> {
         let poll = mio::Poll::new()?;
-        let display = wayland_server::Display::new()?;
+        let display = wayland_server::Display::new().context("failed to create display")?;
         let dh = display.handle();
 
         let compositor_state = smithay::wayland::compositor::CompositorState::new::<State>(&dh);
@@ -328,7 +328,7 @@ impl Compositor {
             let path =
                 bug_report_dir.join(format!("{}-{}.log", exe_name.to_string_lossy(), child.id()));
 
-            Some(std::fs::File::create(path)?)
+            Some(std::fs::File::create(path).context("failed to create child logfile")?)
         } else {
             None
         };
