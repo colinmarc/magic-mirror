@@ -98,7 +98,7 @@ system-deps = "6"
 libavcodec = { version = "6", feature = "ffmpeg_encode" }
 
 [features]
-default = ["svt_encode"]
+default = ["svt_encode", "vulkan_encode"]
 svt_encode = ["dep:svt"]
 vulkan_encode = []
 ffmpeg_encode = ["dep:ffmpeg-next", "dep:ffmpeg-sys-next"]
