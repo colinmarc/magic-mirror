@@ -15,7 +15,7 @@ This is a game streaming or remote desktop tool for Linux, featuring:
 
 ```shell
 $ cd mm-server
-$ cargo build --bin mmserver --release --features vulkan_encode
+$ cargo build --bin mmserver --release --features vulkan-encode
 $ cat >> steam-bigpicture.toml <<EOF
 command = ["steam", "-gamepadui"]
 xwayland = true
