@@ -35,7 +35,8 @@ impl XWaylandLoop {
             Stdio::null(),
             Stdio::null(),
             |_| {},
-        )?;
+        )
+        .context("failed to launch Xwayland")?;
 
         let x11_display = xwayland.display_number();
 
