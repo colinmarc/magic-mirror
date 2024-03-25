@@ -17,7 +17,7 @@ use smithay::{
 };
 use tracing::{debug, error, trace, warn};
 
-use crate::vulkan::*;
+use crate::{color::ColorSpace, vulkan::*};
 
 use super::{dmabuf::import_dma_texture, EncodePipeline};
 
@@ -238,6 +238,7 @@ impl EncodePipeline {
         surface: &wl_surface::WlSurface,
         buffer: &wl_buffer::WlBuffer,
         dmabuf: dmabuf::Dmabuf,
+        colorspace: ColorSpace,
     ) -> anyhow::Result<()> {
         let DmabufCacheEntry {
             image,

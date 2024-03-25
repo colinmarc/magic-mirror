@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 mod buffers;
+pub mod color_management;
 mod input;
 mod x11;
 mod xdg_shell;
@@ -53,7 +54,7 @@ impl compositor::CompositorHandler for State {
                         removed_surfaces.push(surf.clone());
                     }
                     Some(compositor::BufferAssignment::NewBuffer(buffer)) => {
-                        buffers::buffer_commit(self, surf, &buffer).unwrap();
+                        buffers::buffer_commit(self, surf, data, &buffer).unwrap();
                     }
                     None => (),
                 };
