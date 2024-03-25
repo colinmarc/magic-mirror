@@ -2,18 +2,16 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+import color;
+
 const Sampler2D blend_image;
 
-[[vk::image_format("r8")]]
 const RWTexture2D<float> luminance;
 
 #ifdef SEMIPLANAR
-[[vk::image_format("rg8")]]
 const RWTexture2D<float2> chroma_uv;
 #else
-[[vk::image_format("r8")]]
 const RWTexture2D<float> chroma_u;
-[[vk::image_format("r8")]]
 const RWTexture2D<float> chroma_v;
 #endif
 
@@ -27,7 +25,7 @@ PushConstants pc;
 
 float3 rgb_to_ycbcr(float3 color)
 {
-    let yuv = mul(color, transpose(pc.color_transform));
+    let yuv = mul(pc.color_transform, color);
 
     // The matrix multiplication gives us Y in [0, 1] and Cb and Cr in [-0.5, 0.5].
     // This converts to "MPEG" or "Narrow" in the range [16, 235] and [16, 240].
@@ -35,26 +33,6 @@ float3 rgb_to_ycbcr(float3 color)
         (219.0 * yuv.x + 16.0) / 256.0,
         (224.0 * yuv.y + 128.0) / 256.0,
         (224.0 * yuv.z + 128.0) / 256.0);
-}
-
-float rgb709_unlinear(float s)
-{
-    if (s >= 0.018)
-    {
-        return 1.099 * pow(s, 1.0 / 2.2) - 0.099;
-    }
-    else
-    {
-        return 4.5 * s;
-    }
-}
-
-float3 unlinearize(float3 color)
-{
-    return float3(
-        rgb709_unlinear(color.r),
-        rgb709_unlinear(color.g),
-        rgb709_unlinear(color.b));
 }
 
 [shader("compute")]
@@ -72,8 +50,13 @@ void main(uint2 self_id: SV_DispatchThreadID)
         for (j = 0; j < 2; j += 1)
         {
             let texel_coords = coords + uint2(j, k);
-            let texel = blend_image.Load(uint3(texel_coords, 0));
-            let yuv = rgb_to_ycbcr(unlinearize(texel.rgb));
+            float4 texel = blend_image.Load(uint3(texel_coords, 0));
+
+            // Since we're using Rec. 709 primaries, but sampling scRGB, we need
+            // to clamp the values.
+            texel.rgb = clamp(texel.rgb, 0.0, 1.0);
+
+            let yuv = rgb_to_ycbcr(apply_inverse_eotf(texel.rgb, TransferFunction::BT709));
 
             luminance[texel_coords] = yuv.x;
 

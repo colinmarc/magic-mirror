@@ -7,9 +7,13 @@ use smithay::{
         protocol::{wl_buffer, wl_surface},
         Resource,
     },
-    wayland::{buffer, dmabuf, shm},
+    wayland::{buffer, compositor, dmabuf, shm},
 };
 use tracing::{debug, error, trace};
+
+use crate::{
+    color::ColorSpace, compositor::handlers::color_management::ColorManagementCachedState,
+};
 
 use super::State;
 
@@ -60,6 +64,7 @@ impl dmabuf::DmabufHandler for State {
 pub fn buffer_commit(
     state: &mut State,
     surface: &wl_surface::WlSurface,
+    surface_data: &compositor::SurfaceData,
     buffer: &wl_buffer::WlBuffer,
 ) -> anyhow::Result<()> {
     trace!(
@@ -78,9 +83,15 @@ pub fn buffer_commit(
 
     match dmabuf::get_dmabuf(buffer) {
         Ok(dmabuf) => {
+            let colorspace = surface_data
+                .cached_state
+                .current::<ColorManagementCachedState>()
+                .colorspace
+                .unwrap_or(ColorSpace::Srgb);
+
             return state
                 .texture_manager
-                .attach_dma_buffer(surface, buffer, dmabuf);
+                .attach_dma_buffer(surface, buffer, dmabuf, colorspace);
         }
         Err(smithay::utils::UnmanagedResource) => (), // Fall through to shm handler.
     }
