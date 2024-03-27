@@ -621,6 +621,7 @@ impl App {
                                 session_id: self.session_id,
                                 streaming_resolution: self.remote_display_params.resolution.clone(),
                                 video_codec: self.configured_codec.into(),
+                                video_profile: protocol::VideoProfile::Hd.into(),
                                 ..Default::default()
                             },
                             None,
@@ -937,6 +938,7 @@ fn main() -> Result<()> {
             session_id: session.session_id,
             streaming_resolution: Some(streaming_resolution),
             video_codec: configured_codec.into(),
+            video_profile: protocol::VideoProfile::Hd.into(),
             ..Default::default()
         },
         None,

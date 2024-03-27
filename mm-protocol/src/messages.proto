@@ -135,13 +135,13 @@ message PixelScale {
 // launch a session.
 message VirtualDisplayParameters {
   Size resolution = 1;     // Required.
-  uint32 framerate_hz = 3; // Required.
-  PixelScale ui_scale = 2; // Required.
+  uint32 framerate_hz = 2; // Required.
+  PixelScale ui_scale = 3; // Required.
 }
 
 // ### Attachment type
 //
-// This enum refers to the manner of attachment.
+// This refers to the manner of attachment.
 enum AttachmentType {
   ATTACHMENT_TYPE_UNKNOWN = 0;
   ATTACHMENT_TYPE_OPERATOR = 1;
@@ -150,7 +150,7 @@ enum AttachmentType {
 
 // ### Video codec
 //
-// This enum refers to the codec used for a video stream.
+// This refers to the codec used for a video stream.
 enum VideoCodec {
   VIDEO_CODEC_UNKNOWN = 0;
   VIDEO_CODEC_H264 = 1;
@@ -158,9 +158,19 @@ enum VideoCodec {
   VIDEO_CODEC_AV1 = 3;
 }
 
+// ### Video profile
+//
+// This refers to the profile used for a video stream. Profiles are fully
+// defined in the output section, below.
+enum VideoProfile {
+  VIDEO_PROFILE_UNKNOWN = 0;
+  VIDEO_PROFILE_HD = 1;
+  VIDEO_PROFILE_HDR10 = 2;
+}
+
 // ### Audio codec
 //
-// This enum refers to the codec used for an audio stream.
+// This refers to the codec used for an audio stream.
 enum AudioCodec {
   AUDIO_CODEC_UNKNOWN = 0;
   AUDIO_CODEC_OPUS = 1;
@@ -448,6 +458,7 @@ message Attach {
 
   VideoCodec video_codec = 10;
   Size streaming_resolution = 11;
+  VideoProfile video_profile = 12;
 
   AudioCodec audio_codec = 15;
   AudioChannels channels = 16;
@@ -466,8 +477,9 @@ message Attached {
   uint64 session_id = 1;    // Required.
   uint64 attachment_id = 2; // Required.
 
-  VideoCodec video_codec = 10;    // Required.
-  Size streaming_resolution = 11; // Required.
+  VideoCodec video_codec = 10;     // Required.
+  Size streaming_resolution = 11;  // Required.
+  VideoProfile video_profile = 12; // Required.
 
   AudioCodec audio_codec = 15; // Required.
   AudioChannels channels = 16; // Required.
@@ -554,15 +566,29 @@ message Detach {}
 //
 //  - The server must tag the video bitstream with resolution, framerate, and
 //    YCbCr color space/range using whatever mechanism is supported by the codec
-//    (for example, PPS frames in H.264). Clients should use this information to
-//    verify that the parameters match the requested attachment parameters.
+//    (for example, PPS/VUI frames in H.264). Clients should use this
+//    information to verify that the parameters match the requested attachment
+//    parameters.
 //  - The server must use YCbCr 4:2:0 chroma subsampling for the compressed
 //    stream (this is sometimes called YUV420P, and is the default for most
 //    implementations of H264, H265, and AV1).
+//  - For VIDEO_PROFILE_HD, a bit depth of 8, along with the Rec.709 color space
+//    and limited range must be used. For H.264, H.265, and AV1, this
+//    corresponds to `colour_primaries`, `transfer_characteristics`, and
+//    `matrix_coeffs` all equal to 1, and the `video_full_range_flag` set to 0
+//    (named `color_range` for AV1).
+//  - For VIDEO_PROFILE_HDR10, a bit depth of 10, along with the Rec. 2100 color
+//    space and limited range must be used. For H.264, H.265, and AV1, this
+//    corresponds to `colour_primaries` and `matrix_coeffs` equal to 9,
+//    `transfer_characteristics` equal to 16, and the `video_full_range_flag`
+//    set to 0 (named `color_range` for AV1). The server should additionally use
+//    SEI headers (or metadata OBUs for AV1) to communicate HDR metadata such as
+//    mastering display color volume (MDCV) and content light level (CLL)
+//    information.
 //  - The server may reuse an existing compression context for a new attachment,
 //    but in this case the stream must be resumable by the client within a
-//    reasonable time frame. For H.265, for example, this means sending PPS
-//    frames with every keyframe, and keyframes every few seconds.
+//    reasonable time frame. For H.265, for example, this means sending headers
+//    with every keyframe, and keyframes every few seconds.
 //
 // ### Audio compression
 //
