@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 mod codec;
+mod color;
 mod compositor;
 mod config;
 mod pixel_scale;

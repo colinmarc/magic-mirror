@@ -4,8 +4,11 @@
 
 use crossbeam_channel::Sender;
 
+use crate::color;
+
 use crate::{
     codec::{AudioCodec, VideoCodec},
+    color::VideoProfile,
     pixel_scale::PixelScale,
 };
 
@@ -23,6 +26,7 @@ pub struct VideoStreamParams {
     pub height: u32,
     pub codec: VideoCodec,
     pub preset: u32,
+    pub profile: VideoProfile,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

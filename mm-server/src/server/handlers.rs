@@ -315,6 +315,7 @@ fn attach(
     });
 
     let video_codec: protocol::VideoCodec = video_params.codec.into();
+    let video_profile: protocol::VideoProfile = video_params.profile.into();
     let audio_codec: protocol::AudioCodec = audio_params.codec.into();
     let msg = protocol::Attached {
         session_id,
@@ -325,6 +326,7 @@ fn attach(
             width: video_params.width,
             height: video_params.height,
         }),
+        video_profile: video_profile.into(),
 
         quality_preset: video_params.preset,
 

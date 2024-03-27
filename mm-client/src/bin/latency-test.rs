@@ -162,6 +162,7 @@ fn main() -> anyhow::Result<()> {
             attachment_type: protocol::AttachmentType::Operator.into(),
             client_name: "latency-test".to_string(),
             video_codec: codec.into(),
+            video_profile: protocol::VideoProfile::Hd.into(),
             streaming_resolution: Some(resolution),
             ..Default::default()
         },

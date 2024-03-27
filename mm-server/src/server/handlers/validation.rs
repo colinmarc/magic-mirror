@@ -7,6 +7,7 @@ use tracing::debug;
 
 use crate::{
     codec::{AudioCodec, VideoCodec},
+    color::VideoProfile,
     compositor::{AudioStreamParams, DisplayParams, VideoStreamParams},
     pixel_scale::PixelScale,
     waking_sender::WakingSender,
@@ -46,6 +47,7 @@ pub fn validate_attachment(
     let (width, height) = validate_resolution(params.streaming_resolution)?;
     let video_codec = validate_video_codec(params.video_codec)?;
     let preset = validate_preset(params.quality_preset)?;
+    let video_profile = validate_profile(params.video_profile)?;
 
     let sample_rate = validate_sample_rate(params.sample_rate_hz)?;
     let channels = validate_channels(params.channels)?;
@@ -57,6 +59,7 @@ pub fn validate_attachment(
             height,
             codec: video_codec,
             preset,
+            profile: video_profile,
         },
         AudioStreamParams {
             sample_rate,
@@ -93,6 +96,20 @@ pub fn validate_ui_scale(ui_scale: Option<protocol::PixelScale>) -> Result<Pixel
             Err(_) => Err(ValidationError::Invalid("invalid UI scale".into())),
         },
         None => Ok(PixelScale::ONE),
+    }
+}
+
+fn validate_profile(profile: i32) -> Result<VideoProfile> {
+    let p: protocol::VideoProfile = match profile.try_into() {
+        Ok(p) => p,
+        Err(_) => return Err(ValidationError::Invalid("invalid video profile".into())),
+    };
+
+    match p.try_into() {
+        Ok(p) if p == VideoProfile::Hd => Ok(p),
+        _ => Err(ValidationError::NotSupported(
+            "unsupported video profile".into(),
+        )),
     }
 }
 
