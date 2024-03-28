@@ -2,85 +2,94 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-extern crate shaderc;
+use std::path::PathBuf;
+
+extern crate slang;
 
 fn main() {
     system_deps::Config::new().probe().unwrap();
 
-    let mut compiler = shaderc::Compiler::new().unwrap();
-    let out_dir = std::env::var("OUT_DIR").unwrap();
-    let out_dir = std::path::Path::new(&out_dir);
-
-    std::fs::create_dir_all(out_dir.join("shaders")).unwrap();
+    let mut session = slang::GlobalSession::new();
+    let out_dir = std::env::var("OUT_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("OUT_DIR not set");
 
     compile_shader(
-        &mut compiler,
-        "src/compositor/video/shaders/composite_vert.glsl",
+        &mut session,
+        "src/compositor/video/composite.slang",
         out_dir.join("shaders/composite_vert.spv").to_str().unwrap(),
-        shaderc::ShaderKind::Vertex,
+        "vert",
+        slang::Stage::Vertex,
         [],
     );
 
     compile_shader(
-        &mut compiler,
-        "src/compositor/video/shaders/composite_frag.glsl",
+        &mut session,
+        "src/compositor/video/composite.slang",
         out_dir.join("shaders/composite_frag.spv").to_str().unwrap(),
-        shaderc::ShaderKind::Fragment,
+        "frag",
+        slang::Stage::Fragment,
         [],
     );
 
     compile_shader(
-        &mut compiler,
-        "src/compositor/video/shaders/convert.glsl",
+        &mut session,
+        "src/compositor/video/convert.slang",
         out_dir
             .join("shaders/convert_multiplanar.spv")
             .to_str()
             .unwrap(),
-        shaderc::ShaderKind::Compute,
+        "main",
+        slang::Stage::Compute,
         [],
     );
 
     compile_shader(
-        &mut compiler,
-        "src/compositor/video/shaders/convert.glsl",
+        &mut session,
+        "src/compositor/video/convert.slang",
         out_dir
             .join("shaders/convert_semiplanar.spv")
             .to_str()
             .unwrap(),
-        shaderc::ShaderKind::Compute,
+        "main",
+        slang::Stage::Compute,
         [("SEMIPLANAR", "1")],
     );
 }
 
 fn compile_shader<'a>(
-    compiler: &mut shaderc::Compiler,
+    session: &mut slang::GlobalSession,
     in_path: &str,
     out_path: &str,
-    kind: shaderc::ShaderKind,
-    opts: impl IntoIterator<Item = (&'a str, &'a str)>,
+    entry_point: &str,
+    stage: slang::Stage,
+    defines: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) {
-    let source = match std::fs::read_to_string(in_path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to read {}: {}", in_path, e);
-            std::process::exit(1);
-        }
-    };
+    std::fs::create_dir_all(PathBuf::from(out_path).parent().unwrap())
+        .expect("failed to create output directory");
 
-    let mut compile_opts = shaderc::CompileOptions::new().unwrap();
-    for (k, v) in opts {
-        compile_opts.add_macro_definition(k.as_ref(), Some(v));
+    let mut compile_request = session.create_compile_request();
+
+    compile_request
+        .set_codegen_target(slang::CompileTarget::Spirv)
+        .set_optimization_level(slang::OptimizationLevel::Maximal)
+        .set_target_profile(session.find_profile("glsl_460"));
+
+    for (name, value) in defines {
+        compile_request.add_preprocessor_define(name, value);
     }
 
-    let artifact =
-        match compiler.compile_into_spirv(&source, kind, in_path, "main", Some(&compile_opts)) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("{}", e);
-                std::process::exit(1);
-            }
-        };
+    let entry_point = compile_request
+        .add_translation_unit(slang::SourceLanguage::Slang, None)
+        .add_source_file(in_path)
+        .add_entry_point(entry_point, stage);
 
-    println!("cargo:rerun-if-changed={in_path}");
-    std::fs::write(out_path, artifact.as_binary_u8()).unwrap();
+    let shader_bytecode = compile_request
+        .compile()
+        .expect("Shader compilation failed.");
+
+    std::fs::write(out_path, shader_bytecode.get_entry_point_code(entry_point))
+        .expect("failed to write shader bytecode to file");
+
+    println!("cargo::rerun-if-changed={}", in_path);
 }

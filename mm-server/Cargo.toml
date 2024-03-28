@@ -91,7 +91,9 @@ default-features = false
 features = ["xwayland", "wayland_frontend", "desktop"]
 
 [build-dependencies]
-shaderc = "0.8"
+slang = { git = "https://github.com/colinmarc/slang-rs", features = [
+    "from-source",
+] }
 system-deps = "6"
 
 [package.metadata.system-deps]

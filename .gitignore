@@ -4,7 +4,6 @@
 
 Cargo.lock
 target
-*/target
 .vscode
 .reuse
 *.log

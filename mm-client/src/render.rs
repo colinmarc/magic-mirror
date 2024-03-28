@@ -1,8 +1,8 @@
-#![allow(clippy::missing_safety_doc)]
-
 // Copyright 2024 Colin Marc <hi@colinmarc.com>
 //
 // SPDX-License-Identifier: MIT
+
+#![allow(clippy::missing_safety_doc)]
 
 use anyhow::{anyhow, Context, Result};
 use ash::vk;

@@ -60,4 +60,6 @@ features = [
 ]
 
 [build-dependencies]
-shaderc = "0.8.2"
+slang = { git = "https://github.com/colinmarc/slang-rs", features = [
+    "from-source",
+] }

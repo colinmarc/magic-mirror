@@ -240,7 +240,7 @@ impl CompositePipeline {
         let clear_value = vk::ClearValue {
             color: vk::ClearColorValue {
                 #[cfg(debug_assertions)]
-                float32: [0.0, 0.0, 1.0, 1.0], // TODO: blue for debug
+                float32: [0.0, 0.3, 1.0, 1.0], // Blue for debug.
                 #[cfg(not(debug_assertions))]
                 float32: [0.0, 0.0, 0.0, 1.0],
             },

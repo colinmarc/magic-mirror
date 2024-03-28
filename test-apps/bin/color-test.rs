@@ -500,13 +500,10 @@ impl Renderer {
             )
             .collect::<Vec<_>>();
 
-        devices.sort_by_key(|(_, _, info)| {
-            let score = match info.device_type {
-                vk::PhysicalDeviceType::DISCRETE_GPU => 0,
-                vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
-                _ => 2,
-            };
-            score
+        devices.sort_by_key(|(_, _, info)| match info.device_type {
+            vk::PhysicalDeviceType::DISCRETE_GPU => 0,
+            vk::PhysicalDeviceType::INTEGRATED_GPU => 1,
+            _ => 2,
         });
 
         if devices.is_empty() {
@@ -538,7 +535,7 @@ impl Renderer {
             let mut dynamic_rendering_features =
                 vk::PhysicalDeviceDynamicRenderingFeatures::builder().dynamic_rendering(true);
 
-            let selected_extensions = vec![
+            let selected_extensions = [
                 vk::KhrSwapchainFn::name().to_owned(),
                 vk::KhrDynamicRenderingFn::name().to_owned(),
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -735,8 +732,8 @@ impl Renderer {
         };
 
         let pipeline = {
-            let vert_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/shaders/vert.spv"));
-            let frag_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/shaders/frag.spv"));
+            let vert_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/color-test/vert.spv"));
+            let frag_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/color-test/frag.spv"));
             let vert_shader = load_shader(device, vert_bytes).context("loading vert.spv")?;
             let frag_shader = load_shader(device, frag_bytes).context("loading frag.spv")?;
 
@@ -922,15 +919,11 @@ impl Renderer {
 
     fn handle_event<T>(&mut self, event: &winit::event::Event<T>) -> anyhow::Result<()> {
         match event {
-            winit::event::Event::WindowEvent { window_id, event }
-                if *window_id == self.window.id() =>
-            {
-                match event {
-                    winit::event::WindowEvent::Resized(size) => {
-                        self.resize(size.width, size.height);
-                    }
-                    _ => (),
-                }
+            winit::event::Event::WindowEvent {
+                window_id,
+                event: winit::event::WindowEvent::Resized(size),
+            } if *window_id == self.window.id() => {
+                self.resize(size.width, size.height);
             }
             _ => (),
         }
