@@ -586,6 +586,12 @@ impl Renderer {
             None => 0,
         };
 
+        let surface_format = surface_formats[surface_format_idx];
+        eprintln!(
+            "selected surface format: {:?} / {:?}",
+            surface_format.format, surface_format.color_space,
+        );
+
         let swapchain_loader = SwapchainKhr::new(&instance, &device);
         let dynamic_rendering_loader = DynamicRenderingKhr::new(&instance, &device);
 
@@ -626,6 +632,10 @@ impl Renderer {
         let device = &self.device;
 
         let surface_format = self.surface_formats[self.surface_format_idx];
+        eprintln!(
+            "recreating swapchain with format {:?} / {:?}",
+            surface_format.format, surface_format.color_space
+        );
 
         let surface_capabilities = self
             .surface_loader
@@ -719,7 +729,7 @@ impl Renderer {
 
         let pipeline_layout = {
             let pc_ranges = [vk::PushConstantRange::builder()
-                .stage_flags(vk::ShaderStageFlags::VERTEX)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
                 .size(std::mem::size_of::<PushConstants>() as u32)
                 .build()];
@@ -1062,7 +1072,7 @@ impl Renderer {
         device.cmd_push_constants(
             frame.render_cb,
             swapchain.pipeline_layout,
-            vk::ShaderStageFlags::VERTEX,
+            vk::ShaderStageFlags::FRAGMENT,
             0,
             std::slice::from_raw_parts(
                 &self.pc as *const _ as *const u8,
