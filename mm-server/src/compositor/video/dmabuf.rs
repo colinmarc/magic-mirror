@@ -22,6 +22,26 @@ const SUPPORTED_DRM_FORMATS: &[(DrmFourcc, vk::Format, bool)] = &[
     (DrmFourcc::Xrgb8888, vk::Format::B8G8R8A8_UNORM, true),
     (DrmFourcc::Abgr8888, vk::Format::R8G8B8A8_UNORM, false),
     (DrmFourcc::Xbgr8888, vk::Format::R8G8B8A8_UNORM, true),
+    (
+        DrmFourcc::Argb16161616f,
+        vk::Format::R16G16B16A16_SFLOAT,
+        false,
+    ),
+    (
+        DrmFourcc::Xrgb16161616f,
+        vk::Format::R16G16B16A16_SFLOAT,
+        true,
+    ),
+    (
+        DrmFourcc::Abgr16161616f,
+        vk::Format::R16G16B16A16_SFLOAT,
+        false,
+    ),
+    (
+        DrmFourcc::Xbgr16161616f,
+        vk::Format::R16G16B16A16_SFLOAT,
+        true,
+    ),
 ];
 
 pub fn fourcc_to_vk(fourcc: DrmFourcc) -> Option<(vk::Format, bool)> {
