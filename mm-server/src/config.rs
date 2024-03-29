@@ -5,6 +5,7 @@
 use anyhow::{bail, Context};
 use lazy_static::lazy_static;
 use regex::Regex;
+use tracing::trace;
 
 use std::{
     collections::HashMap,
@@ -221,6 +222,8 @@ impl Config {
                     .or(default_app_settings.force_1x_scale)
                     .unwrap(),
             };
+
+            trace!("parsed app {}: {:#?}", name, res);
 
             this.apps.insert(name, res);
         }
