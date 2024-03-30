@@ -5,11 +5,10 @@
 use std::{
     ffi::{c_void, CStr, CString},
     rc::Rc,
-    str::FromStr,
     time,
 };
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, Context};
 use ash::{
     extensions::{
         ext::DebugUtils as DebugUtilsExt, khr::DynamicRendering as DynamicRenderingKhr,
@@ -17,258 +16,266 @@ use ash::{
     },
     vk,
 };
-use clap::Parser;
+use imgui_rs_vulkan_renderer as imgui_vulkan;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
-    event::{ElementState, Event, KeyEvent, WindowEvent},
+    event::{ElementState, Event, KeyEvent, MouseButton, WindowEvent},
     event_loop::EventLoop,
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
 
-#[derive(Debug, Parser)]
-#[command(name = "color-test")]
-#[command(about = "The Magic Mirror color test app", long_about = None)]
-struct Cli {
-    /// Select a specific vk::Format.
-    #[arg(long)]
-    format: Option<VkF>,
-    /// Select a specific vk::ColorSpaceKHR.
-    #[arg(long)]
-    color_space: Option<VkCs>,
-}
+// #[derive(Debug, Parser)]
+// #[command(name = "color-test")]
+// #[command(about = "The Magic Mirror color test app", long_about = None)]
+// struct Cli {
+//     /// Select a specific vk::Format.
+//     #[arg(long)]
+//     format: Option<VkF>,
+//     /// Select a specific vk::ColorSpaceKHR.
+//     #[arg(long)]
+//     color_space: Option<VkCs>,
+// }
 
-#[derive(Debug, Clone)]
-struct VkF(vk::Format);
+// #[derive(Debug, Clone)]
+// struct VkF(vk::Format);
 
-#[derive(Debug, Clone)]
-struct VkCs(vk::ColorSpaceKHR);
+// #[derive(Debug, Clone)]
+// struct VkCs(vk::ColorSpaceKHR);
 
-impl FromStr for VkF {
-    type Err = anyhow::Error;
+// impl FromStr for VkF {
+//     type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "R4G4_UNORM_PACK8" => Ok(VkF(vk::Format::R4G4_UNORM_PACK8)),
-            "R4G4B4A4_UNORM_PACK16" => Ok(VkF(vk::Format::R4G4B4A4_UNORM_PACK16)),
-            "B4G4R4A4_UNORM_PACK16" => Ok(VkF(vk::Format::B4G4R4A4_UNORM_PACK16)),
-            "R5G6B5_UNORM_PACK16" => Ok(VkF(vk::Format::R5G6B5_UNORM_PACK16)),
-            "B5G6R5_UNORM_PACK16" => Ok(VkF(vk::Format::B5G6R5_UNORM_PACK16)),
-            "R5G5B5A1_UNORM_PACK16" => Ok(VkF(vk::Format::R5G5B5A1_UNORM_PACK16)),
-            "B5G5R5A1_UNORM_PACK16" => Ok(VkF(vk::Format::B5G5R5A1_UNORM_PACK16)),
-            "A1R5G5B5_UNORM_PACK16" => Ok(VkF(vk::Format::A1R5G5B5_UNORM_PACK16)),
-            "R8_UNORM" => Ok(VkF(vk::Format::R8_UNORM)),
-            "R8_SNORM" => Ok(VkF(vk::Format::R8_SNORM)),
-            "R8_USCALED" => Ok(VkF(vk::Format::R8_USCALED)),
-            "R8_SSCALED" => Ok(VkF(vk::Format::R8_SSCALED)),
-            "R8_UINT" => Ok(VkF(vk::Format::R8_UINT)),
-            "R8_SINT" => Ok(VkF(vk::Format::R8_SINT)),
-            "R8_SRGB" => Ok(VkF(vk::Format::R8_SRGB)),
-            "R8G8_UNORM" => Ok(VkF(vk::Format::R8G8_UNORM)),
-            "R8G8_SNORM" => Ok(VkF(vk::Format::R8G8_SNORM)),
-            "R8G8_USCALED" => Ok(VkF(vk::Format::R8G8_USCALED)),
-            "R8G8_SSCALED" => Ok(VkF(vk::Format::R8G8_SSCALED)),
-            "R8G8_UINT" => Ok(VkF(vk::Format::R8G8_UINT)),
-            "R8G8_SINT" => Ok(VkF(vk::Format::R8G8_SINT)),
-            "R8G8_SRGB" => Ok(VkF(vk::Format::R8G8_SRGB)),
-            "R8G8B8_UNORM" => Ok(VkF(vk::Format::R8G8B8_UNORM)),
-            "R8G8B8_SNORM" => Ok(VkF(vk::Format::R8G8B8_SNORM)),
-            "R8G8B8_USCALED" => Ok(VkF(vk::Format::R8G8B8_USCALED)),
-            "R8G8B8_SSCALED" => Ok(VkF(vk::Format::R8G8B8_SSCALED)),
-            "R8G8B8_UINT" => Ok(VkF(vk::Format::R8G8B8_UINT)),
-            "R8G8B8_SINT" => Ok(VkF(vk::Format::R8G8B8_SINT)),
-            "R8G8B8_SRGB" => Ok(VkF(vk::Format::R8G8B8_SRGB)),
-            "B8G8R8_UNORM" => Ok(VkF(vk::Format::B8G8R8_UNORM)),
-            "B8G8R8_SNORM" => Ok(VkF(vk::Format::B8G8R8_SNORM)),
-            "B8G8R8_USCALED" => Ok(VkF(vk::Format::B8G8R8_USCALED)),
-            "B8G8R8_SSCALED" => Ok(VkF(vk::Format::B8G8R8_SSCALED)),
-            "B8G8R8_UINT" => Ok(VkF(vk::Format::B8G8R8_UINT)),
-            "B8G8R8_SINT" => Ok(VkF(vk::Format::B8G8R8_SINT)),
-            "B8G8R8_SRGB" => Ok(VkF(vk::Format::B8G8R8_SRGB)),
-            "R8G8B8A8_UNORM" => Ok(VkF(vk::Format::R8G8B8A8_UNORM)),
-            "R8G8B8A8_SNORM" => Ok(VkF(vk::Format::R8G8B8A8_SNORM)),
-            "R8G8B8A8_USCALED" => Ok(VkF(vk::Format::R8G8B8A8_USCALED)),
-            "R8G8B8A8_SSCALED" => Ok(VkF(vk::Format::R8G8B8A8_SSCALED)),
-            "R8G8B8A8_UINT" => Ok(VkF(vk::Format::R8G8B8A8_UINT)),
-            "R8G8B8A8_SINT" => Ok(VkF(vk::Format::R8G8B8A8_SINT)),
-            "R8G8B8A8_SRGB" => Ok(VkF(vk::Format::R8G8B8A8_SRGB)),
-            "B8G8R8A8_UNORM" => Ok(VkF(vk::Format::B8G8R8A8_UNORM)),
-            "B8G8R8A8_SNORM" => Ok(VkF(vk::Format::B8G8R8A8_SNORM)),
-            "B8G8R8A8_USCALED" => Ok(VkF(vk::Format::B8G8R8A8_USCALED)),
-            "B8G8R8A8_SSCALED" => Ok(VkF(vk::Format::B8G8R8A8_SSCALED)),
-            "B8G8R8A8_UINT" => Ok(VkF(vk::Format::B8G8R8A8_UINT)),
-            "B8G8R8A8_SINT" => Ok(VkF(vk::Format::B8G8R8A8_SINT)),
-            "B8G8R8A8_SRGB" => Ok(VkF(vk::Format::B8G8R8A8_SRGB)),
-            "A8B8G8R8_UNORM_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_UNORM_PACK32)),
-            "A8B8G8R8_SNORM_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_SNORM_PACK32)),
-            "A8B8G8R8_USCALED_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_USCALED_PACK32)),
-            "A8B8G8R8_SSCALED_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_SSCALED_PACK32)),
-            "A8B8G8R8_UINT_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_UINT_PACK32)),
-            "A8B8G8R8_SINT_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_SINT_PACK32)),
-            "A8B8G8R8_SRGB_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_SRGB_PACK32)),
-            "A2R10G10B10_UNORM_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_UNORM_PACK32)),
-            "A2R10G10B10_SNORM_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_SNORM_PACK32)),
-            "A2R10G10B10_USCALED_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_USCALED_PACK32)),
-            "A2R10G10B10_SSCALED_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_SSCALED_PACK32)),
-            "A2R10G10B10_UINT_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_UINT_PACK32)),
-            "A2R10G10B10_SINT_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_SINT_PACK32)),
-            "A2B10G10R10_UNORM_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_UNORM_PACK32)),
-            "A2B10G10R10_SNORM_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_SNORM_PACK32)),
-            "A2B10G10R10_USCALED_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_USCALED_PACK32)),
-            "A2B10G10R10_SSCALED_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_SSCALED_PACK32)),
-            "A2B10G10R10_UINT_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_UINT_PACK32)),
-            "A2B10G10R10_SINT_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_SINT_PACK32)),
-            "R16_UNORM" => Ok(VkF(vk::Format::R16_UNORM)),
-            "R16_SNORM" => Ok(VkF(vk::Format::R16_SNORM)),
-            "R16_USCALED" => Ok(VkF(vk::Format::R16_USCALED)),
-            "R16_SSCALED" => Ok(VkF(vk::Format::R16_SSCALED)),
-            "R16_UINT" => Ok(VkF(vk::Format::R16_UINT)),
-            "R16_SINT" => Ok(VkF(vk::Format::R16_SINT)),
-            "R16_SFLOAT" => Ok(VkF(vk::Format::R16_SFLOAT)),
-            "R16G16_UNORM" => Ok(VkF(vk::Format::R16G16_UNORM)),
-            "R16G16_SNORM" => Ok(VkF(vk::Format::R16G16_SNORM)),
-            "R16G16_USCALED" => Ok(VkF(vk::Format::R16G16_USCALED)),
-            "R16G16_SSCALED" => Ok(VkF(vk::Format::R16G16_SSCALED)),
-            "R16G16_UINT" => Ok(VkF(vk::Format::R16G16_UINT)),
-            "R16G16_SINT" => Ok(VkF(vk::Format::R16G16_SINT)),
-            "R16G16_SFLOAT" => Ok(VkF(vk::Format::R16G16_SFLOAT)),
-            "R16G16B16_UNORM" => Ok(VkF(vk::Format::R16G16B16_UNORM)),
-            "R16G16B16_SNORM" => Ok(VkF(vk::Format::R16G16B16_SNORM)),
-            "R16G16B16_USCALED" => Ok(VkF(vk::Format::R16G16B16_USCALED)),
-            "R16G16B16_SSCALED" => Ok(VkF(vk::Format::R16G16B16_SSCALED)),
-            "R16G16B16_UINT" => Ok(VkF(vk::Format::R16G16B16_UINT)),
-            "R16G16B16_SINT" => Ok(VkF(vk::Format::R16G16B16_SINT)),
-            "R16G16B16_SFLOAT" => Ok(VkF(vk::Format::R16G16B16_SFLOAT)),
-            "R16G16B16A16_UNORM" => Ok(VkF(vk::Format::R16G16B16A16_UNORM)),
-            "R16G16B16A16_SNORM" => Ok(VkF(vk::Format::R16G16B16A16_SNORM)),
-            "R16G16B16A16_USCALED" => Ok(VkF(vk::Format::R16G16B16A16_USCALED)),
-            "R16G16B16A16_SSCALED" => Ok(VkF(vk::Format::R16G16B16A16_SSCALED)),
-            "R16G16B16A16_UINT" => Ok(VkF(vk::Format::R16G16B16A16_UINT)),
-            "R16G16B16A16_SINT" => Ok(VkF(vk::Format::R16G16B16A16_SINT)),
-            "R16G16B16A16_SFLOAT" => Ok(VkF(vk::Format::R16G16B16A16_SFLOAT)),
-            "R32_UINT" => Ok(VkF(vk::Format::R32_UINT)),
-            "R32_SINT" => Ok(VkF(vk::Format::R32_SINT)),
-            "R32_SFLOAT" => Ok(VkF(vk::Format::R32_SFLOAT)),
-            "R32G32_UINT" => Ok(VkF(vk::Format::R32G32_UINT)),
-            "R32G32_SINT" => Ok(VkF(vk::Format::R32G32_SINT)),
-            "R32G32_SFLOAT" => Ok(VkF(vk::Format::R32G32_SFLOAT)),
-            "R32G32B32_UINT" => Ok(VkF(vk::Format::R32G32B32_UINT)),
-            "R32G32B32_SINT" => Ok(VkF(vk::Format::R32G32B32_SINT)),
-            "R32G32B32_SFLOAT" => Ok(VkF(vk::Format::R32G32B32_SFLOAT)),
-            "R32G32B32A32_UINT" => Ok(VkF(vk::Format::R32G32B32A32_UINT)),
-            "R32G32B32A32_SINT" => Ok(VkF(vk::Format::R32G32B32A32_SINT)),
-            "R32G32B32A32_SFLOAT" => Ok(VkF(vk::Format::R32G32B32A32_SFLOAT)),
-            "R64_UINT" => Ok(VkF(vk::Format::R64_UINT)),
-            "R64_SINT" => Ok(VkF(vk::Format::R64_SINT)),
-            "R64_SFLOAT" => Ok(VkF(vk::Format::R64_SFLOAT)),
-            "R64G64_UINT" => Ok(VkF(vk::Format::R64G64_UINT)),
-            "R64G64_SINT" => Ok(VkF(vk::Format::R64G64_SINT)),
-            "R64G64_SFLOAT" => Ok(VkF(vk::Format::R64G64_SFLOAT)),
-            "R64G64B64_UINT" => Ok(VkF(vk::Format::R64G64B64_UINT)),
-            "R64G64B64_SINT" => Ok(VkF(vk::Format::R64G64B64_SINT)),
-            "R64G64B64_SFLOAT" => Ok(VkF(vk::Format::R64G64B64_SFLOAT)),
-            "R64G64B64A64_UINT" => Ok(VkF(vk::Format::R64G64B64A64_UINT)),
-            "R64G64B64A64_SINT" => Ok(VkF(vk::Format::R64G64B64A64_SINT)),
-            "R64G64B64A64_SFLOAT" => Ok(VkF(vk::Format::R64G64B64A64_SFLOAT)),
-            "B10G11R11_UFLOAT_PACK32" => Ok(VkF(vk::Format::B10G11R11_UFLOAT_PACK32)),
-            "E5B9G9R9_UFLOAT_PACK32" => Ok(VkF(vk::Format::E5B9G9R9_UFLOAT_PACK32)),
-            "D16_UNORM" => Ok(VkF(vk::Format::D16_UNORM)),
-            "X8_D24_UNORM_PACK32" => Ok(VkF(vk::Format::X8_D24_UNORM_PACK32)),
-            "D32_SFLOAT" => Ok(VkF(vk::Format::D32_SFLOAT)),
-            "S8_UINT" => Ok(VkF(vk::Format::S8_UINT)),
-            "D16_UNORM_S8_UINT" => Ok(VkF(vk::Format::D16_UNORM_S8_UINT)),
-            "D24_UNORM_S8_UINT" => Ok(VkF(vk::Format::D24_UNORM_S8_UINT)),
-            "D32_SFLOAT_S8_UINT" => Ok(VkF(vk::Format::D32_SFLOAT_S8_UINT)),
-            "BC1_RGB_UNORM_BLOCK" => Ok(VkF(vk::Format::BC1_RGB_UNORM_BLOCK)),
-            "BC1_RGB_SRGB_BLOCK" => Ok(VkF(vk::Format::BC1_RGB_SRGB_BLOCK)),
-            "BC1_RGBA_UNORM_BLOCK" => Ok(VkF(vk::Format::BC1_RGBA_UNORM_BLOCK)),
-            "BC1_RGBA_SRGB_BLOCK" => Ok(VkF(vk::Format::BC1_RGBA_SRGB_BLOCK)),
-            "BC2_UNORM_BLOCK" => Ok(VkF(vk::Format::BC2_UNORM_BLOCK)),
-            "BC2_SRGB_BLOCK" => Ok(VkF(vk::Format::BC2_SRGB_BLOCK)),
-            "BC3_UNORM_BLOCK" => Ok(VkF(vk::Format::BC3_UNORM_BLOCK)),
-            "BC3_SRGB_BLOCK" => Ok(VkF(vk::Format::BC3_SRGB_BLOCK)),
-            "BC4_UNORM_BLOCK" => Ok(VkF(vk::Format::BC4_UNORM_BLOCK)),
-            "BC4_SNORM_BLOCK" => Ok(VkF(vk::Format::BC4_SNORM_BLOCK)),
-            "BC5_UNORM_BLOCK" => Ok(VkF(vk::Format::BC5_UNORM_BLOCK)),
-            "BC5_SNORM_BLOCK" => Ok(VkF(vk::Format::BC5_SNORM_BLOCK)),
-            "BC6H_UFLOAT_BLOCK" => Ok(VkF(vk::Format::BC6H_UFLOAT_BLOCK)),
-            "BC6H_SFLOAT_BLOCK" => Ok(VkF(vk::Format::BC6H_SFLOAT_BLOCK)),
-            "BC7_UNORM_BLOCK" => Ok(VkF(vk::Format::BC7_UNORM_BLOCK)),
-            "BC7_SRGB_BLOCK" => Ok(VkF(vk::Format::BC7_SRGB_BLOCK)),
-            "ETC2_R8G8B8_UNORM_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8_UNORM_BLOCK)),
-            "ETC2_R8G8B8_SRGB_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8_SRGB_BLOCK)),
-            "ETC2_R8G8B8A1_UNORM_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8A1_UNORM_BLOCK)),
-            "ETC2_R8G8B8A1_SRGB_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8A1_SRGB_BLOCK)),
-            "ETC2_R8G8B8A8_UNORM_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8A8_UNORM_BLOCK)),
-            "ETC2_R8G8B8A8_SRGB_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8A8_SRGB_BLOCK)),
-            "EAC_R11_UNORM_BLOCK" => Ok(VkF(vk::Format::EAC_R11_UNORM_BLOCK)),
-            "EAC_R11_SNORM_BLOCK" => Ok(VkF(vk::Format::EAC_R11_SNORM_BLOCK)),
-            "EAC_R11G11_UNORM_BLOCK" => Ok(VkF(vk::Format::EAC_R11G11_UNORM_BLOCK)),
-            "EAC_R11G11_SNORM_BLOCK" => Ok(VkF(vk::Format::EAC_R11G11_SNORM_BLOCK)),
-            "ASTC_4X4_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_4X4_UNORM_BLOCK)),
-            "ASTC_4X4_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_4X4_SRGB_BLOCK)),
-            "ASTC_5X4_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_5X4_UNORM_BLOCK)),
-            "ASTC_5X4_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_5X4_SRGB_BLOCK)),
-            "ASTC_5X5_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_5X5_UNORM_BLOCK)),
-            "ASTC_5X5_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_5X5_SRGB_BLOCK)),
-            "ASTC_6X5_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_6X5_UNORM_BLOCK)),
-            "ASTC_6X5_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_6X5_SRGB_BLOCK)),
-            "ASTC_6X6_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_6X6_UNORM_BLOCK)),
-            "ASTC_6X6_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_6X6_SRGB_BLOCK)),
-            "ASTC_8X5_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_8X5_UNORM_BLOCK)),
-            "ASTC_8X5_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_8X5_SRGB_BLOCK)),
-            "ASTC_8X6_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_8X6_UNORM_BLOCK)),
-            "ASTC_8X6_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_8X6_SRGB_BLOCK)),
-            "ASTC_8X8_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_8X8_UNORM_BLOCK)),
-            "ASTC_8X8_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_8X8_SRGB_BLOCK)),
-            "ASTC_10X5_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_10X5_UNORM_BLOCK)),
-            "ASTC_10X5_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_10X5_SRGB_BLOCK)),
-            "ASTC_10X6_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_10X6_UNORM_BLOCK)),
-            "ASTC_10X6_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_10X6_SRGB_BLOCK)),
-            "ASTC_10X8_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_10X8_UNORM_BLOCK)),
-            "ASTC_10X8_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_10X8_SRGB_BLOCK)),
-            "ASTC_10X10_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_10X10_UNORM_BLOCK)),
-            "ASTC_10X10_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_10X10_SRGB_BLOCK)),
-            "ASTC_12X10_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_12X10_UNORM_BLOCK)),
-            "ASTC_12X10_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_12X10_SRGB_BLOCK)),
-            "ASTC_12X12_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_12X12_UNORM_BLOCK)),
-            "ASTC_12X12_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_12X12_SRGB_BLOCK)),
-            _ => Err(anyhow::anyhow!("Unknown format: {}", s)),
-        }
-    }
-}
+//     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//         match s {
+//             "R4G4_UNORM_PACK8" => Ok(VkF(vk::Format::R4G4_UNORM_PACK8)),
+//             "R4G4B4A4_UNORM_PACK16" => Ok(VkF(vk::Format::R4G4B4A4_UNORM_PACK16)),
+//             "B4G4R4A4_UNORM_PACK16" => Ok(VkF(vk::Format::B4G4R4A4_UNORM_PACK16)),
+//             "R5G6B5_UNORM_PACK16" => Ok(VkF(vk::Format::R5G6B5_UNORM_PACK16)),
+//             "B5G6R5_UNORM_PACK16" => Ok(VkF(vk::Format::B5G6R5_UNORM_PACK16)),
+//             "R5G5B5A1_UNORM_PACK16" => Ok(VkF(vk::Format::R5G5B5A1_UNORM_PACK16)),
+//             "B5G5R5A1_UNORM_PACK16" => Ok(VkF(vk::Format::B5G5R5A1_UNORM_PACK16)),
+//             "A1R5G5B5_UNORM_PACK16" => Ok(VkF(vk::Format::A1R5G5B5_UNORM_PACK16)),
+//             "R8_UNORM" => Ok(VkF(vk::Format::R8_UNORM)),
+//             "R8_SNORM" => Ok(VkF(vk::Format::R8_SNORM)),
+//             "R8_USCALED" => Ok(VkF(vk::Format::R8_USCALED)),
+//             "R8_SSCALED" => Ok(VkF(vk::Format::R8_SSCALED)),
+//             "R8_UINT" => Ok(VkF(vk::Format::R8_UINT)),
+//             "R8_SINT" => Ok(VkF(vk::Format::R8_SINT)),
+//             "R8_SRGB" => Ok(VkF(vk::Format::R8_SRGB)),
+//             "R8G8_UNORM" => Ok(VkF(vk::Format::R8G8_UNORM)),
+//             "R8G8_SNORM" => Ok(VkF(vk::Format::R8G8_SNORM)),
+//             "R8G8_USCALED" => Ok(VkF(vk::Format::R8G8_USCALED)),
+//             "R8G8_SSCALED" => Ok(VkF(vk::Format::R8G8_SSCALED)),
+//             "R8G8_UINT" => Ok(VkF(vk::Format::R8G8_UINT)),
+//             "R8G8_SINT" => Ok(VkF(vk::Format::R8G8_SINT)),
+//             "R8G8_SRGB" => Ok(VkF(vk::Format::R8G8_SRGB)),
+//             "R8G8B8_UNORM" => Ok(VkF(vk::Format::R8G8B8_UNORM)),
+//             "R8G8B8_SNORM" => Ok(VkF(vk::Format::R8G8B8_SNORM)),
+//             "R8G8B8_USCALED" => Ok(VkF(vk::Format::R8G8B8_USCALED)),
+//             "R8G8B8_SSCALED" => Ok(VkF(vk::Format::R8G8B8_SSCALED)),
+//             "R8G8B8_UINT" => Ok(VkF(vk::Format::R8G8B8_UINT)),
+//             "R8G8B8_SINT" => Ok(VkF(vk::Format::R8G8B8_SINT)),
+//             "R8G8B8_SRGB" => Ok(VkF(vk::Format::R8G8B8_SRGB)),
+//             "B8G8R8_UNORM" => Ok(VkF(vk::Format::B8G8R8_UNORM)),
+//             "B8G8R8_SNORM" => Ok(VkF(vk::Format::B8G8R8_SNORM)),
+//             "B8G8R8_USCALED" => Ok(VkF(vk::Format::B8G8R8_USCALED)),
+//             "B8G8R8_SSCALED" => Ok(VkF(vk::Format::B8G8R8_SSCALED)),
+//             "B8G8R8_UINT" => Ok(VkF(vk::Format::B8G8R8_UINT)),
+//             "B8G8R8_SINT" => Ok(VkF(vk::Format::B8G8R8_SINT)),
+//             "B8G8R8_SRGB" => Ok(VkF(vk::Format::B8G8R8_SRGB)),
+//             "R8G8B8A8_UNORM" => Ok(VkF(vk::Format::R8G8B8A8_UNORM)),
+//             "R8G8B8A8_SNORM" => Ok(VkF(vk::Format::R8G8B8A8_SNORM)),
+//             "R8G8B8A8_USCALED" => Ok(VkF(vk::Format::R8G8B8A8_USCALED)),
+//             "R8G8B8A8_SSCALED" => Ok(VkF(vk::Format::R8G8B8A8_SSCALED)),
+//             "R8G8B8A8_UINT" => Ok(VkF(vk::Format::R8G8B8A8_UINT)),
+//             "R8G8B8A8_SINT" => Ok(VkF(vk::Format::R8G8B8A8_SINT)),
+//             "R8G8B8A8_SRGB" => Ok(VkF(vk::Format::R8G8B8A8_SRGB)),
+//             "B8G8R8A8_UNORM" => Ok(VkF(vk::Format::B8G8R8A8_UNORM)),
+//             "B8G8R8A8_SNORM" => Ok(VkF(vk::Format::B8G8R8A8_SNORM)),
+//             "B8G8R8A8_USCALED" => Ok(VkF(vk::Format::B8G8R8A8_USCALED)),
+//             "B8G8R8A8_SSCALED" => Ok(VkF(vk::Format::B8G8R8A8_SSCALED)),
+//             "B8G8R8A8_UINT" => Ok(VkF(vk::Format::B8G8R8A8_UINT)),
+//             "B8G8R8A8_SINT" => Ok(VkF(vk::Format::B8G8R8A8_SINT)),
+//             "B8G8R8A8_SRGB" => Ok(VkF(vk::Format::B8G8R8A8_SRGB)),
+//             "A8B8G8R8_UNORM_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_UNORM_PACK32)),
+//             "A8B8G8R8_SNORM_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_SNORM_PACK32)),
+//             "A8B8G8R8_USCALED_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_USCALED_PACK32)),
+//             "A8B8G8R8_SSCALED_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_SSCALED_PACK32)),
+//             "A8B8G8R8_UINT_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_UINT_PACK32)),
+//             "A8B8G8R8_SINT_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_SINT_PACK32)),
+//             "A8B8G8R8_SRGB_PACK32" => Ok(VkF(vk::Format::A8B8G8R8_SRGB_PACK32)),
+//             "A2R10G10B10_UNORM_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_UNORM_PACK32)),
+//             "A2R10G10B10_SNORM_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_SNORM_PACK32)),
+//             "A2R10G10B10_USCALED_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_USCALED_PACK32)),
+//             "A2R10G10B10_SSCALED_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_SSCALED_PACK32)),
+//             "A2R10G10B10_UINT_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_UINT_PACK32)),
+//             "A2R10G10B10_SINT_PACK32" => Ok(VkF(vk::Format::A2R10G10B10_SINT_PACK32)),
+//             "A2B10G10R10_UNORM_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_UNORM_PACK32)),
+//             "A2B10G10R10_SNORM_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_SNORM_PACK32)),
+//             "A2B10G10R10_USCALED_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_USCALED_PACK32)),
+//             "A2B10G10R10_SSCALED_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_SSCALED_PACK32)),
+//             "A2B10G10R10_UINT_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_UINT_PACK32)),
+//             "A2B10G10R10_SINT_PACK32" => Ok(VkF(vk::Format::A2B10G10R10_SINT_PACK32)),
+//             "R16_UNORM" => Ok(VkF(vk::Format::R16_UNORM)),
+//             "R16_SNORM" => Ok(VkF(vk::Format::R16_SNORM)),
+//             "R16_USCALED" => Ok(VkF(vk::Format::R16_USCALED)),
+//             "R16_SSCALED" => Ok(VkF(vk::Format::R16_SSCALED)),
+//             "R16_UINT" => Ok(VkF(vk::Format::R16_UINT)),
+//             "R16_SINT" => Ok(VkF(vk::Format::R16_SINT)),
+//             "R16_SFLOAT" => Ok(VkF(vk::Format::R16_SFLOAT)),
+//             "R16G16_UNORM" => Ok(VkF(vk::Format::R16G16_UNORM)),
+//             "R16G16_SNORM" => Ok(VkF(vk::Format::R16G16_SNORM)),
+//             "R16G16_USCALED" => Ok(VkF(vk::Format::R16G16_USCALED)),
+//             "R16G16_SSCALED" => Ok(VkF(vk::Format::R16G16_SSCALED)),
+//             "R16G16_UINT" => Ok(VkF(vk::Format::R16G16_UINT)),
+//             "R16G16_SINT" => Ok(VkF(vk::Format::R16G16_SINT)),
+//             "R16G16_SFLOAT" => Ok(VkF(vk::Format::R16G16_SFLOAT)),
+//             "R16G16B16_UNORM" => Ok(VkF(vk::Format::R16G16B16_UNORM)),
+//             "R16G16B16_SNORM" => Ok(VkF(vk::Format::R16G16B16_SNORM)),
+//             "R16G16B16_USCALED" => Ok(VkF(vk::Format::R16G16B16_USCALED)),
+//             "R16G16B16_SSCALED" => Ok(VkF(vk::Format::R16G16B16_SSCALED)),
+//             "R16G16B16_UINT" => Ok(VkF(vk::Format::R16G16B16_UINT)),
+//             "R16G16B16_SINT" => Ok(VkF(vk::Format::R16G16B16_SINT)),
+//             "R16G16B16_SFLOAT" => Ok(VkF(vk::Format::R16G16B16_SFLOAT)),
+//             "R16G16B16A16_UNORM" => Ok(VkF(vk::Format::R16G16B16A16_UNORM)),
+//             "R16G16B16A16_SNORM" => Ok(VkF(vk::Format::R16G16B16A16_SNORM)),
+//             "R16G16B16A16_USCALED" => Ok(VkF(vk::Format::R16G16B16A16_USCALED)),
+//             "R16G16B16A16_SSCALED" => Ok(VkF(vk::Format::R16G16B16A16_SSCALED)),
+//             "R16G16B16A16_UINT" => Ok(VkF(vk::Format::R16G16B16A16_UINT)),
+//             "R16G16B16A16_SINT" => Ok(VkF(vk::Format::R16G16B16A16_SINT)),
+//             "R16G16B16A16_SFLOAT" => Ok(VkF(vk::Format::R16G16B16A16_SFLOAT)),
+//             "R32_UINT" => Ok(VkF(vk::Format::R32_UINT)),
+//             "R32_SINT" => Ok(VkF(vk::Format::R32_SINT)),
+//             "R32_SFLOAT" => Ok(VkF(vk::Format::R32_SFLOAT)),
+//             "R32G32_UINT" => Ok(VkF(vk::Format::R32G32_UINT)),
+//             "R32G32_SINT" => Ok(VkF(vk::Format::R32G32_SINT)),
+//             "R32G32_SFLOAT" => Ok(VkF(vk::Format::R32G32_SFLOAT)),
+//             "R32G32B32_UINT" => Ok(VkF(vk::Format::R32G32B32_UINT)),
+//             "R32G32B32_SINT" => Ok(VkF(vk::Format::R32G32B32_SINT)),
+//             "R32G32B32_SFLOAT" => Ok(VkF(vk::Format::R32G32B32_SFLOAT)),
+//             "R32G32B32A32_UINT" => Ok(VkF(vk::Format::R32G32B32A32_UINT)),
+//             "R32G32B32A32_SINT" => Ok(VkF(vk::Format::R32G32B32A32_SINT)),
+//             "R32G32B32A32_SFLOAT" => Ok(VkF(vk::Format::R32G32B32A32_SFLOAT)),
+//             "R64_UINT" => Ok(VkF(vk::Format::R64_UINT)),
+//             "R64_SINT" => Ok(VkF(vk::Format::R64_SINT)),
+//             "R64_SFLOAT" => Ok(VkF(vk::Format::R64_SFLOAT)),
+//             "R64G64_UINT" => Ok(VkF(vk::Format::R64G64_UINT)),
+//             "R64G64_SINT" => Ok(VkF(vk::Format::R64G64_SINT)),
+//             "R64G64_SFLOAT" => Ok(VkF(vk::Format::R64G64_SFLOAT)),
+//             "R64G64B64_UINT" => Ok(VkF(vk::Format::R64G64B64_UINT)),
+//             "R64G64B64_SINT" => Ok(VkF(vk::Format::R64G64B64_SINT)),
+//             "R64G64B64_SFLOAT" => Ok(VkF(vk::Format::R64G64B64_SFLOAT)),
+//             "R64G64B64A64_UINT" => Ok(VkF(vk::Format::R64G64B64A64_UINT)),
+//             "R64G64B64A64_SINT" => Ok(VkF(vk::Format::R64G64B64A64_SINT)),
+//             "R64G64B64A64_SFLOAT" => Ok(VkF(vk::Format::R64G64B64A64_SFLOAT)),
+//             "B10G11R11_UFLOAT_PACK32" => Ok(VkF(vk::Format::B10G11R11_UFLOAT_PACK32)),
+//             "E5B9G9R9_UFLOAT_PACK32" => Ok(VkF(vk::Format::E5B9G9R9_UFLOAT_PACK32)),
+//             "D16_UNORM" => Ok(VkF(vk::Format::D16_UNORM)),
+//             "X8_D24_UNORM_PACK32" => Ok(VkF(vk::Format::X8_D24_UNORM_PACK32)),
+//             "D32_SFLOAT" => Ok(VkF(vk::Format::D32_SFLOAT)),
+//             "S8_UINT" => Ok(VkF(vk::Format::S8_UINT)),
+//             "D16_UNORM_S8_UINT" => Ok(VkF(vk::Format::D16_UNORM_S8_UINT)),
+//             "D24_UNORM_S8_UINT" => Ok(VkF(vk::Format::D24_UNORM_S8_UINT)),
+//             "D32_SFLOAT_S8_UINT" => Ok(VkF(vk::Format::D32_SFLOAT_S8_UINT)),
+//             "BC1_RGB_UNORM_BLOCK" => Ok(VkF(vk::Format::BC1_RGB_UNORM_BLOCK)),
+//             "BC1_RGB_SRGB_BLOCK" => Ok(VkF(vk::Format::BC1_RGB_SRGB_BLOCK)),
+//             "BC1_RGBA_UNORM_BLOCK" => Ok(VkF(vk::Format::BC1_RGBA_UNORM_BLOCK)),
+//             "BC1_RGBA_SRGB_BLOCK" => Ok(VkF(vk::Format::BC1_RGBA_SRGB_BLOCK)),
+//             "BC2_UNORM_BLOCK" => Ok(VkF(vk::Format::BC2_UNORM_BLOCK)),
+//             "BC2_SRGB_BLOCK" => Ok(VkF(vk::Format::BC2_SRGB_BLOCK)),
+//             "BC3_UNORM_BLOCK" => Ok(VkF(vk::Format::BC3_UNORM_BLOCK)),
+//             "BC3_SRGB_BLOCK" => Ok(VkF(vk::Format::BC3_SRGB_BLOCK)),
+//             "BC4_UNORM_BLOCK" => Ok(VkF(vk::Format::BC4_UNORM_BLOCK)),
+//             "BC4_SNORM_BLOCK" => Ok(VkF(vk::Format::BC4_SNORM_BLOCK)),
+//             "BC5_UNORM_BLOCK" => Ok(VkF(vk::Format::BC5_UNORM_BLOCK)),
+//             "BC5_SNORM_BLOCK" => Ok(VkF(vk::Format::BC5_SNORM_BLOCK)),
+//             "BC6H_UFLOAT_BLOCK" => Ok(VkF(vk::Format::BC6H_UFLOAT_BLOCK)),
+//             "BC6H_SFLOAT_BLOCK" => Ok(VkF(vk::Format::BC6H_SFLOAT_BLOCK)),
+//             "BC7_UNORM_BLOCK" => Ok(VkF(vk::Format::BC7_UNORM_BLOCK)),
+//             "BC7_SRGB_BLOCK" => Ok(VkF(vk::Format::BC7_SRGB_BLOCK)),
+//             "ETC2_R8G8B8_UNORM_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8_UNORM_BLOCK)),
+//             "ETC2_R8G8B8_SRGB_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8_SRGB_BLOCK)),
+//             "ETC2_R8G8B8A1_UNORM_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8A1_UNORM_BLOCK)),
+//             "ETC2_R8G8B8A1_SRGB_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8A1_SRGB_BLOCK)),
+//             "ETC2_R8G8B8A8_UNORM_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8A8_UNORM_BLOCK)),
+//             "ETC2_R8G8B8A8_SRGB_BLOCK" => Ok(VkF(vk::Format::ETC2_R8G8B8A8_SRGB_BLOCK)),
+//             "EAC_R11_UNORM_BLOCK" => Ok(VkF(vk::Format::EAC_R11_UNORM_BLOCK)),
+//             "EAC_R11_SNORM_BLOCK" => Ok(VkF(vk::Format::EAC_R11_SNORM_BLOCK)),
+//             "EAC_R11G11_UNORM_BLOCK" => Ok(VkF(vk::Format::EAC_R11G11_UNORM_BLOCK)),
+//             "EAC_R11G11_SNORM_BLOCK" => Ok(VkF(vk::Format::EAC_R11G11_SNORM_BLOCK)),
+//             "ASTC_4X4_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_4X4_UNORM_BLOCK)),
+//             "ASTC_4X4_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_4X4_SRGB_BLOCK)),
+//             "ASTC_5X4_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_5X4_UNORM_BLOCK)),
+//             "ASTC_5X4_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_5X4_SRGB_BLOCK)),
+//             "ASTC_5X5_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_5X5_UNORM_BLOCK)),
+//             "ASTC_5X5_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_5X5_SRGB_BLOCK)),
+//             "ASTC_6X5_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_6X5_UNORM_BLOCK)),
+//             "ASTC_6X5_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_6X5_SRGB_BLOCK)),
+//             "ASTC_6X6_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_6X6_UNORM_BLOCK)),
+//             "ASTC_6X6_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_6X6_SRGB_BLOCK)),
+//             "ASTC_8X5_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_8X5_UNORM_BLOCK)),
+//             "ASTC_8X5_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_8X5_SRGB_BLOCK)),
+//             "ASTC_8X6_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_8X6_UNORM_BLOCK)),
+//             "ASTC_8X6_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_8X6_SRGB_BLOCK)),
+//             "ASTC_8X8_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_8X8_UNORM_BLOCK)),
+//             "ASTC_8X8_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_8X8_SRGB_BLOCK)),
+//             "ASTC_10X5_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_10X5_UNORM_BLOCK)),
+//             "ASTC_10X5_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_10X5_SRGB_BLOCK)),
+//             "ASTC_10X6_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_10X6_UNORM_BLOCK)),
+//             "ASTC_10X6_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_10X6_SRGB_BLOCK)),
+//             "ASTC_10X8_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_10X8_UNORM_BLOCK)),
+//             "ASTC_10X8_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_10X8_SRGB_BLOCK)),
+//             "ASTC_10X10_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_10X10_UNORM_BLOCK)),
+//             "ASTC_10X10_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_10X10_SRGB_BLOCK)),
+//             "ASTC_12X10_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_12X10_UNORM_BLOCK)),
+//             "ASTC_12X10_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_12X10_SRGB_BLOCK)),
+//             "ASTC_12X12_UNORM_BLOCK" => Ok(VkF(vk::Format::ASTC_12X12_UNORM_BLOCK)),
+//             "ASTC_12X12_SRGB_BLOCK" => Ok(VkF(vk::Format::ASTC_12X12_SRGB_BLOCK)),
+//             _ => Err(anyhow::anyhow!("Unknown format: {}", s)),
+//         }
+//     }
+// }
 
-impl FromStr for VkCs {
-    type Err = anyhow::Error;
+// impl FromStr for VkCs {
+//     type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "SRGB_NONLINEAR" => Ok(VkCs(vk::ColorSpaceKHR::SRGB_NONLINEAR)),
-            "DISPLAY_P3_NONLINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::DISPLAY_P3_NONLINEAR_EXT)),
-            "EXTENDED_SRGB_LINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::EXTENDED_SRGB_LINEAR_EXT)),
-            "DISPLAY_P3_LINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::DISPLAY_P3_LINEAR_EXT)),
-            "DCI_P3_NONLINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::DCI_P3_NONLINEAR_EXT)),
-            "BT709_LINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::BT709_LINEAR_EXT)),
-            "BT709_NONLINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::BT709_NONLINEAR_EXT)),
-            "BT2020_LINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::BT2020_LINEAR_EXT)),
-            "HDR10_ST2084_EXT" => Ok(VkCs(vk::ColorSpaceKHR::HDR10_ST2084_EXT)),
-            "DOLBYVISION_EXT" => Ok(VkCs(vk::ColorSpaceKHR::DOLBYVISION_EXT)),
-            "HDR10_HLG_EXT" => Ok(VkCs(vk::ColorSpaceKHR::HDR10_HLG_EXT)),
-            "ADOBERGB_LINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::ADOBERGB_LINEAR_EXT)),
-            "ADOBERGB_NONLINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::ADOBERGB_NONLINEAR_EXT)),
-            "PASS_THROUGH_EXT" => Ok(VkCs(vk::ColorSpaceKHR::PASS_THROUGH_EXT)),
-            "EXTENDED_SRGB_NONLINEAR_EXT" => {
-                Ok(VkCs(vk::ColorSpaceKHR::EXTENDED_SRGB_NONLINEAR_EXT))
-            }
-            _ => Err(anyhow::anyhow!("Unknown color space: {}", s)),
-        }
-    }
+//     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//         match s {
+//             "SRGB_NONLINEAR" => Ok(VkCs(vk::ColorSpaceKHR::SRGB_NONLINEAR)),
+//             "DISPLAY_P3_NONLINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::DISPLAY_P3_NONLINEAR_EXT)),
+//             "EXTENDED_SRGB_LINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::EXTENDED_SRGB_LINEAR_EXT)),
+//             "DISPLAY_P3_LINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::DISPLAY_P3_LINEAR_EXT)),
+//             "DCI_P3_NONLINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::DCI_P3_NONLINEAR_EXT)),
+//             "BT709_LINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::BT709_LINEAR_EXT)),
+//             "BT709_NONLINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::BT709_NONLINEAR_EXT)),
+//             "BT2020_LINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::BT2020_LINEAR_EXT)),
+//             "HDR10_ST2084_EXT" => Ok(VkCs(vk::ColorSpaceKHR::HDR10_ST2084_EXT)),
+//             "DOLBYVISION_EXT" => Ok(VkCs(vk::ColorSpaceKHR::DOLBYVISION_EXT)),
+//             "HDR10_HLG_EXT" => Ok(VkCs(vk::ColorSpaceKHR::HDR10_HLG_EXT)),
+//             "ADOBERGB_LINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::ADOBERGB_LINEAR_EXT)),
+//             "ADOBERGB_NONLINEAR_EXT" => Ok(VkCs(vk::ColorSpaceKHR::ADOBERGB_NONLINEAR_EXT)),
+//             "PASS_THROUGH_EXT" => Ok(VkCs(vk::ColorSpaceKHR::PASS_THROUGH_EXT)),
+//             "EXTENDED_SRGB_NONLINEAR_EXT" => {
+//                 Ok(VkCs(vk::ColorSpaceKHR::EXTENDED_SRGB_NONLINEAR_EXT))
+//             }
+//             _ => Err(anyhow::anyhow!("Unknown color space: {}", s)),
+//         }
+//     }
+// }
+
+struct ImguiContext {
+    imgui: imgui::Context,
+    platform: imgui_winit_support::WinitPlatform,
 }
 
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 struct PushConstants {
-    colors: glam::Vec4,
+    size: glam::Vec2,
+    mouse: glam::Vec2,
+    color_mul: f32,
+    color_space: vk::ColorSpaceKHR,
 }
 
 struct VkDebugContext {
@@ -301,11 +308,15 @@ struct Renderer {
 
     surface: vk::SurfaceKHR,
     surface_formats: Vec<vk::SurfaceFormatKHR>,
-    surface_format_idx: usize,
+    format: vk::Format,
+    colorspace: vk::ColorSpaceKHR,
+
     pc: PushConstants,
     present_queue: VkQueue,
     width: u32,
     height: u32,
+
+    imgui: Option<ImguiContext>,
 
     window: Rc<winit::window::Window>,
 
@@ -318,6 +329,8 @@ struct Swapchain {
     frames: Vec<InFlightFrame>,
     present_images: Vec<SwapImage>,
     current_frame: usize,
+
+    imgui_renderer: Option<imgui_vulkan::Renderer>,
 
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
@@ -338,12 +351,7 @@ struct SwapImage {
 }
 
 impl Renderer {
-    fn new(
-        window: Rc<winit::window::Window>,
-        debug: bool,
-        format: Option<vk::Format>,
-        color_space: Option<vk::ColorSpaceKHR>,
-    ) -> anyhow::Result<Self> {
+    fn new(window: Rc<winit::window::Window>, debug: bool) -> anyhow::Result<Self> {
         let entry = unsafe { ash::Entry::load().context("failed to load vulkan libraries!") }?;
         eprintln!("creating vulkan instance");
 
@@ -571,29 +579,30 @@ impl Renderer {
             );
         }
 
-        let surface_format = surface_formats.iter().position(|sf| {
-            (Some(sf.format) == format || format.is_none())
-                && (Some(sf.color_space) == color_space || color_space.is_none())
-        });
+        // Disable Vulkan's automatic sRGB conversion.
+        let surface_formats = surface_formats
+            .into_iter()
+            .filter(|sf| !format_is_srgb(sf.format) && colorspace_supported(sf.color_space))
+            .collect::<Vec<_>>();
 
-        let surface_format_idx = match surface_format {
-            Some(idx) => idx,
-            None if format.is_some() || color_space.is_some() => bail!(
-                "no matching surface format found for {:?} / {:?}",
-                format,
-                color_space
-            ),
-            None => 0,
-        };
-
-        let surface_format = surface_formats[surface_format_idx];
+        let surface_format = surface_formats[0];
         eprintln!(
-            "selected surface format: {:?} / {:?}",
+            "using surface format: {:?} / {:?}",
             surface_format.format, surface_format.color_space,
         );
 
         let swapchain_loader = SwapchainKhr::new(&instance, &device);
         let dynamic_rendering_loader = DynamicRenderingKhr::new(&instance, &device);
+
+        let mut imgui = imgui::Context::create();
+        imgui.set_ini_filename(None);
+
+        let mut imgui_platform = imgui_winit_support::WinitPlatform::init(&mut imgui);
+        imgui_platform.attach_window(
+            imgui.io_mut(),
+            &window,
+            imgui_winit_support::HiDpiMode::Default,
+        );
 
         let mut renderer = Self {
             _entry: entry,
@@ -609,13 +618,24 @@ impl Renderer {
 
             surface,
             surface_formats,
-            surface_format_idx,
+            format: surface_format.format,
+            colorspace: surface_format.color_space,
+
             pc: PushConstants {
-                colors: glam::Vec4::new(1.0, 1.0, 1.0, 1.0),
+                size: glam::Vec2::new(window_size.width as f32, window_size.height as f32),
+                mouse: glam::Vec2::ZERO,
+                color_mul: 1.0,
+                color_space: surface_format.color_space,
             },
             present_queue,
             width: window_size.width,
             height: window_size.height,
+
+            imgui: Some(ImguiContext {
+                imgui,
+                platform: imgui_platform,
+            }),
+
             window,
             swapchain: None,
 
@@ -631,11 +651,17 @@ impl Renderer {
         let start = time::Instant::now();
         let device = &self.device;
 
-        let surface_format = self.surface_formats[self.surface_format_idx];
+        let surface_format = self
+            .surface_formats
+            .iter()
+            .find(|sf| sf.format == self.format && sf.color_space == self.colorspace)
+            .expect("invalid format / colorspace combination");
         eprintln!(
             "recreating swapchain with format {:?} / {:?}",
             surface_format.format, surface_format.color_space
         );
+
+        self.pc.color_space = surface_format.color_space;
 
         let surface_capabilities = self
             .surface_loader
@@ -655,6 +681,11 @@ impl Renderer {
             },
             _ => surface_capabilities.current_extent,
         };
+
+        self.pc.size = glam::Vec2::new(
+            surface_resolution.width as f32,
+            surface_resolution.height as f32,
+        );
 
         let pre_transform = if surface_capabilities
             .supported_transforms
@@ -729,7 +760,7 @@ impl Renderer {
 
         let pipeline_layout = {
             let pc_ranges = [vk::PushConstantRange::builder()
-                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
                 .size(std::mem::size_of::<PushConstants>() as u32)
                 .build()];
@@ -906,6 +937,24 @@ impl Renderer {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
+        let imgui_renderer = if let Some(ImguiContext { imgui, .. }) = &mut self.imgui {
+            Some(imgui_vulkan::Renderer::with_default_allocator(
+                &self.instance,
+                self.pdevice,
+                device.clone(),
+                self.present_queue.queue,
+                self.present_queue.command_pool,
+                imgui_vulkan::DynamicRendering {
+                    color_attachment_format: surface_format.format,
+                    depth_attachment_format: None,
+                },
+                imgui,
+                None,
+            )?)
+        } else {
+            None
+        };
+
         let swapchain = Swapchain {
             swapchain,
             frames,
@@ -916,6 +965,8 @@ impl Renderer {
             descriptor_set_layout,
             pipeline_layout,
             pipeline,
+
+            imgui_renderer,
         };
 
         eprintln!("recreated swapchain in {:?}", start.elapsed());
@@ -928,6 +979,13 @@ impl Renderer {
     }
 
     fn handle_event<T>(&mut self, event: &winit::event::Event<T>) -> anyhow::Result<()> {
+        if let Some(ImguiContext {
+            platform, imgui, ..
+        }) = self.imgui.as_mut()
+        {
+            platform.handle_event(imgui.io_mut(), &self.window, event);
+        }
+
         match event {
             winit::event::Event::WindowEvent {
                 window_id,
@@ -939,24 +997,6 @@ impl Renderer {
         }
 
         Ok(())
-    }
-
-    fn next_format(&mut self) -> vk::SurfaceFormatKHR {
-        self.surface_format_idx = (self.surface_format_idx + 1) % self.surface_formats.len();
-        self.swapchain_dirty = true;
-        self.surface_formats[self.surface_format_idx]
-    }
-
-    fn prev_format(&mut self) -> vk::SurfaceFormatKHR {
-        self.surface_format_idx =
-            (self.surface_format_idx + self.surface_formats.len() - 1) % self.surface_formats.len();
-        self.swapchain_dirty = true;
-        self.surface_formats[self.surface_format_idx]
-    }
-
-    fn toggle_color(&mut self, idx: usize) {
-        self.pc.colors[idx] = if self.pc.colors[idx] != 0.0 { 0.0 } else { 1.0 };
-        self.swapchain_dirty = true;
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -1072,7 +1112,7 @@ impl Renderer {
         device.cmd_push_constants(
             frame.render_cb,
             swapchain.pipeline_layout,
-            vk::ShaderStageFlags::FRAGMENT,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             0,
             std::slice::from_raw_parts(
                 &self.pc as *const _ as *const u8,
@@ -1082,6 +1122,98 @@ impl Renderer {
 
         // Draw the triangle.
         device.cmd_draw(frame.render_cb, 3, 1, 0, 0);
+
+        // Draw the overlay.
+        if let Some(ImguiContext { platform, imgui }) = self.imgui.as_mut() {
+            let mut formats = self
+                .surface_formats
+                .iter()
+                .map(|sf| sf.format)
+                .collect::<Vec<_>>();
+
+            let mut colorspaces = self
+                .surface_formats
+                .iter()
+                .map(|sf| sf.color_space)
+                .collect::<Vec<_>>();
+
+            formats.sort();
+            formats.dedup();
+            colorspaces.sort();
+            colorspaces.dedup();
+
+            let format_names = formats
+                .iter()
+                .map(|f| format!("{:?}", f))
+                .collect::<Vec<_>>();
+
+            let cs_names = colorspaces
+                .iter()
+                .map(|c| format!("{:?}", c))
+                .collect::<Vec<_>>();
+
+            let mut format_idx = formats.iter().position(|&f| f == self.format).unwrap() as i32;
+            let mut cs_idx = colorspaces
+                .iter()
+                .position(|&c| c == self.colorspace)
+                .unwrap() as i32;
+
+            platform.prepare_frame(imgui.io_mut(), &self.window)?;
+
+            {
+                let ui = imgui.new_frame();
+
+                let [width, _height] = ui.io().display_size;
+
+                let _padding = ui.push_style_var(imgui::StyleVar::WindowPadding([8.0, 8.0]));
+                let _rounding = ui.push_style_var(imgui::StyleVar::WindowRounding(4.0));
+                let _frame_rounding = ui.push_style_var(imgui::StyleVar::FrameRounding(4.0));
+
+                if let Some(_window) = ui
+                    .window("controls")
+                    .position([width - 16.0, 16.0], imgui::Condition::Always)
+                    .position_pivot([1.0, 0.0])
+                    .bg_alpha(0.8)
+                    .size([250.0, 300.0], imgui::Condition::Always)
+                    .begin()
+                {
+                    let _stretch = ui.push_item_width(-1.0);
+                    ui.text("Format:");
+                    ui.list_box(
+                        "##format",
+                        &mut format_idx,
+                        &format_names.iter().map(|f| f.as_str()).collect::<Vec<_>>(),
+                        4,
+                    );
+
+                    ui.text("Color Space:");
+                    ui.list_box(
+                        "##cs",
+                        &mut cs_idx,
+                        &cs_names.iter().map(|f| f.as_str()).collect::<Vec<_>>(),
+                        4,
+                    );
+
+                    ui.text("Headroom:");
+                    ui.slider("##headroom", 1.0, 4.0, &mut self.pc.color_mul);
+                }
+
+                platform.prepare_render(ui, &self.window);
+            }
+
+            let renderer = swapchain.imgui_renderer.as_mut().unwrap();
+            renderer.cmd_draw(frame.render_cb, imgui.render())?;
+
+            if formats[format_idx as usize] != self.format {
+                self.format = formats[format_idx as usize];
+                self.swapchain_dirty = true;
+            }
+
+            if colorspaces[cs_idx as usize] != self.colorspace {
+                self.colorspace = colorspaces[cs_idx as usize];
+                self.swapchain_dirty = true;
+            }
+        }
 
         // Done rendereng.
         self.dynamic_rendering_loader
@@ -1135,11 +1267,16 @@ impl Renderer {
                 .swapchain_loader
                 .queue_present(present_queue, &present_info)
             {
-                Ok(false) => false,
+                Ok(false) => self.swapchain_dirty,
                 Ok(true) => true,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => true,
                 Err(e) => return Err(e.into()),
             };
+        }
+
+        // Render again!
+        if self.swapchain_dirty {
+            return self.render();
         }
 
         Ok(())
@@ -1188,6 +1325,10 @@ impl Drop for Renderer {
                     .destroy_debug_utils_messenger(debug.messenger, None);
             }
 
+            if let Some(imgui) = self.imgui.take() {
+                drop(imgui);
+            }
+
             self.surface_loader.destroy_surface(self.surface, None);
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
@@ -1196,8 +1337,6 @@ impl Drop for Renderer {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Cli::parse();
-
     let event_loop = EventLoop::new()?;
     let window = WindowBuilder::new()
         .with_title("Colorful Triangle")
@@ -1206,23 +1345,18 @@ fn main() -> anyhow::Result<()> {
         .unwrap();
 
     let window = Rc::new(window);
-    let mut renderer = Renderer::new(
-        window.clone(),
-        cfg!(debug_assertions),
-        args.format.map(|f| f.0),
-        args.color_space.map(|c| c.0),
-    )?;
+    let mut renderer = Renderer::new(window.clone(), cfg!(debug_assertions))?;
 
-    let f = renderer.surface_formats[renderer.surface_format_idx];
-    window.set_title(&format!(
-        "Colorful Triangle ({:?} / {:?})",
-        f.format, f.color_space
-    ));
+    let mut mouse_pressed = false;
+    let mut mouse_pos = glam::Vec2::ZERO;
 
     event_loop.run(move |event, el| {
         renderer.handle_event(&event).expect("resize failed");
 
         match event {
+            Event::AboutToWait { .. } => {
+                window.request_redraw();
+            }
             Event::WindowEvent { window_id, event } if window_id == window.id() => {
                 match event {
                     WindowEvent::CloseRequested
@@ -1235,47 +1369,28 @@ fn main() -> anyhow::Result<()> {
                             },
                         ..
                     } => el.exit(),
-                    WindowEvent::KeyboardInput {
-                        event:
-                            KeyEvent {
-                                state: ElementState::Pressed,
-                                physical_key,
-                                ..
-                            },
+                    WindowEvent::MouseInput {
+                        state,
+                        button: MouseButton::Left,
                         ..
                     } => {
-                        let f = match physical_key {
-                            PhysicalKey::Code(KeyCode::ArrowRight) => Some(renderer.next_format()),
-                            PhysicalKey::Code(KeyCode::ArrowLeft) => Some(renderer.prev_format()),
-                            PhysicalKey::Code(KeyCode::Digit1) => {
-                                renderer.toggle_color(0);
-                                None
-                            }
-                            PhysicalKey::Code(KeyCode::Digit2) => {
-                                renderer.toggle_color(1);
-                                None
-                            }
-                            PhysicalKey::Code(KeyCode::Digit3) => {
-                                renderer.toggle_color(2);
-                                None
-                            }
-                            _ => None,
-                        };
-
-                        if let Some(f) = f {
-                            window.set_title(&format!(
-                                "Colorful Triangle ({:?} / {:?})",
-                                f.format, f.color_space
-                            ));
-                        }
-
-                        window.request_redraw();
+                        mouse_pressed = state == ElementState::Pressed;
+                    }
+                    WindowEvent::CursorMoved { position, .. } => {
+                        let phys_size = window.inner_size();
+                        let mouse_x = position.x as f32 / phys_size.width as f32 - 0.5;
+                        let mouse_y = position.y as f32 / phys_size.height as f32 - 0.5;
+                        mouse_pos = glam::Vec2::new(mouse_x, mouse_y);
                     }
                     WindowEvent::RedrawRequested => unsafe {
                         renderer.render().expect("render failed")
                     },
                     _ => (),
                 };
+
+                if mouse_pressed {
+                    renderer.pc.mouse = mouse_pos;
+                }
             }
             _ => (),
         }
@@ -1421,6 +1536,55 @@ fn load_shader(device: &ash::Device, bytes: &[u8]) -> anyhow::Result<vk::ShaderM
     let shader = unsafe { device.create_shader_module(&create_info, None)? };
 
     Ok(shader)
+}
+
+fn format_is_srgb(format: vk::Format) -> bool {
+    matches!(
+        format,
+        vk::Format::R8_SRGB
+            | vk::Format::R8G8_SRGB
+            | vk::Format::R8G8B8_SRGB
+            | vk::Format::B8G8R8_SRGB
+            | vk::Format::R8G8B8A8_SRGB
+            | vk::Format::B8G8R8A8_SRGB
+            | vk::Format::A8B8G8R8_SRGB_PACK32
+            | vk::Format::BC1_RGB_SRGB_BLOCK
+            | vk::Format::BC1_RGBA_SRGB_BLOCK
+            | vk::Format::BC2_SRGB_BLOCK
+            | vk::Format::BC3_SRGB_BLOCK
+            | vk::Format::BC7_SRGB_BLOCK
+            | vk::Format::ETC2_R8G8B8_SRGB_BLOCK
+            | vk::Format::ETC2_R8G8B8A1_SRGB_BLOCK
+            | vk::Format::ETC2_R8G8B8A8_SRGB_BLOCK
+            | vk::Format::ASTC_4X4_SRGB_BLOCK
+            | vk::Format::ASTC_5X4_SRGB_BLOCK
+            | vk::Format::ASTC_5X5_SRGB_BLOCK
+            | vk::Format::ASTC_6X5_SRGB_BLOCK
+            | vk::Format::ASTC_6X6_SRGB_BLOCK
+            | vk::Format::ASTC_8X5_SRGB_BLOCK
+            | vk::Format::ASTC_8X6_SRGB_BLOCK
+            | vk::Format::ASTC_8X8_SRGB_BLOCK
+            | vk::Format::ASTC_10X5_SRGB_BLOCK
+            | vk::Format::ASTC_10X6_SRGB_BLOCK
+            | vk::Format::ASTC_10X8_SRGB_BLOCK
+            | vk::Format::ASTC_10X10_SRGB_BLOCK
+            | vk::Format::ASTC_12X10_SRGB_BLOCK
+            | vk::Format::ASTC_12X12_SRGB_BLOCK
+    )
+}
+
+fn colorspace_supported(colorspace: vk::ColorSpaceKHR) -> bool {
+    matches!(
+        colorspace,
+        vk::ColorSpaceKHR::SRGB_NONLINEAR
+            | vk::ColorSpaceKHR::EXTENDED_SRGB_LINEAR_EXT
+            | vk::ColorSpaceKHR::DISPLAY_P3_LINEAR_EXT
+            | vk::ColorSpaceKHR::DISPLAY_P3_NONLINEAR_EXT
+            | vk::ColorSpaceKHR::DCI_P3_NONLINEAR_EXT
+            | vk::ColorSpaceKHR::BT709_LINEAR_EXT
+            | vk::ColorSpaceKHR::BT709_NONLINEAR_EXT
+            | vk::ColorSpaceKHR::HDR10_ST2084_EXT
+    )
 }
 
 unsafe extern "system" fn vulkan_debug_utils_callback(
