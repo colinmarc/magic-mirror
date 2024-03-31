@@ -34,85 +34,68 @@ public static const PrimariesTransform BT2020 = {
 };
 }
 
-// Named transfer functions.
-public enum TransferFunction
-{
-    LINEAR,
-    SRGB,
-    BT709,
-    PQ,
-}
-
-// Applies the EOTF of a transfer function to a color, linearizing the value.
-// This is sometimes called removing gamma correction.
-public float4 apply_eotf(float4 color, TransferFunction transferFunction)
-{
-    return float4(
-        apply_eotf(color.rgb, transferFunction),
-        color.a);
-}
-
-// Applies the EOTF of a transfer function to a color, linearizing the value.
-// This is sometimes called removing gamma correction.
-public float3 apply_eotf(float3 color, TransferFunction transferFunction)
+// Applies the sRGB EOTF to a color, producing linear values.
+public float3 srgb_eotf(float3 color)
 {
     return float3(
-        apply_eotf(color.r, transferFunction),
-        apply_eotf(color.g, transferFunction),
-        apply_eotf(color.b, transferFunction));
+        srgb_eotf(color.r),
+        srgb_eotf(color.g),
+        srgb_eotf(color.b));
 }
 
-// Applies the EOTF of a transfer function to one channel of a color. This is
-// sometimes called removing gamma correction.
-public float apply_eotf(float channel, TransferFunction transferFunction)
+// Applies the sRGB EOTF to one channel of a color, producing a linear value.
+public float srgb_eotf(float channel)
 {
-    switch (transferFunction)
-    {
-    case TransferFunction::LINEAR:
-        return channel;
-    case TransferFunction::SRGB:
-        return channel > 0.04045 ? pow((channel + 0.055) / 1.055, 2.4) : channel / 12.92;
-    case TransferFunction::BT709:
-        return channel > 0.081 ? pow((channel + 0.099) / 1.099, 1.0 / 0.45) : channel / 4.5;
-    case TransferFunction::PQ:
-        return pq_eotf(channel);
-    }
+    return channel > 0.04045 ? pow((channel + 0.055) / 1.055, 2.4) : channel / 12.92;
 }
 
-// Applies the inverse EOTF of a transfer function to a color, resulting in
-// non-linear values. This is sometimes called gamma correction.
-public float4 apply_inverse_eotf(float4 color, TransferFunction transferFunction)
-{
-    return float4(
-        apply_inverse_eotf(color.rgb, transferFunction),
-        color.a);
-}
-
-// Applies the inverse EOTF of a transfer function to a color, resulting in
-// non-linear values. This is sometimes called gamma correction.
-public float3 apply_inverse_eotf(float3 color, TransferFunction transferFunction)
+// Applies the inverse sRGB EOTF to a color, producing non-linear values. This
+// is sometimes called gamma correction.
+public float3 srgb_inverse_eotf(float3 color)
 {
     return float3(
-        apply_inverse_eotf(color.r, transferFunction),
-        apply_inverse_eotf(color.g, transferFunction),
-        apply_inverse_eotf(color.b, transferFunction));
+        srgb_inverse_eotf(color.r),
+        srgb_inverse_eotf(color.g),
+        srgb_inverse_eotf(color.b));
 }
 
-// Applies the inverse EOTF of a transfer function to one channel of a color,
-// resulting in non-linear values. This is sometimes called gamma correction.
-public float apply_inverse_eotf(float channel, TransferFunction transferFunction)
+// Applies the inverse sRGB EOTF to one channel of a color, producing non-linear
+// values. This is sometimes called gamma correction.
+public float srgb_inverse_eotf(float channel)
 {
-    switch (transferFunction)
-    {
-    case TransferFunction::LINEAR:
-        return channel;
-    case TransferFunction::SRGB:
-        return channel > 0.0031308 ? 1.055 * pow(channel, 1.0 / 2.4) - 0.055 : 12.92 * channel;
-    case TransferFunction::BT709:
-        return channel >= 0.018 ? 1.099 * pow(channel, 1.0 / 2.2) - 0.099 : 4.5 * channel;
-    case TransferFunction::PQ:
-        return pq_inverse_eotf(channel);
-    }
+    return channel > 0.0031308 ? 1.055 * pow(channel, 1.0 / 2.4) - 0.055 : 12.92 * channel;
+}
+
+// Applies the BT.709 EOTF to a color, producing linear values.
+public float3 bt709_eotf(float3 color)
+{
+    return float3(
+        bt709_eotf(color.r),
+        bt709_eotf(color.g),
+        bt709_eotf(color.b));
+}
+
+// Applies the BT.709 EOTF to one channel of a color, producing a linear value.
+public float bt709_eotf(float channel)
+{
+    return channel > 0.081 ? pow((channel + 0.099) / 1.099, 1.0 / 0.45) : channel / 4.5;
+}
+
+// Applies the inverse BT.709 EOTF to a color, producing non-linear values. This
+// is sometimes called gamma correction.
+public float3 bt709_inverse_eotf(float3 color)
+{
+    return float3(
+        bt709_inverse_eotf(color.r),
+        bt709_inverse_eotf(color.g),
+        bt709_inverse_eotf(color.b));
+}
+
+// Applies the inverse BT.709 EOTF to one channel of a color, producing non-linear
+// values. This is sometimes called gamma correction.
+public float bt709_inverse_eotf(float channel)
+{
+    return channel >= 0.018 ? 1.099 * pow(channel, 1.0 / 2.2) - 0.099 : 4.5 * channel;
 }
 
 static const float PQ_M1 = 0.1593017578125;
@@ -122,9 +105,22 @@ static const float PQ_C2 = 18.8515625;
 static const float PQ_C3 = 18.6875;
 
 public static const float SDR_REFERENCE_WHITE = 203.0;
+public static const float PQ_MAX_WHITE = 10000.0;
 
-// Applies the Perceptual Quantizer EOTF to a color channel. The input should be
-// in the range [0, 1], where 1 corresponds to the maximum 10,000 nits.
+// Applies the Perceptual Quantizer EOTF to a color, producing linear values.
+// The input should be in the range [0, 1], where 1 corresponds to the maximum
+// 10,000 nits.
+public float3 pq_eotf(float3 color)
+{
+    return float3(
+        pq_eotf(color.r),
+        pq_eotf(color.g),
+        pq_eotf(color.b));
+}
+
+// Applies the Perceptual Quantizer EOTF to a color channel, producing linear
+// values. The input should be in the range [0, 1], where 1 corresponds to the
+// maximum 10,000 nits.
 float pq_eotf(float channel)
 {
     let c = pow(channel, 1.0 / PQ_M2);
@@ -133,37 +129,26 @@ float pq_eotf(float channel)
         1.0 / PQ_M1);
 }
 
-// Applies the inverse Perceptual Quantizer EOTF to a color channel. The output
-// will be in the range [0, 1], where 1 corresponds to the maximum 10,000 nits.
+// Applies the inverse Perceptual Quantizer EOTF to a color, producing non-linear
+// values. The output will be in the range [0, 1], where 1 corresponds to the
+// maximum 10,000 nits.
+public float3 pq_inverse_eotf(float3 color)
+{
+    return float3(
+        pq_inverse_eotf(color.r),
+        pq_inverse_eotf(color.g),
+        pq_inverse_eotf(color.b));
+}
+
+// Applies the inverse Perceptual Quantizer EOTF to a color channel, producing a
+// non-linear value. The output will be in the range [0, 1], where 1 corresponds
+// to the maximum 10,000 nits.
 float pq_inverse_eotf(float channel)
 {
     let c = pow(channel, PQ_M1);
     return pow(
         (PQ_C1 + PQ_C2 * c) / (1.0 + PQ_C3 * c),
         PQ_M2);
-}
-
-// Applies a scaling function on the result of the PQ EOTF to map it to SDR
-// space, based on a hypothetical maximum nits value for SDR.
-public float4 scale_pq_to_sdr(float4 color, float max_nits)
-{
-    return float4(
-        scale_pq_to_sdr(color.rgb, max_nits),
-        color.a);
-}
-
-// Applies a scaling function on the result of the PQ EOTF to map it to SDR
-// space, based on a hypothetical maximum nits value for SDR.
-public float3 scale_pq_to_sdr(float3 color, float max_nits)
-{
-    return color * (10000.0 / max_nits);
-}
-
-// Applies a scaling function on the result of the PQ EOTF to map it to SDR
-// space, based on a hypothetical maximum nits value for SDR.
-public float scale_pq_to_sdr(float channel, float max_nits)
-{
-    return channel * (10000.0 / max_nits);
 }
 
 // Transform a color from one set of primaries to another. The colors must be
@@ -181,13 +166,54 @@ public float4 transform(float4 color, PrimariesTransform pa, PrimariesTransform 
 // inverse EOTF.
 public float3 transform(float3 color, PrimariesTransform pa, PrimariesTransform pb)
 {
-    // XXX if it doesn't work, I got the row-major/column-major thing wrong here.
-    // let mat = mul(pa.to_xyz, pb.from_xyz);
-    // let xyz = mul(pa.to_xyz, color);
-    // return mul(pb.from_xyz, xyz);
-    let color = clamp(color, 0.0, 1.0);
-    let xyz = mul(pa.to_xyz, color);
-    return mul(pb.from_xyz, xyz);
-    // return mul(color, mat);
-    // TODO premul
+    let mat = mul(pb.from_xyz, pa.to_xyz);
+    return mul(mat, color);
+}
+
+// Available conversions to and from YCbCr color space.
+public enum YCbCrModel
+{
+    BT709,
+    BT2020,
+}
+
+static const float3x3 YCBCR_709_MATRIX = float3x3(
+    0.2126, 0.7152, 0.0722,
+    -0.114572, -0.385428, 0.5,
+    0.5, -0.454153, -0.045847);
+
+static const float3x3 YCBCR_2020_MATRIX = float3x3(
+    0.2627, 0.6780, 0.0593,
+    -0.139630, -0.360370, 0.5,
+    0.5, -0.459786, -0.040214);
+
+// Encode a color in the YCbCr color system. The color should already be in
+// nonlinear space.
+public float3 encode_ycbcr(float3 color, YCbCrModel model, bool full_range)
+{
+    float3 ycbcr;
+    switch (model)
+    {
+    case YCbCrModel::BT709:
+        ycbcr = mul(YCBCR_709_MATRIX, color);
+        break;
+    case YCbCrModel::BT2020:
+        ycbcr = mul(YCBCR_2020_MATRIX, color);
+        break;
+    }
+
+    // The matrix multiplication gives us Y in [0, 1] and Cb and Cr in [-0.5, 0.5].
+    ycbcr.y += 0.5;
+    ycbcr.z += 0.5;
+
+    if (!full_range)
+    {
+        // This converts to "MPEG" or "Narrow" in the range [16, 235] and [16, 240].
+        ycbcr = float3(
+            (219.0 * ycbcr.x + 16.0) / 256.0,
+            (224.0 * ycbcr.y + 16.0) / 256.0,
+            (224.0 * ycbcr.z + 16.0) / 256.0);
+    }
+
+    return clamp(ycbcr, 0.0, 1.0);
 }

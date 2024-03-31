@@ -101,7 +101,7 @@ fn validate_profile(profile: i32) -> Result<VideoProfile> {
     };
 
     match p.try_into() {
-        Ok(p) if p == VideoProfile::Hd => Ok(p),
+        Ok(p) => Ok(p),
         _ => Err(ValidationError::NotSupported(
             "unsupported video profile".into(),
         )),

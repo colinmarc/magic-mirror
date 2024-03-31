@@ -7,6 +7,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use ash::vk;
 use cstr::cstr;
+use tracing::trace;
 
 use crate::{color::ColorSpace, vulkan::*};
 
@@ -18,9 +19,9 @@ pub const BLEND_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 #[repr(u32)]
 #[derive(Copy, Clone, Debug)]
 enum SurfaceColorSpace {
-    Srgb = 1,
-    LinearExtSrgb = 2,
-    Hdr10 = 3,
+    Srgb = 0,
+    LinearExtSrgb = 1,
+    Hdr10 = 2,
 }
 
 impl From<ColorSpace> for SurfaceColorSpace {
@@ -263,6 +264,8 @@ impl CompositePipeline {
             SurfaceTexture::Uploaded { .. } => ColorSpace::Srgb,
             SurfaceTexture::Imported { color_space, .. } => *color_space,
         };
+
+        trace!(?color_space, ?dst_pos, ?dst_size, "compositing surface");
 
         let pc = SurfacePC {
             src_pos: glam::Vec2::ZERO,

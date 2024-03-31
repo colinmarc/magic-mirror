@@ -14,6 +14,7 @@ use ash::vk::native::{
 use bytes::Bytes;
 use tracing::trace;
 
+use crate::color::VideoProfile;
 use crate::compositor::{AttachedClients, VideoStreamParams};
 use crate::vulkan::*;
 
@@ -70,16 +71,17 @@ impl H264Encoder {
     ) -> anyhow::Result<Self> {
         let (video_loader, encode_loader) = vk.video_apis.as_ref().unwrap();
 
-        let profile_idc = 100; // HIGH
+        let op = vk::VideoCodecOperationFlagsKHR::ENCODE_H264_EXT;
+        let (profile, profile_idc) = match params.profile {
+            VideoProfile::Hd => (super::default_profile(op), 100),
+            VideoProfile::Hdr10 => (super::default_hdr10_profile(op), 110),
+        };
 
         let h264_profile_info =
             vk::VideoEncodeH264ProfileInfoEXT::default().std_profile_idc(profile_idc);
 
-        let mut profile = H264EncodeProfile::new(
-            super::default_profile(vk::VideoCodecOperationFlagsKHR::ENCODE_H264_EXT),
-            super::default_encode_usage(),
-            h264_profile_info,
-        );
+        let mut profile =
+            H264EncodeProfile::new(profile, super::default_encode_usage(), h264_profile_info);
 
         let mut caps = H264EncodeCapabilities::default();
 
@@ -95,10 +97,7 @@ impl H264Encoder {
 
         trace!("video capabilities: {:#?}", caps.video_caps);
         trace!("encode capabilities: {:#?}", caps.encode_caps);
-        trace!("h264 capabilities: {:#?}", caps.h264_caps);
-
-        // let quality_level = caps.encode_caps.max_quality_levels - 1;
-        // let mut quality_props = H264QualityLevelProperties::default();
+        trace!("h265 capabilities: {:#?}", caps.h264_caps);
 
         // unsafe {
         //     let get_info = vk::PhysicalDeviceVideoEncodeQualityLevelInfoKHR::default()
@@ -159,11 +158,16 @@ impl H264Encoder {
 
         trace!("crop right: {}, bottom: {}", crop_right, crop_bottom);
 
+        let (colour_primaries, transfer_characteristics, matrix_coefficients) = match params.profile
+        {
+            VideoProfile::Hd => (1, 1, 1),
+            VideoProfile::Hdr10 => (9, 16, 9),
+        };
+
         let mut vui = StdVideoH264SequenceParameterSetVui {
-            // BT.709.
-            colour_primaries: 1,
-            transfer_characteristics: 1,
-            matrix_coefficients: 1,
+            colour_primaries,
+            transfer_characteristics,
+            matrix_coefficients,
             // Unspecified.
             video_format: 5,
             ..unsafe { std::mem::zeroed() }
@@ -179,10 +183,18 @@ impl H264Encoder {
             .ilog2()
             .saturating_sub(4) as u8;
 
+        let bit_depth = match params.profile {
+            VideoProfile::Hd => 8,
+            VideoProfile::Hdr10 => 10,
+        };
+
         let mut sps = StdVideoH264SequenceParameterSet {
             profile_idc,
             level_idc,
             chroma_format_idc: StdVideoH264ChromaFormatIdc_STD_VIDEO_H264_CHROMA_FORMAT_IDC_420,
+
+            bit_depth_chroma_minus8: bit_depth - 8,
+            bit_depth_luma_minus8: bit_depth - 8,
 
             max_num_ref_frames: 1,
             pic_order_cnt_type: StdVideoH264PocType_STD_VIDEO_H264_POC_TYPE_0,

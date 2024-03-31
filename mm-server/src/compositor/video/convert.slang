@@ -15,24 +15,71 @@ const RWTexture2D<float> chroma_u;
 const RWTexture2D<float> chroma_v;
 #endif
 
+// This must match the enum in convert.rs.
+enum InputTextureColorSpace
+{
+    SRGB = 0,
+    LINEAR_EXTENDED_SRGB = 1,
+    HDR10 = 2,
+}
+
+/// This must match the enum in convert.rs.
+enum OutputProfile
+{
+    HD = 0,
+    HDR10 = 1,
+}
+
 struct PushConstants
 {
-    float3x3 color_transform;
+    InputTextureColorSpace input_color_space;
+    OutputProfile output_profile;
 }
 
 [[vk::push_constant]]
 PushConstants pc;
 
-float3 rgb_to_ycbcr(float3 color)
+float3 to_bt709(float3 rgb, InputTextureColorSpace color_space)
 {
-    let yuv = mul(pc.color_transform, color);
+    float3 linear;
+    switch (color_space)
+    {
+    case InputTextureColorSpace::SRGB:
+        linear = srgb_eotf(rgb);
+        break;
+    case InputTextureColorSpace::HDR10:
+    {
+        // Treat 203 nits as 1.0, and clip everything above that.
+        linear = pq_eotf(rgb);
+        linear = clamp(linear * (PQ_MAX_WHITE / SDR_REFERENCE_WHITE), 0.0, 1.0);
+        break;
+    }
+    case InputTextureColorSpace::LINEAR_EXTENDED_SRGB:
+        linear = clamp(rgb, 0.0, 1.0);
+        break;
+    }
 
-    // The matrix multiplication gives us Y in [0, 1] and Cb and Cr in [-0.5, 0.5].
-    // This converts to "MPEG" or "Narrow" in the range [16, 235] and [16, 240].
-    return float3(
-        (219.0 * yuv.x + 16.0) / 256.0,
-        (224.0 * yuv.y + 128.0) / 256.0,
-        (224.0 * yuv.z + 128.0) / 256.0);
+    return bt709_inverse_eotf(linear);
+}
+
+float3 to_bt2020_pq(float3 rgb, InputTextureColorSpace color_space)
+{
+    float3 bt2020_linear;
+    switch (color_space)
+    {
+    case InputTextureColorSpace::SRGB:
+        bt2020_linear = transform(srgb_eotf(rgb), Primaries::BT709, Primaries::BT2020);
+        break;
+    case InputTextureColorSpace::LINEAR_EXTENDED_SRGB:
+        bt2020_linear = transform(rgb, Primaries::BT709, Primaries::BT2020);
+        break;
+    case InputTextureColorSpace::HDR10:
+        // Happy identity path.
+        return rgb;
+    }
+
+    // Tone-map 1.0 to 203 nits, then delinearize.
+    return clamp(pq_inverse_eotf(bt2020_linear * (SDR_REFERENCE_WHITE / PQ_MAX_WHITE)), 0.0, 1.0);
 }
 
 [shader("compute")]
@@ -52,11 +99,18 @@ void main(uint2 self_id: SV_DispatchThreadID)
             let texel_coords = coords + uint2(j, k);
             float4 texel = blend_image.Load(uint3(texel_coords, 0));
 
-            // Since we're using Rec. 709 primaries, but sampling scRGB, we need
-            // to clamp the values.
-            texel.rgb = clamp(texel.rgb, 0.0, 1.0);
-
-            let yuv = rgb_to_ycbcr(apply_inverse_eotf(texel.rgb, TransferFunction::BT709));
+            float3 yuv;
+            switch (pc.output_profile)
+            {
+            case OutputProfile::HD:
+                yuv = encode_ycbcr(to_bt709(texel.rgb, pc.input_color_space),
+                                   YCbCrModel::BT709, false);
+                break;
+            case OutputProfile::HDR10:
+                yuv = encode_ycbcr(to_bt2020_pq(texel.rgb, pc.input_color_space),
+                                   YCbCrModel::BT2020, false);
+                break;
+            }
 
             luminance[texel_coords] = yuv.x;
 
