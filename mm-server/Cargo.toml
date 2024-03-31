@@ -91,7 +91,7 @@ rev = "70ddb748f20ceecc20e963e571188124aeb30186"
 
 [dependencies.svt]
 git = "https://github.com/colinmarc/svt-rs"
-rev = "ab9dbd872d8f01c2cb96d3f9fd880b26d37d1f0e"
+rev = "747915fa4b2f7d0bd2c70ef5af108c75031efc53"
 optional = true
 features = ["av1", "hevc"]
 

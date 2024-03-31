@@ -5,6 +5,8 @@
 use ash::vk;
 use tracing::warn;
 
+use crate::compositor::VideoStreamParams;
+
 // Bitrate is defined here in terms of 1080p, and scaled nonlinearly to the
 // target resolution. Values are indexed by quality preset. Values 7/8/9 are
 // only used if CRF is unsupported by the driver.
@@ -40,14 +42,13 @@ pub struct VbrSettings {
 }
 
 pub fn select_rc_mode(
-    width: u32,
-    height: u32,
-    preset: u32,
+    params: VideoStreamParams,
     caps: &vk::VideoEncodeCapabilitiesKHR,
 ) -> RateControlMode {
-    assert!(preset <= 9);
+    assert!(params.preset <= 9);
 
-    let target_qp = 40 - (2 * preset); // 22 - 40;
+    let mut min_qp = 17;
+    let mut target_qp = 40 - (2 * params.preset); // 22 - 40;
 
     let supports_crf = caps
         .rate_control_modes
@@ -56,28 +57,28 @@ pub fn select_rc_mode(
         .rate_control_modes
         .contains(vk::VideoEncodeRateControlModeFlagsKHR::VBR);
 
-    if preset >= 7 && supports_crf {
+    if params.preset >= 7 && supports_crf {
         // Presets 7/8/9 use a very low constant QP.
         RateControlMode::ConstantQp(target_qp)
     } else if supports_vbr {
         // 6 and lower use VBR, starting with a high peak and reducing as the
         // presets get lower.
-        let scale = ((width * height) as f32 / BASELINE_DIMS).sqrt();
+        let scale = ((params.width * params.height) as f32 / BASELINE_DIMS).sqrt();
 
         const MBPS: f32 = 1_000_000.0;
         let average_bitrate =
-            (BASELINE_AVG_BITRATE_MBPS[preset as usize] * MBPS * scale).round() as u64;
+            (BASELINE_AVG_BITRATE_MBPS[params.preset as usize] * MBPS * scale).round() as u64;
         let peak_bitrate =
-            (BASELINE_PEAK_BITRATE_MBPS[preset as usize] * MBPS * scale).round() as u64;
+            (BASELINE_PEAK_BITRATE_MBPS[params.preset as usize] * MBPS * scale).round() as u64;
 
         RateControlMode::Vbr(VbrSettings {
             vbv_size_ms: 2500,
             average_bitrate,
             peak_bitrate,
-            min_qp: 17,
+            min_qp,
             max_qp: target_qp,
         })
-    } else if supports_crf    {
+    } else if supports_crf {
         // Fall back to CRF with a high QP.
         RateControlMode::ConstantQp(target_qp)
     } else {

@@ -1,3 +1,9 @@
+// Copyright 2024 Colin Marc <hi@colinmarc.com>
+//
+// SPDX-License-Identifier: BUSL-1.1
+
+#![allow(dead_code)]
+
 use mm_protocol as protocol;
 
 /// A combination of color primaries, white point, and transfer function. We

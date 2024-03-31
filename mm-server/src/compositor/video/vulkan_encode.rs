@@ -988,6 +988,14 @@ fn default_profile(op: vk::VideoCodecOperationFlagsKHR) -> vk::VideoProfileInfoK
         .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_8)
 }
 
+fn default_hdr10_profile(op: vk::VideoCodecOperationFlagsKHR) -> vk::VideoProfileInfoKHR<'static> {
+    vk::VideoProfileInfoKHR::default()
+        .video_codec_operation(op)
+        .chroma_subsampling(vk::VideoChromaSubsamplingFlagsKHR::TYPE_420)
+        .chroma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_10)
+        .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_10)
+}
+
 fn default_encode_usage() -> vk::VideoEncodeUsageInfoKHR<'static> {
     vk::VideoEncodeUsageInfoKHR::default()
         .video_usage_hints(vk::VideoEncodeUsageFlagsKHR::STREAMING)

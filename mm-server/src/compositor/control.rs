@@ -4,8 +4,6 @@
 
 use crossbeam_channel::Sender;
 
-use crate::color;
-
 use crate::{
     codec::{AudioCodec, VideoCodec},
     color::VideoProfile,

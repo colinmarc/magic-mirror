@@ -7,21 +7,54 @@ use std::sync::Arc;
 use ash::vk;
 use tracing::instrument;
 
-use crate::vulkan::*;
+use crate::{
+    color::{ColorSpace, VideoProfile},
+    vulkan::*,
+};
 
 use super::VkPlaneView;
 
-// GLSL requires vec4s for alignment.
-const COLORSPACE_BT709: [[f32; 4]; 3] = [
-    [0.2126, 0.7152, 0.0722, 0.0],
-    [-0.1146, -0.3854, 0.5, 0.0],
-    [0.5, -0.4542, -0.0458, 0.0],
-];
+// Also defined in convert.slang.
+#[repr(u32)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum InputTextureColorSpace {
+    Srgb = 0,
+    LinearExtSrgb = 1,
+    Hdr10 = 2,
+}
+
+impl From<ColorSpace> for InputTextureColorSpace {
+    fn from(cs: ColorSpace) -> Self {
+        match cs {
+            ColorSpace::Srgb => InputTextureColorSpace::Srgb,
+            ColorSpace::LinearExtSrgb => InputTextureColorSpace::LinearExtSrgb,
+            ColorSpace::Hdr10 => InputTextureColorSpace::Hdr10,
+        }
+    }
+}
+
+// Also defined in convert.slang.
+#[repr(u32)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum OutputProfile {
+    Hd = 0,
+    Hdr10 = 1,
+}
+
+impl From<VideoProfile> for OutputProfile {
+    fn from(profile: VideoProfile) -> Self {
+        match profile {
+            VideoProfile::Hd => OutputProfile::Hd,
+            VideoProfile::Hdr10 => OutputProfile::Hdr10,
+        }
+    }
+}
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug)]
-struct ColorspacePC {
-    color_space: [[f32; 4]; 3],
+#[derive(Debug, Copy, Clone)]
+struct ConvertPushConstants {
+    input_color_space: InputTextureColorSpace,
+    output_profile: OutputProfile,
 }
 
 pub struct ConvertPipeline {
@@ -100,7 +133,7 @@ impl ConvertPipeline {
             let ranges = [vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .offset(0)
-                .size(std::mem::size_of::<ColorspacePC>() as u32)];
+                .size(std::mem::size_of::<ConvertPushConstants>() as u32)];
 
             let set_layouts = [descriptor_set_layout];
             let create_info = vk::PipelineLayoutCreateInfo::default()
@@ -150,6 +183,8 @@ impl ConvertPipeline {
         width: u32,
         height: u32,
         descriptor_set: vk::DescriptorSet,
+        input_color_space: ColorSpace,
+        video_profile: VideoProfile,
     ) {
         self.vk
             .device
@@ -164,8 +199,9 @@ impl ConvertPipeline {
             &[],
         );
 
-        let pc = ColorspacePC {
-            color_space: COLORSPACE_BT709, // TODO
+        let pc = ConvertPushConstants {
+            input_color_space: input_color_space.into(),
+            output_profile: video_profile.into(),
         };
 
         self.vk.device.cmd_push_constants(
@@ -175,7 +211,7 @@ impl ConvertPipeline {
             0,
             std::slice::from_raw_parts(
                 &pc as *const _ as *const u8,
-                std::mem::size_of::<ColorspacePC>(),
+                std::mem::size_of::<ConvertPushConstants>(),
             ),
         );
 

@@ -4,6 +4,7 @@
 
 use std::{mem::ManuallyDrop, sync::Arc};
 
+use anyhow::{anyhow, bail};
 use ash::vk;
 
 mod composite;
@@ -16,7 +17,11 @@ use cpu_encode::CpuEncoder;
 
 use tracing::{error, instrument, trace, warn};
 
-use crate::{codec::VideoCodec, vulkan::*};
+use crate::{
+    codec::VideoCodec,
+    color::{ColorSpace, VideoProfile},
+    vulkan::*,
+};
 
 use super::{
     buffers::{Buffer, BufferBacking},
@@ -70,6 +75,10 @@ impl Encoder {
                     warn!("falling back to CPU encoder");
                 }
             }
+        }
+
+        if params.profile != VideoProfile::Hd {
+            bail!("HDR requires vulkan encode")
         }
 
         Ok(Self::Cpu(CpuEncoder::new(
@@ -130,6 +139,7 @@ pub enum TextureSync {
 
 pub struct EncodePipeline {
     display_params: DisplayParams,
+    streaming_params: VideoStreamParams,
 
     composite_pipeline: composite::CompositePipeline,
     convert_pipeline: convert::ConvertPipeline,
@@ -148,13 +158,13 @@ impl EncodePipeline {
         stream_seq: u64,
         attachments: CompositorHandle,
         display_params: DisplayParams,
-        stream_params: VideoStreamParams,
+        streaming_params: VideoStreamParams,
     ) -> anyhow::Result<Self> {
-        if stream_params.width != display_params.width
-            || stream_params.height != display_params.height
+        if streaming_params.width != display_params.width
+            || streaming_params.height != display_params.height
         {
             trace!(
-                ?stream_params,
+                ?streaming_params,
                 ?display_params,
                 "stream and display params differ"
             );
@@ -167,7 +177,7 @@ impl EncodePipeline {
             vk.clone(),
             attachments.clone(),
             stream_seq,
-            stream_params,
+            streaming_params,
             display_params.framerate,
         )?;
 
@@ -184,6 +194,7 @@ impl EncodePipeline {
 
         Ok(Self {
             display_params,
+            streaming_params,
 
             composite_pipeline,
             convert_pipeline,
@@ -446,11 +457,16 @@ impl EncodePipeline {
             );
         }
 
+        // We're converting the blend image, which is scRGB.
+        let input_color_space = ColorSpace::LinearExtSrgb;
+
         self.convert_pipeline.cmd_convert(
             frame.render_cb,
             frame.blend_image.width,
             frame.blend_image.height,
             frame.convert_ds,
+            input_color_space,
+            self.streaming_params.profile,
         );
 
         // Do a queue transfer for vulkan encode.
@@ -618,16 +634,22 @@ fn new_swapframe(
     )?;
 
     let mut plane_views = Vec::new();
+    let (single_plane_format, double_plane_format) = disjoint_plane_formats(encode_image.format)
+        .ok_or(anyhow!(
+            "couldn't find a disjoint plane formats for {:?}",
+            encode_image.format
+        ))?;
+
     let disjoint_formats = if format_is_semiplanar(encode_image.format) {
         vec![
-            vk::Format::R8_UNORM,   // Y
-            vk::Format::R8G8_UNORM, // UV
+            single_plane_format, // Y
+            double_plane_format, // UV
         ]
     } else {
         vec![
-            vk::Format::R8_UNORM, // Y
-            vk::Format::R8_UNORM, // U
-            vk::Format::R8_UNORM, // V
+            single_plane_format, // Y
+            single_plane_format, // U
+            single_plane_format, // V
         ]
     };
 
@@ -722,15 +744,15 @@ fn format_is_semiplanar(format: vk::Format) -> bool {
         format,
         vk::Format::G8_B8R8_2PLANE_420_UNORM
             | vk::Format::G8_B8R8_2PLANE_422_UNORM
+            | vk::Format::G8_B8R8_2PLANE_444_UNORM
             | vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16
             | vk::Format::G10X6_B10X6R10X6_2PLANE_422_UNORM_3PACK16
+            | vk::Format::G10X6_B10X6R10X6_2PLANE_444_UNORM_3PACK16
             | vk::Format::G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16
             | vk::Format::G12X4_B12X4R12X4_2PLANE_422_UNORM_3PACK16
+            | vk::Format::G12X4_B12X4R12X4_2PLANE_444_UNORM_3PACK16
             | vk::Format::G16_B16R16_2PLANE_420_UNORM
             | vk::Format::G16_B16R16_2PLANE_422_UNORM
-            | vk::Format::G8_B8R8_2PLANE_444_UNORM
-            | vk::Format::G10X6_B10X6R10X6_2PLANE_444_UNORM_3PACK16
-            | vk::Format::G12X4_B12X4R12X4_2PLANE_444_UNORM_3PACK16
             | vk::Format::G16_B16R16_2PLANE_444_UNORM
     )
 }
@@ -762,4 +784,44 @@ pub unsafe fn cmd_upload_shm(
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
         &regions,
     );
+}
+
+fn disjoint_plane_formats(format: vk::Format) -> Option<(vk::Format, vk::Format)> {
+    match format {
+        vk::Format::G8_B8R8_2PLANE_420_UNORM
+        | vk::Format::G8_B8R8_2PLANE_422_UNORM
+        | vk::Format::G8_B8R8_2PLANE_444_UNORM
+        | vk::Format::G8_B8_R8_3PLANE_420_UNORM
+        | vk::Format::G8_B8_R8_3PLANE_422_UNORM
+        | vk::Format::G8_B8_R8_3PLANE_444_UNORM => {
+            Some((vk::Format::R8_UNORM, vk::Format::R8G8_UNORM))
+        }
+        vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16
+        | vk::Format::G10X6_B10X6R10X6_2PLANE_422_UNORM_3PACK16
+        | vk::Format::G10X6_B10X6R10X6_2PLANE_444_UNORM_3PACK16
+        | vk::Format::G10X6_B10X6_R10X6_3PLANE_420_UNORM_3PACK16
+        | vk::Format::G10X6_B10X6_R10X6_3PLANE_422_UNORM_3PACK16
+        | vk::Format::G10X6_B10X6_R10X6_3PLANE_444_UNORM_3PACK16 => Some((
+            vk::Format::R10X6_UNORM_PACK16,
+            vk::Format::R10X6G10X6_UNORM_2PACK16,
+        )),
+        vk::Format::G12X4_B12X4R12X4_2PLANE_420_UNORM_3PACK16
+        | vk::Format::G12X4_B12X4R12X4_2PLANE_422_UNORM_3PACK16
+        | vk::Format::G12X4_B12X4R12X4_2PLANE_444_UNORM_3PACK16
+        | vk::Format::G12X4_B12X4_R12X4_3PLANE_420_UNORM_3PACK16
+        | vk::Format::G12X4_B12X4_R12X4_3PLANE_422_UNORM_3PACK16
+        | vk::Format::G12X4_B12X4_R12X4_3PLANE_444_UNORM_3PACK16 => Some((
+            vk::Format::R12X4_UNORM_PACK16,
+            vk::Format::R12X4G12X4_UNORM_2PACK16,
+        )),
+        vk::Format::G16_B16R16_2PLANE_420_UNORM
+        | vk::Format::G16_B16R16_2PLANE_422_UNORM
+        | vk::Format::G16_B16R16_2PLANE_444_UNORM
+        | vk::Format::G16_B16_R16_3PLANE_420_UNORM
+        | vk::Format::G16_B16_R16_3PLANE_422_UNORM
+        | vk::Format::G16_B16_R16_3PLANE_444_UNORM => {
+            Some((vk::Format::R16_UNORM, vk::Format::R16G16_UNORM))
+        }
+        _ => None,
+    }
 }

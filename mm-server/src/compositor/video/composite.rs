@@ -8,9 +8,28 @@ use anyhow::Context;
 use ash::vk;
 use cstr::cstr;
 
-use crate::vulkan::*;
+use crate::{color::ColorSpace, vulkan::*};
 
 pub const BLEND_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
+
+// Also defined in composite.slang.
+#[repr(u32)]
+#[derive(Copy, Clone, Debug)]
+enum SurfaceColorSpace {
+    Srgb = 0,
+    LinearExtSrgb = 1,
+    Hdr10 = 2,
+}
+
+impl From<ColorSpace> for SurfaceColorSpace {
+    fn from(cs: ColorSpace) -> Self {
+        match cs {
+            ColorSpace::Srgb => SurfaceColorSpace::Srgb,
+            ColorSpace::LinearExtSrgb => SurfaceColorSpace::LinearExtSrgb,
+            ColorSpace::Hdr10 => SurfaceColorSpace::Hdr10,
+        }
+    }
+}
 
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
@@ -23,6 +42,7 @@ struct SurfacePC {
     // TODO: suck it up and use a matrix transform (mat3) to support rotations.
     dst_pos: glam::Vec2,
     dst_size: glam::Vec2,
+    color_space: SurfaceColorSpace,
 }
 
 /// Composites surfaces into a blend image.
@@ -66,7 +86,7 @@ impl CompositePipeline {
 
         let pipeline_layout = {
             let ranges = [vk::PushConstantRange::default()
-                .stage_flags(vk::ShaderStageFlags::VERTEX)
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
                 .size(std::mem::size_of::<SurfacePC>() as u32)];
             let set_layouts = [descriptor_set_layout];
@@ -237,11 +257,13 @@ impl CompositePipeline {
     ) -> anyhow::Result<()> {
         let device = &self.vk.device;
 
+        let color_space = ColorSpace::Srgb; // TODO
         let pc = SurfacePC {
             src_pos: glam::Vec2::ZERO,
             src_size: glam::Vec2::ONE,
             dst_pos,
             dst_size,
+            color_space: color_space.into(),
         };
 
         // Push the texture.
@@ -273,7 +295,7 @@ impl CompositePipeline {
         device.cmd_push_constants(
             cb,
             self.pipeline_layout,
-            vk::ShaderStageFlags::VERTEX,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             0,
             std::slice::from_raw_parts(
                 &pc as *const _ as *const u8,
