@@ -16,7 +16,10 @@ mod vulkan_encode;
 
 use cpu_encode::CpuEncoder;
 
-use smithay::reexports::wayland_server::{protocol::wl_surface, Resource};
+use smithay::{
+    reexports::wayland_server::{protocol::wl_surface, Resource},
+    wayland::compositor,
+};
 use tracing::{error, instrument, trace, warn};
 
 use crate::{codec::VideoCodec, vulkan::*};
@@ -368,11 +371,12 @@ impl EncodePipeline {
 
         let tex = textures.get_mut(surface);
         if tex.is_none() {
-            // TODO panic once we feel better about buffer juggling code.
-            error!(
-                "trying to render surface @{} that hasn't be imported",
-                surface.id().protocol_id()
-            );
+            if !compositor::is_sync_subsurface(surface) {
+                error!(
+                    "trying to render surface @{} that hasn't be imported",
+                    surface.id().protocol_id()
+                );
+            }
 
             return Ok(());
         }
