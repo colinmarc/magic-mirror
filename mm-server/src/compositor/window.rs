@@ -676,7 +676,7 @@ impl State {
             window.configure_activated(
                 self.display_params.width,
                 self.display_params.height,
-                self.display_params.ui_scale,
+                self.ui_scale,
             )?;
             self.output.enter(&window.surface);
 
