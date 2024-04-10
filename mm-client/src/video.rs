@@ -209,7 +209,10 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
                 .send_event(VideoStreamEvent::VideoStreamReady(texture, params).into())
                 .ok();
 
-            self.ring.discard(dec.stream_seq - 1);
+            if dec.stream_seq > 0 {
+                self.ring.discard(dec.stream_seq - 1);
+            }
+
             self.state = Streaming(dec);
             trace!(state = ?self.state, "video stream updated")
         }
