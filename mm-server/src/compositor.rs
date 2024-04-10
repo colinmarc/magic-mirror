@@ -136,9 +136,13 @@ pub struct State {
     // Windows that will map once a surface is attached.
     xwindows_pending_map_on_surface: Vec<xwayland::X11Surface>,
 
-    video_pipeline: video::EncodePipeline,
+    new_video_stream_params: Option<VideoStreamParams>,
+    video_stream_seq: u64,
+    texture_manager: video::TextureManager,
+    video_pipeline: Option<video::EncodePipeline>,
+
     audio_pipeline: audio::EncodePipeline,
-    _vk: Arc<VkContext>, // At the end for drop order.
+    vk: Arc<VkContext>, // At the end for drop order.
 }
 
 #[derive(Debug, Default)]
@@ -213,8 +217,10 @@ impl Compositor {
         let xdg_runtime_dir = mktemp::Temp::new_dir().context("failed to create temp dir")?;
 
         let attachments = AttachedClients::new();
-        let video_pipeline =
-            video::EncodePipeline::new(vk.clone(), attachments.clone(), display_params)?;
+
+        let new_video_stream_params = None;
+        let buffer_manager = video::TextureManager::new(vk.clone());
+        let video_pipeline = None;
 
         let audio_pipeline = audio::EncodePipeline::new(attachments.clone(), &xdg_runtime_dir)?;
 
@@ -239,9 +245,12 @@ impl Compositor {
             xwm: None,
             xwindows_pending_map_on_surface: Vec::new(),
             window_stack: Vec::new(),
+            new_video_stream_params,
+            video_stream_seq: 0,
+            texture_manager: buffer_manager,
             video_pipeline,
             audio_pipeline,
-            _vk: vk,
+            vk,
         };
 
         // Bind the wayland socket.
@@ -377,7 +386,10 @@ impl Compositor {
                             unshare::ExitStatus::Exited(c) if c != 0 => {
                                 bail!("child process exited with error code {}", c)
                             }
-                            _ => return Ok(()),
+                            _ => {
+                                self.attachments.shutdown();
+                                return Ok(());
+                            }
                         }
                     }
                     CHILD if event.is_readable() => {
@@ -451,21 +463,19 @@ impl Compositor {
                         // Check if we need to rebuild the video capture pipeline.
                         if let Some(new_params) = self.state.new_display_params.take() {
                             self.update_display_params(new_params)?;
+
+                            // Update the render timer to match the new framerate.
                             timer.set_timeout_interval(&time::Duration::from_nanos(
                                 1_000_000_000 / self.state.display_params.framerate as u64,
                             ))?;
                         }
 
-                        // If no one is watching, don't render.
-                        if !self.attachments.is_empty() {
-                            self.render().context("render failed")?;
-                        }
+                        self.render().context("render failed")?;
                     }
                     WAKER => loop {
                         match self.control_messages_recv.try_recv() {
                             Ok(ControlMessage::Stop) => {
                                 self.attachments.shutdown();
-                                self.state.video_pipeline.stop_stream();
                                 self.state.audio_pipeline.stop_stream();
 
                                 trace!("shutting down");
@@ -480,15 +490,22 @@ impl Compositor {
                                 video_params,
                                 audio_params,
                             }) => {
+                                if !self.attachments.is_empty() {
+                                    unimplemented!();
+                                }
+
                                 self.attachments.insert_client(id, sender);
+                                self.state.new_video_stream_params = Some(video_params);
                                 self.state.audio_pipeline.restart_stream(audio_params)?;
-                                self.state.video_pipeline.restart_stream(video_params);
+
+                                self.state.activate_top_window()?;
                             }
                             Ok(ControlMessage::Detach(id)) => {
                                 self.attachments.remove_client(id);
                                 if self.attachments.is_empty() {
                                     self.state.audio_pipeline.stop_stream();
-                                    self.state.video_pipeline.stop_stream();
+                                    self.state.video_pipeline = None;
+                                    self.state.suspend_all_windows()?;
                                 }
                             }
                             Ok(ControlMessage::UpdateDisplayParams(params)) => {
@@ -637,26 +654,33 @@ impl Compositor {
 
     fn render(&mut self) -> Result<()> {
         let _tracy_frame = tracy_client::non_continuous_frame!("composite");
+
+        if self.attachments.is_empty() {
+            return Ok(());
+        }
+
         if self.state.window_stack.is_empty() {
             return Ok(());
         }
 
         let now = EPOCH.elapsed().as_millis() as u32;
-        unsafe { self.state.video_pipeline.begin()? };
 
-        for window in self.state.window_stack.iter_mut().filter(|w| w.visible) {
-            let mut surfaces = Vec::new();
+        if let Some(params) = self.state.new_video_stream_params.take() {
+            self.state.video_pipeline = Some(video::EncodePipeline::new(
+                self.state.vk.clone(),
+                self.state.video_stream_seq,
+                self.attachments.clone(),
+                self.state.display_params,
+                params,
+            )?);
 
-            smithay::wayland::compositor::with_surface_tree_downward(
-                &window.surface,
-                (),
-                |_, _, &()| smithay::wayland::compositor::TraversalAction::DoChildren(()),
-                |surf, _states, &()| {
-                    // TODO: don't render subsurfaces that aren't committed.
-                    surfaces.push(surf.clone());
-                },
-                |_, _, &()| true,
-            );
+            self.state.video_stream_seq += 1;
+        }
+
+        let mut windows = Vec::new();
+        let mut surfaces = Vec::new();
+        for window in self.state.visible_windows() {
+            windows.push(window.clone());
 
             // TODO: calculate the rectangle based on buffer size
             let dest = match window.popup_bounds() {
@@ -670,15 +694,34 @@ impl Compositor {
                 ),
             };
 
-            for surf in surfaces.into_iter() {
-                unsafe { self.state.video_pipeline.composite_surface(&surf, dest)? };
-
-                // Send frame callbacks.
-                window.send_frame_callbacks(now);
-            }
+            smithay::wayland::compositor::with_surface_tree_upward(
+                &window.surface,
+                (),
+                |_, _, &()| smithay::wayland::compositor::TraversalAction::DoChildren(()),
+                |surf, _states, &()| {
+                    // TODO: don't render subsurfaces that aren't committed.
+                    surfaces.push((surf.clone(), dest));
+                },
+                |_, _, &()| true,
+            );
         }
 
-        unsafe { self.state.video_pipeline.end_and_submit()? };
+        let video_pipeline = self.state.video_pipeline.as_mut().unwrap();
+        unsafe { video_pipeline.begin(&self.state.texture_manager)? };
+
+        for (surf, dest) in surfaces.into_iter() {
+            unsafe {
+                video_pipeline.composite_surface(&mut self.state.texture_manager, &surf, dest)?
+            };
+        }
+
+        unsafe { video_pipeline.end_and_submit()? };
+
+        for mut window in windows.into_iter() {
+            // Send frame callbacks.
+            window.send_frame_callbacks(now);
+        }
+
         Ok(())
     }
 
@@ -726,10 +769,6 @@ impl Compositor {
                         .surface
                         .preferred_buffer_scale(output_scale.integer_scale());
                 }
-
-                if window.visible {
-                    window.configure_activated(params.width, params.height, new_ui_scale)?;
-                }
             }
 
             self.attachments
@@ -739,6 +778,19 @@ impl Compositor {
                 });
             self.state.display_params = params;
             self.state.ui_scale = new_ui_scale;
+
+            if size_changed || framerate_changed {
+                // TODO: if we support multiple attachments, or attachments that
+                // differ in resolution from the render res, we need to check for
+                // that here. For now, it's safe to just kill the attachment streams.
+                self.attachments.remove_all();
+                self.state.audio_pipeline.stop_stream();
+                self.state.video_pipeline = None;
+                self.state.suspend_all_windows()?;
+            } else {
+                // Reconfigure for the new scale.
+                self.state.activate_top_window()?;
+            }
         } else {
             // Simulate a param change if we are forcing 1x scale.
             if params.ui_scale != old.ui_scale {
@@ -748,21 +800,6 @@ impl Compositor {
                         reattach: false,
                     });
             }
-
-            for toplevel in self.state.xdg_shell_state.toplevel_surfaces().iter() {
-                self.state.output.enter(toplevel.wl_surface());
-            }
-        }
-
-        if size_changed || framerate_changed {
-            self.state.video_pipeline.resize(params);
-
-            // TODO: if we support multiple attachments, or attachments that
-            // differ in resolution from the render res, we need to check for
-            // that here. For now, it's safe to just kill the attachment streams.
-            self.attachments.remove_all();
-            self.state.audio_pipeline.stop_stream();
-            self.state.video_pipeline.stop_stream();
         }
 
         Ok(())

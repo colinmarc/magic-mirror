@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use anyhow::anyhow;
 use ash::vk;
@@ -19,14 +19,13 @@ use tracing::{debug, error, trace, warn};
 
 use crate::vulkan::*;
 
-use super::{dmabuf::import_dma_texture, EncodePipeline};
+use super::dmabuf::import_dma_texture;
 
 #[derive(Clone)]
 pub struct DmabufCacheEntry {
     pub image: Rc<VkImage>,
     pub dmabuf: dmabuf::Dmabuf,
     pub semaphore: vk::Semaphore,
-    pub descriptor_set: vk::DescriptorSet,
 }
 
 pub struct DmabufCache(HashMap<dmabuf::WeakDmabuf, DmabufCacheEntry>);
@@ -44,7 +43,6 @@ impl DmabufCache {
         &mut self,
         dmabuf: &dmabuf::Dmabuf,
         image: Rc<VkImage>,
-        descriptor_set: vk::DescriptorSet,
         semaphore: vk::Semaphore,
     ) -> Option<DmabufCacheEntry> {
         self.0.insert(
@@ -53,7 +51,6 @@ impl DmabufCache {
                 image,
                 dmabuf: dmabuf.clone(),
                 semaphore,
-                descriptor_set,
             },
         )
     }
@@ -82,7 +79,6 @@ pub enum SurfaceTexture {
         staging_buffer: VkHostBuffer,
         buffer_params: ShmBufferParameters,
         image: VkImage,
-        descriptor_set: vk::DescriptorSet,
         dirty: bool,
     },
     Imported {
@@ -90,11 +86,32 @@ pub enum SurfaceTexture {
         buffer: wl_buffer::WlBuffer,
         image: Rc<VkImage>,
         semaphore: vk::Semaphore,
-        descriptor_set: vk::DescriptorSet,
     },
 }
 
-impl EncodePipeline {
+pub struct TextureManager {
+    dmabuf_cache: DmabufCache,
+    committed_surfaces: HashMap<wl_surface::WlSurface, SurfaceTexture>,
+    vk: Arc<VkContext>,
+}
+
+impl TextureManager {
+    pub fn new(vk: Arc<VkContext>) -> Self {
+        Self {
+            dmabuf_cache: DmabufCache::new(),
+            committed_surfaces: HashMap::new(),
+            vk,
+        }
+    }
+
+    pub fn iter_surfaces(&self) -> impl Iterator<Item = &SurfaceTexture> {
+        self.committed_surfaces.iter().map(|(_, tex)| tex)
+    }
+
+    pub fn get_mut(&mut self, surface: &wl_surface::WlSurface) -> Option<&mut SurfaceTexture> {
+        self.committed_surfaces.get_mut(surface)
+    }
+
     /// Attaches a buffer to a new surface, or updates an existing surface. The
     /// staging buffer and texture images are recreated if the existing ones
     /// aren't compatible with the new buffer.
@@ -186,17 +203,12 @@ impl EncodePipeline {
 
         unsafe { copy_shm(&mut staging_buffer, contents) };
 
-        let descriptor_set = self
-            .composite_pipeline
-            .ds_for_texture(&image, self.descriptor_pool)?;
-
         self.committed_surfaces.insert(
             surface.clone(),
             SurfaceTexture::Uploaded {
                 staging_buffer,
                 buffer_params: params,
                 image,
-                descriptor_set,
                 dirty: true,
             },
         );
@@ -216,10 +228,6 @@ impl EncodePipeline {
             let texture =
                 import_dma_texture(self.vk.clone(), &buffer, vk::ImageUsageFlags::SAMPLED)?;
 
-            let descriptor_set = self
-                .composite_pipeline
-                .ds_for_texture(&texture, self.descriptor_pool)?;
-
             let semaphore = unsafe {
                 self.vk
                     .device
@@ -227,7 +235,7 @@ impl EncodePipeline {
             };
 
             self.dmabuf_cache
-                .insert(&buffer, Rc::new(texture), descriptor_set, semaphore);
+                .insert(&buffer, Rc::new(texture), semaphore);
         }
 
         Ok(())
@@ -240,10 +248,7 @@ impl EncodePipeline {
         dmabuf: dmabuf::Dmabuf,
     ) -> anyhow::Result<()> {
         let DmabufCacheEntry {
-            image,
-            descriptor_set,
-            semaphore,
-            ..
+            image, semaphore, ..
         } = self
             .dmabuf_cache
             .get(&dmabuf)
@@ -256,7 +261,6 @@ impl EncodePipeline {
                 semaphore,
                 buffer: buffer.clone(),
                 image,
-                descriptor_set,
             },
         );
 
@@ -297,7 +301,6 @@ impl EncodePipeline {
         if let Some(DmabufCacheEntry {
             image,
             dmabuf,
-            descriptor_set,
             semaphore,
         }) = self.dmabuf_cache.remove(dmabuf)
         {
@@ -309,12 +312,12 @@ impl EncodePipeline {
 
             let device = &self.vk.device;
             unsafe {
-                // TODO: big hammer etc
+                // TODO: this is a terrible way to do this, but it will be
+                // replaced with syncobj soon.
                 device.queue_wait_idle(self.vk.graphics_queue.queue)?;
 
                 drop(image);
 
-                device.free_descriptor_sets(self.descriptor_pool, &[descriptor_set])?;
                 self.vk.device.destroy_semaphore(semaphore, None);
 
                 drop(dmabuf);
@@ -326,17 +329,7 @@ impl EncodePipeline {
 
     fn free_surface_texture(&mut self, tex: SurfaceTexture) -> anyhow::Result<()> {
         match tex {
-            SurfaceTexture::Uploaded { descriptor_set, .. } => unsafe {
-                // We have to make sure the descriptor set is not in use.
-                // TODO: this is a big hammer
-                self.vk
-                    .device
-                    .queue_wait_idle(self.vk.graphics_queue.queue)?;
-
-                self.vk
-                    .device
-                    .free_descriptor_sets(self.descriptor_pool, &[descriptor_set])?;
-            },
+            SurfaceTexture::Uploaded { .. } => (),
             SurfaceTexture::Imported { buffer, .. } => {
                 // TODO: is this the right place for this?
                 buffer.release();

@@ -4,6 +4,8 @@
 
 use svt::Packet;
 
+use crate::compositor::VideoStreamParams;
+
 pub struct SvtEncoder<T: svt::Encoder> {
     inner: T,
     flushing: bool,
@@ -73,8 +75,7 @@ impl svt::Picture for super::VkExtMemoryFrame {
 }
 
 pub fn new_hevc(
-    width: u32,
-    height: u32,
+    params: VideoStreamParams,
     framerate: u32,
 ) -> Result<SvtEncoder<svt::hevc::HevcEncoder>, svt::Error> {
     let enc = svt::hevc::HevcEncoderConfig::default()
@@ -88,7 +89,7 @@ pub fn new_hevc(
         .qp(17)
         .intra_refresh_type(svt::hevc::IntraRefreshType::Closed(300))
         .thread_count(1)
-        .create_encoder(width, height, svt::SubsamplingFormat::Yuv420)?;
+        .create_encoder(params.width, params.height, svt::SubsamplingFormat::Yuv420)?;
 
     Ok(SvtEncoder {
         inner: enc,
@@ -98,8 +99,7 @@ pub fn new_hevc(
 }
 
 pub fn new_av1(
-    width: u32,
-    height: u32,
+    params: VideoStreamParams,
     framerate: u32,
 ) -> Result<SvtEncoder<svt::av1::Av1Encoder>, svt::Error> {
     let enc = svt::av1::Av1EncoderConfig::default()
@@ -111,7 +111,7 @@ pub fn new_av1(
         .pred_structure(svt::av1::PredictionStructure::LowDelay)
         .rate_control_mode(svt::av1::RateControlMode::ConstantRateFactor(17))
         .intra_refresh_type(svt::av1::IntraRefreshType::Closed)
-        .create_encoder(width, height, svt::SubsamplingFormat::Yuv420)?;
+        .create_encoder(params.width, params.height, svt::SubsamplingFormat::Yuv420)?;
 
     Ok(SvtEncoder {
         inner: enc,

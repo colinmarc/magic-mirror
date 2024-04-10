@@ -59,7 +59,9 @@ impl CompositePipeline {
                 .immutable_samplers(&samplers);
 
             let bindings = [binding];
-            let create_info = vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings);
+            let create_info = vk::DescriptorSetLayoutCreateInfo::default()
+                .bindings(&bindings)
+                .flags(vk::DescriptorSetLayoutCreateFlags::PUSH_DESCRIPTOR_KHR);
 
             unsafe { vk.device.create_descriptor_set_layout(&create_info, None)? }
         };
@@ -179,45 +181,6 @@ impl CompositePipeline {
         })
     }
 
-    pub fn ds_for_texture(
-        &mut self,
-        image: &VkImage,
-        pool: vk::DescriptorPool,
-    ) -> anyhow::Result<vk::DescriptorSet> {
-        let layouts = [self.descriptor_set_layout];
-        let alloc_info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(pool)
-            .set_layouts(&layouts);
-
-        let ds = unsafe {
-            self.vk
-                .device
-                .allocate_descriptor_sets(&alloc_info)
-                .context("failed to allocate descriptor set")?
-                .pop()
-                .unwrap()
-        };
-
-        let image_info = vk::DescriptorImageInfo::default()
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .image_view(image.view);
-
-        let image_infos = [image_info];
-        let write = vk::WriteDescriptorSet::default()
-            .dst_set(ds)
-            .dst_binding(0)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .image_info(&image_infos);
-
-        let writes = [write];
-        unsafe {
-            self.vk.device.update_descriptor_sets(&writes, &[]);
-        }
-
-        Ok(ds)
-    }
-
     pub unsafe fn begin_compositing(&self, cb: vk::CommandBuffer, render_target: &VkImage) {
         let device = &self.vk.device;
 
@@ -283,21 +246,35 @@ impl CompositePipeline {
             dst_size,
         };
 
-        // Bind the texture.
+        // Push the texture.
         {
-            let descriptor_set = match tex {
-                SurfaceTexture::Uploaded { descriptor_set, .. }
-                | SurfaceTexture::Imported { descriptor_set, .. } => *descriptor_set,
+            let view = match tex {
+                SurfaceTexture::Imported { image, .. } => image.view,
+                SurfaceTexture::Uploaded { image, .. } => image.view,
             };
 
-            device.cmd_bind_descriptor_sets(
-                cb,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline_layout,
-                0,
-                &[descriptor_set],
-                &[],
-            );
+            let image_info = vk::DescriptorImageInfo::default()
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image_view(view);
+
+            let image_infos = [image_info];
+            let write = vk::WriteDescriptorSet::default()
+                .dst_set(vk::DescriptorSet::null())
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&image_infos);
+
+            let writes = [write];
+            unsafe {
+                self.vk.push_ds_api.cmd_push_descriptor_set(
+                    cb,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.pipeline_layout,
+                    0,
+                    &writes,
+                );
+            }
         }
 
         device.cmd_push_constants(

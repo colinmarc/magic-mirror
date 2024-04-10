@@ -18,7 +18,7 @@ impl buffer::BufferHandler for State {
         trace!(buffer = buffer.id().protocol_id(), "destroying buffer");
 
         match dmabuf::get_dmabuf(buffer) {
-            Ok(dmabuf) => self.video_pipeline.remove_dmabuf(&dmabuf).unwrap(),
+            Ok(dmabuf) => self.texture_manager.remove_dmabuf(&dmabuf).unwrap(),
             Err(smithay::utils::UnmanagedResource) => (),
         }
 
@@ -48,7 +48,7 @@ impl dmabuf::DmabufHandler for State {
             return;
         }
 
-        if let Err(e) = self.video_pipeline.import_dma_buffer(global, dmabuf) {
+        if let Err(e) = self.texture_manager.import_dma_buffer(global, dmabuf) {
             error!("dmabuf import failed: {:#}", e);
             notifier.failed();
         } else {
@@ -73,7 +73,7 @@ pub fn buffer_commit(
     match dmabuf::get_dmabuf(buffer) {
         Ok(dmabuf) => {
             return state
-                .video_pipeline
+                .texture_manager
                 .attach_dma_buffer(surface, buffer, dmabuf);
         }
         Err(smithay::utils::UnmanagedResource) => (), // Fall through to shm handler.
@@ -88,7 +88,7 @@ pub fn buffer_commit(
         };
 
         state
-            .video_pipeline
+            .texture_manager
             .import_and_attach_shm_buffer(surface, buffer, contents, &metadata)
     })??;
 

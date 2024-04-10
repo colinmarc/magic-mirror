@@ -188,23 +188,23 @@ impl ConvertPipeline {
             .cmd_dispatch(cb, group_count_x, group_count_y, 1);
     }
 
-    pub unsafe fn ds_for_conversion(
+    pub fn ds_for_conversion(
         &self,
         blend_image: &VkImage,
         planes: &[VkPlaneView],
-        pool: vk::DescriptorPool,
     ) -> anyhow::Result<vk::DescriptorSet> {
         let set_layouts = [self.descriptor_set_layout];
         let allocate_info = vk::DescriptorSetAllocateInfo::default()
-            .descriptor_pool(pool)
+            .descriptor_pool(self.vk.descriptor_pool)
             .set_layouts(&set_layouts);
 
-        let ds = self
-            .vk
-            .device
-            .allocate_descriptor_sets(&allocate_info)?
-            .pop()
-            .unwrap();
+        let ds = unsafe {
+            self.vk
+                .device
+                .allocate_descriptor_sets(&allocate_info)?
+                .pop()
+                .unwrap()
+        };
 
         let blend_image_infos = [vk::DescriptorImageInfo::default()
             .image_layout(vk::ImageLayout::GENERAL)

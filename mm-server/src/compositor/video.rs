@@ -2,9 +2,8 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::sync::Arc;
+use std::{mem::ManuallyDrop, sync::Arc};
 
-use anyhow::Context;
 use ash::vk;
 
 mod composite;
@@ -17,19 +16,17 @@ mod vulkan_encode;
 
 use cpu_encode::CpuEncoder;
 
-use hashbrown::HashMap;
 use smithay::reexports::wayland_server::{protocol::wl_surface, Resource};
-use tracing::{debug, error, instrument, trace, warn};
+use tracing::{error, instrument, trace, warn};
 
 use crate::{codec::VideoCodec, vulkan::*};
 
 use super::{AttachedClients, DisplayParams, VideoStreamParams};
 
 pub use dmabuf::dmabuf_feedback;
+pub use textures::TextureManager;
 use textures::*;
 use vulkan_encode::VulkanEncoder;
-
-const DEFAULT_ENCODER_FORMAT: vk::Format = vk::Format::G8_B8_R8_3PLANE_420_UNORM;
 
 pub struct VkPlaneView {
     pub format: vk::Format,
@@ -39,7 +36,6 @@ pub struct VkPlaneView {
 }
 
 pub enum Encoder {
-    None,
     Cpu(CpuEncoder),
     Vulkan(VulkanEncoder),
 }
@@ -49,13 +45,11 @@ impl Encoder {
         vk: Arc<VkContext>,
         attachments: AttachedClients,
         stream_seq: u64,
-        codec: VideoCodec,
-        width: u32,
-        height: u32,
+        params: VideoStreamParams,
         framerate: u32,
     ) -> anyhow::Result<Self> {
         let use_vulkan = if cfg!(feature = "vulkan_encode") {
-            match codec {
+            match params.codec {
                 VideoCodec::H264 if vk.device_info.supports_h264 => true,
                 VideoCodec::H265 if vk.device_info.supports_h265 => true,
                 _ => false,
@@ -65,14 +59,7 @@ impl Encoder {
         };
 
         if use_vulkan {
-            match VulkanEncoder::new(
-                vk.clone(),
-                attachments.clone(),
-                stream_seq,
-                codec,
-                width,
-                height,
-            ) {
+            match VulkanEncoder::new(vk.clone(), attachments.clone(), stream_seq, params) {
                 Ok(enc) => return Ok(Self::Vulkan(enc)),
                 Err(e) => {
                     error!("error creating vulkan encoder: {:#}", e);
@@ -85,11 +72,23 @@ impl Encoder {
             vk,
             attachments,
             stream_seq,
-            codec,
-            width,
-            height,
+            params,
             framerate,
         )?))
+    }
+
+    pub fn input_format(&self) -> vk::Format {
+        match self {
+            Self::Cpu(enc) => enc.input_format(),
+            Self::Vulkan(enc) => enc.input_format(),
+        }
+    }
+
+    pub fn create_input_image(&mut self) -> anyhow::Result<VkImage> {
+        match self {
+            Self::Cpu(enc) => enc.create_input_image(),
+            Self::Vulkan(enc) => enc.create_input_image(),
+        }
     }
 }
 
@@ -122,277 +121,72 @@ pub struct SwapFrame {
 
 pub struct EncodePipeline {
     display_params: DisplayParams,
-    streaming_params: Option<VideoStreamParams>,
-
-    attachments: AttachedClients,
-
-    /// Used to disambiguate compressed bitstreams. Each encoder instance gets a
-    /// unique, incrementing value.
-    stream_seq: u64,
 
     composite_pipeline: composite::CompositePipeline,
     convert_pipeline: convert::ConvertPipeline,
+    encoder: ManuallyDrop<Encoder>,
 
-    dmabuf_cache: DmabufCache,
-    committed_surfaces: HashMap<wl_surface::WlSurface, SurfaceTexture>,
-
-    encode_format: vk::Format,
     swap: [SwapFrame; 2],
     swap_idx: usize,
-    swap_dirty: bool,
 
-    encoder: Encoder,
-    encoder_dirty: bool,
-
-    descriptor_pool: vk::DescriptorPool,
     vk: Arc<VkContext>,
 }
 
 impl EncodePipeline {
+    #[instrument(level = "trace", skip_all)]
     pub fn new(
         vk: Arc<VkContext>,
+        stream_seq: u64,
         attachments: AttachedClients,
         display_params: DisplayParams,
+        stream_params: VideoStreamParams,
     ) -> anyhow::Result<Self> {
-        let stream_seq = 1;
+        if stream_params.width != display_params.width
+            || stream_params.height != display_params.height
+        {
+            // Superres is not implemented yet.
+            unimplemented!()
+        }
 
-        // We start with no encoder, since we don't have any attachments yet.
-        assert!(attachments.is_empty());
-        let encoder = Encoder::None;
-        let encode_format = DEFAULT_ENCODER_FORMAT;
+        let mut encoder = Encoder::select(
+            vk.clone(),
+            attachments.clone(),
+            stream_seq,
+            stream_params,
+            display_params.framerate,
+        )?;
 
-        // TODO: figure out a dynamically growing pool.
-        let descriptor_pool = {
-            let pool_size = vk::DescriptorPoolSize::default()
-                .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(256);
-
-            let pool_sizes = [pool_size];
-            let create_info = vk::DescriptorPoolCreateInfo::default()
-                .pool_sizes(&pool_sizes)
-                .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
-                .max_sets(1024);
-
-            unsafe { vk.device.create_descriptor_pool(&create_info, None)? }
-        };
+        let encode_format = encoder.input_format();
 
         let composite_pipeline = composite::CompositePipeline::new(vk.clone())?;
         let convert_pipeline =
             convert::ConvertPipeline::new(vk.clone(), format_is_semiplanar(encode_format))?;
 
         let swap = [
-            new_swapframe(
-                vk.clone(),
-                create_default_encode_image(
-                    vk.clone(),
-                    DEFAULT_ENCODER_FORMAT,
-                    display_params.width,
-                    display_params.height,
-                )?,
-                &convert_pipeline,
-                descriptor_pool,
-            )?,
-            new_swapframe(
-                vk.clone(),
-                create_default_encode_image(
-                    vk.clone(),
-                    DEFAULT_ENCODER_FORMAT,
-                    display_params.width,
-                    display_params.height,
-                )?,
-                &convert_pipeline,
-                descriptor_pool,
-            )?,
+            new_swapframe(vk.clone(), encoder.create_input_image()?, &convert_pipeline)?,
+            new_swapframe(vk.clone(), encoder.create_input_image()?, &convert_pipeline)?,
         ];
 
         Ok(Self {
             display_params,
-            streaming_params: None,
-
-            attachments,
-            stream_seq,
 
             composite_pipeline,
             convert_pipeline,
+            encoder: ManuallyDrop::new(encoder),
 
-            dmabuf_cache: DmabufCache::new(),
-            committed_surfaces: HashMap::new(),
-
-            encode_format,
             swap,
             swap_idx: 0,
-            swap_dirty: false,
 
-            encoder,
-            encoder_dirty: false,
-
-            descriptor_pool,
             vk,
         })
-    }
-
-    // Updates the size of the compositing space.
-    pub fn resize(&mut self, params: DisplayParams) {
-        if params.width != self.display_params.width || params.height != self.display_params.height
-        {
-            self.swap_dirty = true;
-            self.encoder_dirty = true;
-        }
-
-        if params.framerate != self.display_params.framerate {
-            self.encoder_dirty = true;
-        }
-
-        self.display_params = params;
-    }
-
-    pub fn stop_stream(&mut self) {
-        trace!("ending stream");
-
-        self.encoder = Encoder::None;
-        self.encoder_dirty = false;
-
-        // No sense in destroying the swap just yet - we could end restarting with the
-        // same params.
-    }
-
-    pub fn restart_stream(&mut self, params: VideoStreamParams) {
-        trace!("restarting stream");
-        if params.width != self.display_params.width || params.height != self.display_params.height
-        {
-            // Superres is not implemented yet.
-            unimplemented!()
-        }
-
-        self.streaming_params = Some(params);
-        self.encoder_dirty = true;
-    }
-
-    #[instrument(level = "trace", skip(self))]
-    fn recreate_encoder(&mut self) -> anyhow::Result<()> {
-        self.stream_seq += 1;
-
-        if let Some(params) = self.streaming_params {
-            let new_enc = Encoder::select(
-                self.vk.clone(),
-                self.attachments.clone(),
-                self.stream_seq,
-                params.codec,
-                params.width,
-                params.height,
-                self.display_params.framerate,
-            )
-            .context("error creating encoder")?;
-
-            debug!(stream_seq = self.stream_seq, "recreated encoder");
-
-            let encode_format = match new_enc {
-                Encoder::None => unreachable!(),
-                Encoder::Cpu(_) => DEFAULT_ENCODER_FORMAT,
-                Encoder::Vulkan(ref enc) => enc.input_format(),
-            };
-
-            if encode_format != self.encode_format {
-                // The format of the swap images changed, so we need to recreate them.
-                self.swap_dirty = true;
-
-                // The conversion pipeline depends on whether the format is multiplanar or semiplanar.
-                let semiplanar = format_is_semiplanar(encode_format);
-                if semiplanar != format_is_semiplanar(self.encode_format) {
-                    self.convert_pipeline =
-                        convert::ConvertPipeline::new(self.vk.clone(), semiplanar)?;
-                }
-
-                self.encode_format = encode_format;
-            }
-
-            self.encoder = new_enc;
-        } else {
-            self.encoder = Encoder::None;
-        }
-
-        Ok(())
-    }
-
-    #[instrument(level = "trace", skip(self))]
-    fn recreate_swap(&mut self) -> anyhow::Result<()> {
-        debug!("recreating swap images");
-
-        let device = &self.vk.device;
-        unsafe { device.device_wait_idle()? };
-
-        for frame in self.swap.iter() {
-            unsafe {
-                device.free_command_buffers(
-                    self.vk.graphics_queue.command_pool,
-                    &[frame.staging_cb, frame.render_cb],
-                );
-
-                for view in &frame.plane_views {
-                    device.destroy_image_view(view.view, None);
-                }
-
-                device.destroy_semaphore(frame.timeline, None);
-                device.free_descriptor_sets(self.descriptor_pool, &[frame.convert_ds])?;
-                device.destroy_query_pool(frame.render_ts_pool.pool, None);
-                device.destroy_query_pool(frame.staging_ts_pool.pool, None);
-            }
-        }
-
-        let mut create_encode_image = || match self.encoder {
-            Encoder::None | Encoder::Cpu(_) => create_default_encode_image(
-                self.vk.clone(),
-                DEFAULT_ENCODER_FORMAT, // XXX
-                self.display_params.width,
-                self.display_params.height,
-            ),
-            Encoder::Vulkan(ref mut enc) => enc.create_encode_image(),
-        };
-
-        self.swap = [
-            new_swapframe(
-                self.vk.clone(),
-                create_encode_image()?,
-                &self.convert_pipeline,
-                self.descriptor_pool,
-            )?,
-            new_swapframe(
-                self.vk.clone(),
-                create_encode_image()?,
-                &self.convert_pipeline,
-                self.descriptor_pool,
-            )?,
-        ];
-
-        Ok(())
     }
 
     // pub fn encode_single_surface(&mut self, surface: wl_surface::WlSurface) {
     //     todo!()
     // }
 
-    #[instrument(level = "trace", skip(self))]
-    pub unsafe fn begin(&mut self) -> anyhow::Result<()> {
-        if self.encoder_dirty || self.swap_dirty {
-            self.vk
-                .device
-                .queue_wait_idle(self.vk.graphics_queue.queue)?;
-
-            if self.encoder_dirty {
-                self.recreate_encoder()?;
-                self.encoder_dirty = false;
-            }
-
-            if self.swap_dirty {
-                self.recreate_swap()?;
-                self.swap_dirty = false;
-            }
-        }
-
-        if matches!(self.encoder, Encoder::None) {
-            panic!("can't render without an initialized encoder")
-        }
-
+    #[instrument(level = "trace", skip_all)]
+    pub unsafe fn begin(&mut self, textures: &TextureManager) -> anyhow::Result<()> {
         let device = &self.vk.device;
         let frame = &mut self.swap[self.swap_idx];
 
@@ -434,7 +228,7 @@ impl EncodePipeline {
         let mut texture_semas = Vec::new();
 
         // Upload any updated shm textures, and transition all surface textures to be readable.
-        for (_, tex) in self.committed_surfaces.iter() {
+        for tex in textures.iter_surfaces() {
             match tex {
                 SurfaceTexture::Uploaded {
                     dirty,
@@ -564,6 +358,7 @@ impl EncodePipeline {
     #[instrument(level = "trace", skip_all)]
     pub unsafe fn composite_surface(
         &mut self,
+        textures: &mut TextureManager,
         surface: &wl_surface::WlSurface,
         dest: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
     ) -> anyhow::Result<()> {
@@ -571,14 +366,12 @@ impl EncodePipeline {
 
         let frame = &mut self.swap[self.swap_idx];
 
-        let tex = self.committed_surfaces.get_mut(surface);
+        let tex = textures.get_mut(surface);
         if tex.is_none() {
             // TODO panic once we feel better about buffer juggling code.
-            // use wayland_server::Resource;
-
             error!(
-                "trying to render surface {:?} that hasn't be imported",
-                surface.id(),
+                "trying to render surface @{} that hasn't be imported",
+                surface.id().protocol_id()
             );
 
             return Ok(());
@@ -629,7 +422,7 @@ impl EncodePipeline {
 
         // For Vulkan encode, acquire the encode image from the encode queue.
         // But not for the first frame.
-        if frame.tp_clear > 20 && matches!(self.encoder, Encoder::Vulkan(_)) {
+        if frame.tp_clear > 20 && matches!(*self.encoder, Encoder::Vulkan(_)) {
             let src_queue_family = self.vk.encode_queue.as_ref().unwrap().family;
 
             insert_image_barrier(
@@ -668,7 +461,7 @@ impl EncodePipeline {
         );
 
         // Do a queue transfer for vulkan encode.
-        if let Encoder::Vulkan(_) = self.encoder {
+        if let Encoder::Vulkan(_) = *self.encoder {
             let dst_queue_family = self.vk.encode_queue.as_ref().unwrap().family;
 
             insert_image_barrier(
@@ -761,10 +554,7 @@ impl EncodePipeline {
         device.queue_submit2(self.vk.graphics_queue.queue, &submits, vk::Fence::null())?;
 
         // Trigger encode.
-        match self.encoder {
-            Encoder::None => {
-                frame.tp_clear = frame.tp_render_done;
-            }
+        match *self.encoder {
             Encoder::Cpu(ref mut enc) => enc.submit_encode(
                 &frame.encode_image,
                 frame.timeline,
@@ -794,7 +584,9 @@ impl Drop for EncodePipeline {
         let device = &self.vk.device;
 
         // Drop the encoder, since it consumes some of the shared resources below.
-        drop(std::mem::replace(&mut self.encoder, Encoder::None));
+        unsafe {
+            ManuallyDrop::drop(&mut self.encoder);
+        }
 
         unsafe {
             device.device_wait_idle().unwrap();
@@ -813,66 +605,14 @@ impl Drop for EncodePipeline {
                 device.destroy_query_pool(frame.render_ts_pool.pool, None);
                 device.destroy_query_pool(frame.staging_ts_pool.pool, None);
             }
-
-            device.destroy_descriptor_pool(self.descriptor_pool, None);
         }
     }
-}
-
-// Creates a YUV image, suitable for creating views into the individual planes.
-// The vulkan-video-based pipeline has its own, slightly-different code to do
-// this.
-fn create_default_encode_image(
-    vk: Arc<VkContext>,
-    format: vk::Format,
-    width: u32,
-    height: u32,
-) -> anyhow::Result<VkImage> {
-    let image = {
-        let create_info = vk::ImageCreateInfo::default()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(format)
-            .extent(vk::Extent3D {
-                width,
-                height,
-                depth: 1,
-            })
-            .mip_levels(1)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::STORAGE)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
-            .flags(vk::ImageCreateFlags::EXTENDED_USAGE | vk::ImageCreateFlags::MUTABLE_FORMAT);
-
-        unsafe {
-            vk.device
-                .create_image(&create_info, None)
-                .context("VkCreateImage")?
-        }
-    };
-
-    let memory = unsafe { bind_memory_for_image(&vk.device, &vk.device_info.memory_props, image)? };
-
-    Ok(VkImage::wrap(
-        vk.clone(),
-        image,
-        // No view into the combined image (and we can't create one because
-        // of the UsageFlags).
-        vk::ImageView::null(),
-        memory,
-        format,
-        width,
-        height,
-    ))
 }
 
 fn new_swapframe(
     vk: Arc<VkContext>,
     encode_image: VkImage,
     convert_pipeline: &convert::ConvertPipeline,
-    descriptor_pool: vk::DescriptorPool,
 ) -> anyhow::Result<SwapFrame> {
     let blend_image = VkImage::new(
         vk.clone(),
@@ -943,8 +683,7 @@ fn new_swapframe(
         });
     }
 
-    let convert_ds =
-        unsafe { convert_pipeline.ds_for_conversion(&blend_image, &plane_views, descriptor_pool)? };
+    let convert_ds = convert_pipeline.ds_for_conversion(&blend_image, &plane_views)?;
 
     let staging_ts_pool = create_timestamp_query_pool(&vk.device, 2)?;
     let render_ts_pool = create_timestamp_query_pool(&vk.device, 2)?;

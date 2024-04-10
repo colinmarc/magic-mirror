@@ -30,6 +30,7 @@ pub enum Vendor {
 
 pub struct VkContext {
     pub entry: ash::Entry,
+    pub push_ds_api: khr::PushDescriptor,
     pub external_memory_api: khr::ExternalMemoryFd,
     pub external_semaphore_api: khr::ExternalSemaphoreFd,
     pub video_apis: Option<(VideoQueueExt, VideoEncodeQueueExt)>,
@@ -40,6 +41,7 @@ pub struct VkContext {
     pub device_info: VkDeviceInfo,
     pub graphics_queue: VkQueue,
     pub encode_queue: Option<VkQueue>,
+    pub descriptor_pool: vk::DescriptorPool,
 }
 
 pub struct VkDebugContext {
@@ -178,6 +180,8 @@ impl VkDeviceInfo {
         };
 
         let mut selected_extensions = vec![
+            // Push descriptors for compositing.
+            vk::KhrPushDescriptorFn::NAME.to_owned(),
             // All required for dma-buf import.
             vk::KhrExternalMemoryFdFn::NAME.to_owned(),
             vk::KhrExternalSemaphoreFdFn::NAME.to_owned(),
@@ -527,8 +531,29 @@ impl VkContext {
             None
         };
 
+        let push_ds_api = khr::PushDescriptor::new(&instance, &device);
+
+        let descriptor_pool = {
+            let pool_sizes = [
+                vk::DescriptorPoolSize::default()
+                    .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .descriptor_count(1024),
+                vk::DescriptorPoolSize::default()
+                    .ty(vk::DescriptorType::STORAGE_IMAGE)
+                    .descriptor_count(1024),
+            ];
+
+            let create_info = vk::DescriptorPoolCreateInfo::default()
+                .pool_sizes(&pool_sizes)
+                .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET)
+                .max_sets(1024);
+
+            unsafe { device.create_descriptor_pool(&create_info, None)? }
+        };
+
         Ok(Self {
             entry,
+            push_ds_api,
             external_memory_api,
             external_semaphore_api,
             video_apis,
@@ -537,6 +562,7 @@ impl VkContext {
             device_info,
             graphics_queue,
             encode_queue,
+            descriptor_pool,
             debug: debug_utils,
         })
     }
@@ -587,6 +613,8 @@ impl Drop for VkContext {
                     .destroy_command_pool(encode_queue.command_pool, None);
             }
 
+            self.device
+                .destroy_descriptor_pool(self.descriptor_pool, None);
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }

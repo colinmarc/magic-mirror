@@ -35,7 +35,6 @@ pub enum SurfaceType {
 pub struct Window {
     pub ty: SurfaceType,
     pub surface: wl_surface::WlSurface,
-    pub visible: bool,
 }
 
 impl Window {
@@ -89,6 +88,7 @@ impl Window {
                 }
 
                 window.configure(fullscreen_bbox.to_logical(1))?;
+                window.set_minimized(false)?;
                 window.set_activated(true)?;
                 window.set_fullscreen(true)?;
             }
@@ -113,15 +113,16 @@ impl Window {
         Ok(())
     }
 
-    pub fn configure_deactivated(&mut self) -> anyhow::Result<()> {
+    pub fn configure_suspended(&mut self) -> anyhow::Result<()> {
         match &mut self.ty {
             SurfaceType::X11Window(window) | SurfaceType::X11Popup(window, _) => {
                 window.set_activated(false)?;
+                window.set_minimized(true)?;
             }
             SurfaceType::XdgToplevel(toplevel) => {
                 toplevel.with_pending_state(|tl| {
-                    tl.states.set(xdg_toplevel::State::Suspended);
                     tl.states.unset(xdg_toplevel::State::Activated);
+                    tl.states.set(xdg_toplevel::State::Suspended);
                 });
 
                 toplevel.send_pending_configure();
@@ -554,13 +555,11 @@ impl State {
             Window {
                 ty: SurfaceType::X11Popup(window, bounds),
                 surface,
-                visible: false,
             }
         } else {
             Window {
                 ty: SurfaceType::X11Window(window),
                 surface,
-                visible: false,
             }
         };
 
@@ -574,7 +573,6 @@ impl State {
         let window = Window {
             ty: SurfaceType::XdgToplevel(window),
             surface,
-            visible: false,
         };
 
         self.push_window(window)
@@ -583,16 +581,12 @@ impl State {
     fn push_window(&mut self, mut window: Window) -> anyhow::Result<()> {
         trace!("pushing window: {:?}", window);
 
-        window.visible = true;
         if window.popup_bounds().is_some() {
             // The window just gets pushed on top - no change to visibility.
         } else {
             for current in self.window_stack.iter_mut() {
-                if current.visible {
-                    current.configure_deactivated()?;
-                    self.output.leave(&current.surface);
-                    current.visible = false;
-                }
+                current.configure_suspended()?;
+                self.output.leave(&current.surface);
             }
         }
 
@@ -656,23 +650,35 @@ impl State {
     fn unmap_window(&mut self, idx: usize) -> anyhow::Result<()> {
         trace!("unmapping window at position {}", idx);
 
-        let mut window = self.window_stack.remove(idx);
-        if window.visible {
-            window.configure_deactivated().unwrap();
+        let window = self.window_stack.remove(idx);
+        self.output.leave(&window.surface);
+
+        // Uncover visible windows.
+        self.activate_top_window()?;
+
+        trace!("window stack: {:#?}", self.window_stack);
+        Ok(())
+    }
+
+    pub fn suspend_all_windows(&mut self) -> anyhow::Result<()> {
+        for window in self.window_stack.iter_mut() {
+            window.configure_suspended()?;
             self.output.leave(&window.surface);
         }
 
-        // Uncover visible windows.
+        Ok(())
+    }
+
+    pub fn activate_top_window(&mut self) -> anyhow::Result<()> {
         for window in self.window_stack.iter_mut().rev() {
-            if !window.visible {
-                window.visible = true;
-                window.configure_activated(
-                    self.display_params.width,
-                    self.display_params.height,
-                    self.display_params.ui_scale,
-                )?;
-                self.output.enter(&window.surface);
-            }
+            trace!("activating window: {:?}", window);
+
+            window.configure_activated(
+                self.display_params.width,
+                self.display_params.height,
+                self.display_params.ui_scale,
+            )?;
+            self.output.enter(&window.surface);
 
             // If the window is fullscreen, everything under it is invisible.
             if window.popup_bounds().is_none() {
@@ -695,7 +701,6 @@ impl State {
             );
         }
 
-        trace!("window stack: {:#?}", self.window_stack);
         Ok(())
     }
 
@@ -714,5 +719,19 @@ impl State {
         }
 
         None
+    }
+
+    // Returns an iterator over windows with any visible content, from bottom to top.
+    pub fn visible_windows(&self) -> impl Iterator<Item = &Window> {
+        let first_visible_idx = self
+            .window_stack
+            .iter()
+            .rposition(|w| w.popup_bounds().is_none());
+
+        if let Some(idx) = first_visible_idx {
+            self.window_stack[idx..].iter()
+        } else {
+            self.window_stack.iter()
+        }
     }
 }

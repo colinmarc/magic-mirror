@@ -12,7 +12,9 @@ use std::sync::Arc;
 
 use crate::{
     codec::VideoCodec,
-    compositor::{video::format_is_semiplanar, AttachedClients, CompositorEvent, EPOCH},
+    compositor::{
+        video::format_is_semiplanar, AttachedClients, CompositorEvent, VideoStreamParams, EPOCH,
+    },
     vulkan::*,
 };
 
@@ -23,6 +25,8 @@ use crossbeam_channel as crossbeam;
 use tracing::{error, instrument, trace, trace_span};
 
 use super::{begin_cb, timebase::Timebase, timeline_wait};
+
+const DEFAULT_INPUT_FORMAT: vk::Format = vk::Format::G8_B8_R8_3PLANE_420_UNORM;
 
 struct VkExtMemoryFrame {
     buffer: VkHostBuffer,
@@ -112,9 +116,7 @@ impl CpuEncoder {
         vk: Arc<VkContext>,
         attachments: AttachedClients,
         stream_seq: u64,
-        codec: VideoCodec,
-        width: u32,
-        height: u32,
+        params: VideoStreamParams,
         framerate: u32,
     ) -> anyhow::Result<Self> {
         let video_timebase = Timebase::new(600, *EPOCH);
@@ -126,20 +128,23 @@ impl CpuEncoder {
         let (done_frames_tx, done_frames_rx) = crossbeam::bounded::<VkExtMemoryFrame>(3);
         for _ in 0..3 {
             done_frames_tx
-                .send(VkExtMemoryFrame::new(vk.clone(), width, height)?)
+                .send(VkExtMemoryFrame::new(
+                    vk.clone(),
+                    params.width,
+                    params.height,
+                )?)
                 .unwrap();
         }
 
         let vk_clone = vk.clone();
         let thread = std::thread::Builder::new().name("encoder".to_string());
 
-        let handle = match codec {
+        let handle = match params.codec {
             #[cfg(feature = "ffmpeg_encode")]
-            VideoCodec::H264 | VideoCodec::H265 if ffmpeg::probe_codec(codec) => {
-                thread.spawn(move || {
-                    let encoder = trace_span!("ffmpeg_new_encoder").in_scope(|| {
-                        ffmpeg::new_encoder(codec, width, height, framerate, video_timebase)
-                    })?;
+            VideoCodec::H264 | VideoCodec::H265 if ffmpeg::probe_codec(params.codec) => thread
+                .spawn(move || {
+                    let encoder = trace_span!("ffmpeg_new_encoder")
+                        .in_scope(|| ffmpeg::new_encoder(params, framerate, video_timebase))?;
 
                     encode_thread(
                         vk_clone,
@@ -150,12 +155,11 @@ impl CpuEncoder {
                         stream_seq,
                         video_timebase,
                     )
-                })?
-            }
+                })?,
             #[cfg(feature = "svt_encode")]
             VideoCodec::H265 => thread.spawn(move || {
                 let encoder = trace_span!("svt_new_hevc")
-                    .in_scope(|| svt::new_hevc(width, height, framerate))
+                    .in_scope(|| svt::new_hevc(params, framerate))
                     .context("failed to create encoder")?;
 
                 encode_thread(
@@ -171,7 +175,7 @@ impl CpuEncoder {
             #[cfg(feature = "svt_encode")]
             VideoCodec::Av1 => thread.spawn(move || {
                 let encoder = trace_span!("svt_new_av1")
-                    .in_scope(|| svt::new_av1(width, height, framerate))
+                    .in_scope(|| svt::new_av1(params, framerate))
                     .context("failed to create encoder")?;
 
                 encode_thread(
@@ -184,18 +188,66 @@ impl CpuEncoder {
                     video_timebase,
                 )
             })?,
-            _ => bail!("no encoder available for codec {:?}", codec),
+            _ => bail!("no encoder available for codec {:?}", params.codec),
         };
 
         Ok(Self {
-            width,
-            height,
+            width: params.width,
+            height: params.height,
             encode_thread_handle: Some(handle),
             input_frames: Some(input_frames_tx),
             done_frames: done_frames_rx,
             graphics_queue: vk.graphics_queue.clone(),
             vk,
         })
+    }
+
+    pub fn input_format(&self) -> vk::Format {
+        DEFAULT_INPUT_FORMAT
+    }
+
+    pub fn create_input_image(&self) -> anyhow::Result<VkImage> {
+        let image = {
+            let create_info = vk::ImageCreateInfo::default()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(DEFAULT_INPUT_FORMAT)
+                .extent(vk::Extent3D {
+                    width: self.width,
+                    height: self.height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::STORAGE)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .flags(vk::ImageCreateFlags::EXTENDED_USAGE | vk::ImageCreateFlags::MUTABLE_FORMAT);
+
+            unsafe {
+                self.vk
+                    .device
+                    .create_image(&create_info, None)
+                    .context("VkCreateImage")?
+            }
+        };
+
+        let memory = unsafe {
+            bind_memory_for_image(&self.vk.device, &self.vk.device_info.memory_props, image)?
+        };
+
+        Ok(VkImage::wrap(
+            self.vk.clone(),
+            image,
+            // No view into the combined image (and we can't create one because
+            // of the UsageFlags).
+            vk::ImageView::null(),
+            memory,
+            DEFAULT_INPUT_FORMAT,
+            self.width,
+            self.height,
+        ))
     }
 
     #[instrument(level = "trace", skip_all)]

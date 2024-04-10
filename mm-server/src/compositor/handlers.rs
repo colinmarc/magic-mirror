@@ -49,7 +49,7 @@ impl compositor::CompositorHandler for State {
 
                 match attrs.buffer.take() {
                     Some(compositor::BufferAssignment::Removed) => {
-                        debug!("buffer removed from {:?}", surf.id());
+                        debug!(surface = surf.id().protocol_id(), "buffer removed");
                         removed_surfaces.push(surf.clone());
                     }
                     Some(compositor::BufferAssignment::NewBuffer(buffer)) => {
@@ -62,7 +62,7 @@ impl compositor::CompositorHandler for State {
         );
 
         for surf in removed_surfaces {
-            self.video_pipeline.remove_surface(&surf).unwrap();
+            self.texture_manager.remove_surface(&surf).unwrap();
             if !compositor::is_sync_subsurface(&surf) {
                 self.unmap_window_for_surface(&surf).unwrap();
             }
@@ -73,7 +73,7 @@ impl compositor::CompositorHandler for State {
 
     fn destroyed(&mut self, surface: &wl_surface::WlSurface) {
         debug!("surface destroyed: {:?}", surface.id());
-        self.video_pipeline.remove_surface(surface).unwrap();
+        self.texture_manager.remove_surface(surface).unwrap();
     }
 }
 

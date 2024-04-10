@@ -16,7 +16,7 @@ use ash::vk::native::{
 use bytes::Bytes;
 use tracing::trace;
 
-use crate::compositor::AttachedClients;
+use crate::compositor::{AttachedClients, VideoStreamParams};
 use crate::vulkan::*;
 
 use super::gop_structure::HierarchicalP;
@@ -69,8 +69,7 @@ impl H265Encoder {
         vk: Arc<VkContext>,
         attached_clients: AttachedClients,
         stream_seq: u64,
-        width: u32,
-        height: u32,
+        params: VideoStreamParams,
     ) -> anyhow::Result<Self> {
         let (video_loader, encode_loader) = vk.video_apis.as_ref().unwrap();
 
@@ -188,8 +187,8 @@ impl H265Encoder {
             .max()
             .expect("no tbs size found");
 
-        let aligned_width = width.next_multiple_of(min_ctb as u32);
-        let aligned_height = height.next_multiple_of(min_ctb as u32);
+        let aligned_width = params.width.next_multiple_of(min_ctb as u32);
+        let aligned_height = params.height.next_multiple_of(min_ctb as u32);
 
         trace!(
             min_ctb,
@@ -202,8 +201,8 @@ impl H265Encoder {
         );
 
         // Divide by two because of chroma subsampling, I guess?
-        let crop_right = (aligned_width - width) / 2;
-        let crop_bottom = (aligned_height - height) / 2;
+        let crop_right = (aligned_width - params.width) / 2;
+        let crop_bottom = (aligned_height - params.height) / 2;
 
         trace!("crop right: {}, bottom: {}", crop_right, crop_bottom);
 
@@ -303,8 +302,8 @@ impl H265Encoder {
             vk.clone(),
             attached_clients,
             stream_seq,
-            width,
-            height,
+            params.width,
+            params.height,
             structure.required_dpb_size(),
             profile.as_mut(),
             caps.video_caps,
@@ -545,7 +544,7 @@ impl H265Encoder {
         self.inner.input_format
     }
 
-    pub fn create_encode_image(&mut self) -> anyhow::Result<VkImage> {
-        self.inner.create_encode_image(self.profile.as_mut())
+    pub fn create_input_image(&mut self) -> anyhow::Result<VkImage> {
+        self.inner.create_input_image(self.profile.as_mut())
     }
 }

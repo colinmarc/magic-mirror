@@ -9,7 +9,10 @@ use ffmpeg_next as ffmpeg;
 use ffmpeg_sys::avcodec_receive_packet;
 use ffmpeg_sys_next as ffmpeg_sys;
 
-use crate::{codec::VideoCodec, compositor::video::timebase::Timebase};
+use crate::{
+    codec::VideoCodec,
+    compositor::{video::timebase::Timebase, VideoStreamParams},
+};
 
 pub struct FFmpegPacket(Arc<ffmpeg::Packet>);
 
@@ -84,13 +87,12 @@ fn copy_frame(buf: &&super::VkExtMemoryFrame, frame: &mut ffmpeg::frame::Video) 
 }
 
 pub fn new_encoder(
-    codec: VideoCodec,
-    width: u32,
-    height: u32,
+    params: VideoStreamParams,
     framerate: u32,
     timebase: Timebase,
 ) -> anyhow::Result<FFmpegEncoder> {
-    let codec_id = ffmpeg::encoder::find(codec.into()).ok_or(anyhow::anyhow!("codec not found"))?;
+    let codec_id =
+        ffmpeg::encoder::find(params.codec.into()).ok_or(anyhow::anyhow!("codec not found"))?;
 
     let enc_ctx = unsafe {
         let ptr = ffmpeg_sys::avcodec_alloc_context3(codec_id.as_ptr());
@@ -98,8 +100,8 @@ pub fn new_encoder(
     };
 
     let mut encoder = enc_ctx.encoder().video().context("creating encoder")?;
-    encoder.set_height(height);
-    encoder.set_width(width);
+    encoder.set_height(params.height);
+    encoder.set_width(params.width);
     encoder.set_format(ffmpeg::format::pixel::Pixel::YUV420P);
     encoder.set_time_base(timebase);
     encoder.set_frame_rate(Some((framerate as i32, 1)));
@@ -118,7 +120,8 @@ pub fn new_encoder(
     opts.set("tune", "zerolatency");
 
     let enc = encoder.open_as_with(codec_id, opts)?;
-    let frame = ffmpeg::frame::Video::new(ffmpeg::format::Pixel::YUV420P, width, height);
+    let frame =
+        ffmpeg::frame::Video::new(ffmpeg::format::Pixel::YUV420P, params.width, params.height);
     let packet = Arc::new(ffmpeg::Packet::empty());
 
     Ok(FFmpegEncoder { enc, frame, packet })

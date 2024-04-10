@@ -14,7 +14,7 @@ use crossbeam_channel as crossbeam;
 use tracing::{error, trace};
 
 use crate::codec::VideoCodec;
-use crate::compositor::{AttachedClients, CompositorEvent, EPOCH};
+use crate::compositor::{AttachedClients, CompositorEvent, VideoStreamParams, EPOCH};
 use crate::vulkan::video::VideoQueueExt;
 use crate::vulkan::*;
 
@@ -41,24 +41,20 @@ impl VulkanEncoder {
         vk: Arc<VkContext>,
         attached_clients: AttachedClients,
         stream_seq: u64,
-        codec: VideoCodec,
-        width: u32,
-        height: u32,
+        params: VideoStreamParams,
     ) -> anyhow::Result<Self> {
-        match codec {
+        match params.codec {
             VideoCodec::H264 => Ok(Self::H264(H264Encoder::new(
                 vk,
                 attached_clients,
                 stream_seq,
-                width,
-                height,
+                params,
             )?)),
             VideoCodec::H265 => Ok(Self::H265(H265Encoder::new(
                 vk,
                 attached_clients,
                 stream_seq,
-                width,
-                height,
+                params,
             )?)),
             _ => bail!("unsupported codec"),
         }
@@ -84,10 +80,10 @@ impl VulkanEncoder {
         }
     }
 
-    pub fn create_encode_image(&mut self) -> anyhow::Result<VkImage> {
+    pub fn create_input_image(&mut self) -> anyhow::Result<VkImage> {
         match self {
-            Self::H264(encoder) => encoder.create_encode_image(),
-            Self::H265(encoder) => encoder.create_encode_image(),
+            Self::H264(encoder) => encoder.create_input_image(),
+            Self::H265(encoder) => encoder.create_input_image(),
         }
     }
 }
@@ -253,10 +249,7 @@ impl EncoderInner {
         })
     }
 
-    fn create_encode_image(
-        &self,
-        profile: &mut vk::VideoProfileInfoKHR,
-    ) -> anyhow::Result<VkImage> {
+    fn create_input_image(&self, profile: &mut vk::VideoProfileInfoKHR) -> anyhow::Result<VkImage> {
         let image = {
             let mut profile_list_info = single_profile_list_info(profile);
 
