@@ -349,7 +349,7 @@ impl VkContext {
                 ));
             }
 
-            warn!("vulkan debug tooling enabled");
+            warn!("vulkan validation layers enabled!");
             extensions.push(ext::DebugUtils::NAME.as_ptr());
 
             unsafe {
@@ -583,8 +583,8 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
             vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => {
                 tracing::trace!(ty, "{}", message)
             }
-            vk::DebugUtilsMessageSeverityFlagsEXT::INFO => info!(ty, "{}", message),
-            vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => warn!(ty, "{}", message),
+            vk::DebugUtilsMessageSeverityFlagsEXT::INFO => debug!(ty, "{}", message),
+            vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => debug!(ty, "{}", message),
             vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => error!(ty, "{}", message),
             _ => (),
         }
