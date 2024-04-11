@@ -63,6 +63,7 @@ impl VkQueue {
     pub fn new(
         device: &ash::Device,
         _pdevice: &VkDeviceInfo,
+        _props: vk::QueueFamilyProperties,
         family: u32,
         _name: &str,
     ) -> Result<Self> {
@@ -78,6 +79,14 @@ impl VkQueue {
 
         #[cfg(feature = "tracy")]
         let tracy_context = tracy_client::Client::running().and_then(|client| {
+            if _props.timestamp_valid_bits == 0 {
+                debug!(
+                    "queue family {:?} does not support timestamp queries",
+                    family
+                );
+                return None;
+            }
+
             match init_tracy_context(device, _pdevice, queue, command_pool, client, _name) {
                 Ok(ctx) => Some(ctx),
                 Err(err) => {
@@ -492,28 +501,34 @@ impl VkContext {
             unsafe { instance.create_device(device_info.pdevice, &device_create_info, None)? }
         };
 
+        let qf_props =
+            unsafe { instance.get_physical_device_queue_family_properties(device_info.pdevice) };
+
         let graphics_queue = VkQueue::new(
             &device,
             &device_info,
+            qf_props[device_info.graphics_family as usize],
             device_info.graphics_family,
             "graphics",
         )?;
-        let mut encode_queue = None;
-        if device_info.encode_family.is_some() {
+
+        let encode_queue = if device_info.encode_family.is_some() {
             info!(
                 "hardware encoding support: (h264: {}, h265: {}, av1: {})",
                 device_info.supports_h264, device_info.supports_h265, device_info.supports_av1
             );
 
-            encode_queue = Some(VkQueue::new(
+            Some(VkQueue::new(
                 &device,
                 &device_info,
+                qf_props[device_info.encode_family.unwrap() as usize],
                 device_info.encode_family.unwrap(),
                 "encode",
-            )?);
+            )?)
         } else {
-            warn!("no hardware encoding support found!")
-        }
+            warn!("no hardware encoding support found!");
+            None
+        };
 
         if !device_info.host_mem_is_cached {
             warn!("no cache-coherent memory type found on device!");
@@ -630,10 +645,6 @@ fn init_tracy_context(
     client: tracy_client::Client,
     name: &str,
 ) -> anyhow::Result<tracy_client::GpuContext> {
-    if pdevice.device_vendor == Vendor::Amd && name.contains("encode") {
-        bail!("can't calibrate timestamp on encode queue on radv")
-    }
-
     // Query the timestamp once to calibrate the clocks.
     let cb = allocate_command_buffer(device, command_pool)?;
 
