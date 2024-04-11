@@ -120,10 +120,7 @@ impl H264Encoder {
         // );
 
         let mut rc_mode = vk::VideoEncodeRateControlModeFlagsKHR::DISABLED;
-        // Note: radv doesn't say it supports DISABLED, but it does.
-        if vk.device_info.device_vendor != Vendor::Amd
-            && !caps.encode_caps.rate_control_modes.contains(rc_mode)
-        {
+        if !caps.encode_caps.rate_control_modes.contains(rc_mode) {
             rc_mode = vk::VideoEncodeRateControlModeFlagsKHR::DEFAULT;
         }
 
