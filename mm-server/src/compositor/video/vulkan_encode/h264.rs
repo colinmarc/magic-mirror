@@ -53,7 +53,6 @@ pub struct H264Encoder {
     profile: H264EncodeProfile,
     rc_mode: vk::VideoEncodeRateControlModeFlagsKHR,
 
-    layers: u32,
     structure: HierarchicalP,
     pic_metadata: Vec<H264Metadata>, // Indexed by layer.
     idr_num: u32,
@@ -124,20 +123,11 @@ impl H264Encoder {
             rc_mode = vk::VideoEncodeRateControlModeFlagsKHR::DEFAULT;
         }
 
-        let mut layers = std::cmp::min(4, caps.h264_caps.max_temporal_layer_count);
-        if vk.device_info.device_vendor == Vendor::Amd {
-            layers = 1; // Dyadic is not working on radv. Don't know why.
-        }
-
-        let mut structure = HierarchicalP::new(layers as u32, super::DEFAULT_GOP_SIZE);
-        while structure.required_dpb_size() as u32 > caps.video_caps.max_dpb_slots {
-            layers -= 1;
-            if layers == 0 {
-                bail!("max_dpb_slots too low");
-            }
-
-            structure = HierarchicalP::new(layers as u32, super::DEFAULT_GOP_SIZE);
-        }
+        let structure = super::default_structure(
+            caps.h264_caps.max_temporal_layer_count,
+            caps.video_caps.max_dpb_slots,
+            vk.device_info.device_vendor,
+        )?;
 
         // TODO check more caps
         // TODO autoselect level
@@ -261,13 +251,12 @@ impl H264Encoder {
             trace!("generated {} bytes of h264 headers", headers.len());
         }
 
-        let pic_metadata = vec![H264Metadata::default(); layers as usize];
+        let pic_metadata = vec![H264Metadata::default(); structure.layers as usize];
 
         Ok(Self {
             inner,
             profile,
             rc_mode,
-            layers,
             structure,
             pic_metadata,
             idr_num: 0,
@@ -289,17 +278,17 @@ impl H264Encoder {
             self.frame_num = 0;
         }
 
-        let pattern = if self.layers > 1 {
+        let pattern = if self.structure.layers > 1 {
             vk::VideoEncodeH264RateControlFlagsEXT::TEMPORAL_LAYER_PATTERN_DYADIC
         } else {
             vk::VideoEncodeH264RateControlFlagsEXT::REFERENCE_PATTERN_FLAT
         };
 
         let mut h264_rc_info = vk::VideoEncodeH264RateControlInfoEXT::default()
-            .gop_frame_count(super::DEFAULT_GOP_SIZE)
-            .idr_period(super::DEFAULT_GOP_SIZE)
+            .gop_frame_count(self.structure.gop_size)
+            .idr_period(self.structure.gop_size)
             .consecutive_b_frame_count(0)
-            .temporal_layer_count(self.layers)
+            .temporal_layer_count(self.structure.layers)
             .flags(vk::VideoEncodeH264RateControlFlagsEXT::REGULAR_GOP | pattern);
 
         let mut rc_info =

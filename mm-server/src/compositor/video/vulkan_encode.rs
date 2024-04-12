@@ -18,6 +18,8 @@ use crate::compositor::{AttachedClients, CompositorEvent, VideoStreamParams, EPO
 use crate::vulkan::video::VideoQueueExt;
 use crate::vulkan::*;
 
+use self::gop_structure::HierarchicalP;
+
 use super::{begin_cb, timeline_signal, timeline_wait};
 
 mod dpb;
@@ -28,8 +30,6 @@ use h264::H264Encoder;
 
 mod h265;
 use h265::H265Encoder;
-
-const DEFAULT_GOP_SIZE: u32 = 64;
 
 pub enum VulkanEncoder {
     H264(H264Encoder),
@@ -985,4 +985,33 @@ fn single_profile_list_info<'a>(
         profile_count: 1,
         ..Default::default()
     }
+}
+
+fn default_structure(
+    _max_layers: u32,
+    max_dpb_slots: u32,
+    device_vendor: Vendor,
+) -> anyhow::Result<HierarchicalP> {
+    // Temporal layers don't work yet.
+    // let mut layers = std::cmp::min(4, max_layers);
+    let mut layers = 1;
+
+    const DEFAULT_GOP_SIZE: u32 = 64;
+    let gop_size = if device_vendor == Vendor::Nvidia {
+        1
+    } else {
+        DEFAULT_GOP_SIZE
+    };
+
+    let mut structure = HierarchicalP::new(layers as u32, gop_size);
+    while structure.required_dpb_size() as u32 > max_dpb_slots {
+        layers -= 1;
+        if layers == 0 {
+            bail!("max_dpb_slots too low");
+        }
+
+        structure = HierarchicalP::new(layers as u32, gop_size);
+    }
+
+    Ok(structure)
 }

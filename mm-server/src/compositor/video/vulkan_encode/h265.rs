@@ -55,7 +55,6 @@ pub struct H265Encoder {
     profile: H265EncodeProfile,
     rc_mode: vk::VideoEncodeRateControlModeFlagsKHR,
 
-    layers: u32,
     structure: HierarchicalP,
     pic_metadata: Vec<H265Metadata>, // Indexed by layer.
     idr_num: u32,
@@ -125,16 +124,12 @@ impl H265Encoder {
             rc_mode = vk::VideoEncodeRateControlModeFlagsKHR::DEFAULT;
         }
 
-        let mut layers = std::cmp::min(4, caps.h265_caps.max_sub_layer_count);
-        let mut structure = HierarchicalP::new(layers as u32, super::DEFAULT_GOP_SIZE);
-        while structure.required_dpb_size() as u32 > caps.video_caps.max_dpb_slots {
-            layers -= 1;
-            if layers == 0 {
-                bail!("max_dpb_slots too low");
-            }
-
-            structure = HierarchicalP::new(layers as u32, super::DEFAULT_GOP_SIZE);
-        }
+        // let mut layers = std::cmp::min(4, caps.h265_caps.max_sub_layer_count);
+        let structure = super::default_structure(
+            caps.h265_caps.max_sub_layer_count,
+            caps.video_caps.max_dpb_slots,
+            vk.device_info.device_vendor,
+        )?;
 
         // TODO check more caps
         // TODO autoselect level
@@ -226,7 +221,7 @@ impl H265Encoder {
         // ptl.flags.set_general_progressive_source_flag(1);
         // ptl.flags.set_general_interlaced_source_flag(0);
 
-        let layers_minus_1 = (layers - 1) as u8;
+        let layers_minus_1 = (structure.layers - 1) as u8;
         let mut pbm: StdVideoH265DecPicBufMgr = unsafe { std::mem::zeroed() };
         pbm.max_dec_pic_buffering_minus1[layers_minus_1 as usize] =
             (structure.required_dpb_size() - 1) as u8;
@@ -335,13 +330,12 @@ impl H265Encoder {
             trace!("generated {} bytes of h265 headers", headers.len());
         }
 
-        let pic_metadata = vec![H265Metadata::default(); layers as usize];
+        let pic_metadata = vec![H265Metadata::default(); structure.layers as usize];
 
         Ok(Self {
             inner,
             profile,
             rc_mode,
-            layers,
             structure,
             pic_metadata,
             idr_num: 0,
@@ -363,17 +357,17 @@ impl H265Encoder {
             self.frame_num = 0;
         }
 
-        let pattern = if self.layers > 1 {
+        let pattern = if self.structure.layers > 1 {
             vk::VideoEncodeH265RateControlFlagsEXT::TEMPORAL_SUB_LAYER_PATTERN_DYADIC
         } else {
             vk::VideoEncodeH265RateControlFlagsEXT::REFERENCE_PATTERN_FLAT
         };
 
         let mut h265_rc_info = vk::VideoEncodeH265RateControlInfoEXT::default()
-            .gop_frame_count(super::DEFAULT_GOP_SIZE)
-            .idr_period(super::DEFAULT_GOP_SIZE)
+            .gop_frame_count(self.structure.gop_size)
+            .idr_period(self.structure.gop_size)
             .consecutive_b_frame_count(0)
-            .sub_layer_count(self.layers)
+            .sub_layer_count(self.structure.layers)
             .flags(vk::VideoEncodeH265RateControlFlagsEXT::REGULAR_GOP | pattern);
 
         let mut rc_info =
