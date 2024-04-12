@@ -173,6 +173,12 @@ impl H264Encoder {
         vui.flags.set_video_full_range_flag(0); // Narrow range.
         vui.flags.set_color_description_present_flag(1);
 
+        let log2_max_frame_num_minus4 = structure
+            .gop_size
+            .next_power_of_two()
+            .ilog2()
+            .saturating_sub(4) as u8;
+
         let mut sps = StdVideoH264SequenceParameterSet {
             profile_idc,
             level_idc,
@@ -180,8 +186,8 @@ impl H264Encoder {
 
             max_num_ref_frames: 1,
             pic_order_cnt_type: StdVideoH264PocType_STD_VIDEO_H264_POC_TYPE_0,
-            log2_max_pic_order_cnt_lsb_minus4: 4, // TODO no idea what this means
-
+            log2_max_pic_order_cnt_lsb_minus4: log2_max_frame_num_minus4,
+            log2_max_frame_num_minus4,
             pic_width_in_mbs_minus1: (aligned_width / mb_size) - 1,
             pic_height_in_map_units_minus1: (aligned_height / mb_size) - 1,
             frame_crop_right_offset: crop_right,
@@ -400,6 +406,12 @@ impl H264Encoder {
             temporal_id: frame_state.id as u8,
             ..std::mem::zeroed()
         };
+
+        trace!(
+            frame_num = self.frame_num,
+            pic_order_cnt = frame_state.gop_position,
+            "setting up h264 pic"
+        );
 
         let mut setup_info =
             vk::VideoEncodeH264DpbSlotInfoEXT::default().std_reference_info(&setup_std_ref_info);

@@ -397,7 +397,7 @@ impl EncoderInner {
             ref_slots = ?ref_pics.iter().map(|p| p.index).collect::<Vec<_>>(),
             setup_id = frame_state.id,
             setup_slot = setup_pic.index,
-            frame_num = frame_state.gop_position,
+            gop_position = frame_state.gop_position,
             is_keyframe = frame_state.is_keyframe,
             is_reference = frame_state.is_reference,
             input_image = ?input.image,
@@ -996,7 +996,7 @@ fn default_structure(
     // let mut layers = std::cmp::min(4, max_layers);
     let mut layers = 1;
 
-    const DEFAULT_GOP_SIZE: u32 = 64;
+    const DEFAULT_GOP_SIZE: u32 = 128;
     let gop_size = if device_vendor == Vendor::Nvidia {
         1
     } else {
