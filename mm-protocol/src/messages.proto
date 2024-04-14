@@ -310,9 +310,6 @@ message ApplicationList {
 // that the server launch the application specified by `name`. The name should
 // match the name of an application returned by `012 - Application List`.
 //
-// Unless `server_side_cursor_enabled` is true, the server should avoid
-// rendering a cursor in the stream if possible.
-//
 // The server must either launch a session, replying with `014 - Session
 // Launched` once the session has started and is available to attach, or send an
 // `001 - Error` message on the same stream indicating why it refuses to do so.
@@ -322,8 +319,6 @@ message LaunchSession {
   string application_name = 1;
 
   VirtualDisplayParameters display_params = 10; // Required.
-
-  bool server_side_cursor_enabled = 20;
 }
 
 // ### 014 - Session Launched
@@ -442,8 +437,6 @@ message Attach {
   AudioCodec audio_codec = 15;
   AudioChannels channels = 16;
   uint32 sample_rate_hz = 17;
-
-  bool server_side_cursor_enabled = 21;
 }
 
 // ### 031 - Attached
