@@ -98,7 +98,7 @@ struct EncoderInner {
     submitted_frames: Option<crossbeam::Sender<WriterInput>>,
     done_frames: crossbeam::Receiver<EncoderOutputFrame>,
 
-    dpb: dpb::DpbLayerBuffer,
+    dpb: dpb::DpbPool,
 
     width: u32,
     height: u32,
@@ -195,16 +195,34 @@ impl EncoderInner {
             }
         };
 
-        let dpb = dpb::DpbLayerBuffer::new(
-            vk.clone(),
-            input_format,
-            width,
-            height,
-            profile,
-            required_dpb_size,
-        )?;
+        let dpb = if capabilities
+            .flags
+            .contains(vk::VideoCapabilityFlagsKHR::SEPARATE_REFERENCE_IMAGES)
+        {
+            trace!("using separate images for DPB pool");
 
-        let (submitted_frames_tx, submitted_frames_rx) = crossbeam::bounded(2);
+            dpb::DpbPool::new_separate_images(
+                vk.clone(),
+                input_format,
+                width,
+                height,
+                profile,
+                required_dpb_size,
+            )?
+        } else {
+            trace!("using shared image for DPB pool");
+
+            dpb::DpbPool::new(
+                vk.clone(),
+                input_format,
+                width,
+                height,
+                profile,
+                required_dpb_size,
+            )?
+        };
+
+        let (submitted_frames_tx, submitted_frames_rx) = crossbeam::bounded(1);
         let (done_frames_tx, done_frames_rx) = crossbeam::unbounded();
 
         // for _ in 0..1 {

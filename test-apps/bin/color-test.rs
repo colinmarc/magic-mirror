@@ -710,7 +710,10 @@ impl Renderer {
                     depth_attachment_format: None,
                 },
                 imgui,
-                None,
+                Some(imgui_vulkan::Options {
+                    in_flight_frames: frames.len(),
+                    ..Default::default()
+                }),
             )?)
         } else {
             None

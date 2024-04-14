@@ -37,7 +37,6 @@ pub struct Renderer {
 
     window: Rc<winit::window::Window>,
     imgui: imgui::Context,
-    imgui_renderer: imgui_vulkan::Renderer,
     imgui_platform: imgui_winit_support::WinitPlatform,
     imgui_font: font_kit::font::Font,
     imgui_fontid_big: imgui::FontId,
@@ -68,6 +67,8 @@ struct Swapchain {
     descriptor_pool: vk::DescriptorPool,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
+
+    imgui_renderer: imgui_vulkan::Renderer,
 }
 
 struct InFlightFrame {
@@ -108,22 +109,6 @@ impl Renderer {
         let imgui_font = font::load_ui_font()?;
         let imgui_fontid_big = import_imgui_font(&mut imgui, &imgui_font, FONT_SIZE, scale_factor)?;
 
-        let surface_format = select_surface_format(vk.clone())?;
-
-        let imgui_renderer = imgui_vulkan::Renderer::with_default_allocator(
-            &vk.instance,
-            vk.pdevice,
-            vk.device.clone(),
-            vk.present_queue.queue,
-            vk.present_queue.command_pool,
-            imgui_vulkan::DynamicRendering {
-                color_attachment_format: surface_format.format,
-                depth_attachment_format: None,
-            },
-            &mut imgui,
-            None,
-        )?;
-
         let mut renderer = Self {
             width: window_size.width,
             height: window_size.height,
@@ -131,7 +116,6 @@ impl Renderer {
             window,
             imgui,
             imgui_platform,
-            imgui_renderer,
             imgui_font,
             imgui_fontid_big,
             imgui_time: time::Instant::now(),
@@ -504,6 +488,29 @@ impl Renderer {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let mut imgui_renderer = imgui_vulkan::Renderer::with_default_allocator(
+            &self.vk.instance,
+            self.vk.pdevice,
+            self.vk.device.clone(),
+            self.vk.present_queue.queue,
+            self.vk.present_queue.command_pool,
+            imgui_vulkan::DynamicRendering {
+                color_attachment_format: surface_format.format,
+                depth_attachment_format: None,
+            },
+            &mut self.imgui,
+            Some(imgui_vulkan::Options {
+                in_flight_frames: frames.len(),
+                ..Default::default()
+            }),
+        )?;
+
+        imgui_renderer.update_fonts_texture(
+            self.vk.present_queue.queue,
+            self.vk.present_queue.command_pool,
+            &mut self.imgui,
+        )?;
+
         let swapchain = Swapchain {
             swapchain,
             frames,
@@ -518,6 +525,8 @@ impl Renderer {
             aspect,
             pipeline_layout,
             pipeline,
+
+            imgui_renderer,
         };
 
         debug!("recreated swapchain in {:?}", start.elapsed());
@@ -575,11 +584,6 @@ impl Renderer {
         // Resize fonts.
         self.imgui_fontid_big =
             import_imgui_font(&mut self.imgui, &self.imgui_font, FONT_SIZE, scale_factor)?;
-        self.imgui_renderer.update_fonts_texture(
-            self.vk.present_queue.queue,
-            self.vk.present_queue.command_pool,
-            &mut self.imgui,
-        )?;
 
         self.scale_factor = scale_factor;
         Ok(())
@@ -805,7 +809,8 @@ impl Renderer {
                 self.imgui_platform.prepare_render(ui, &self.window);
             }
 
-            self.imgui_renderer
+            swapchain
+                .imgui_renderer
                 .cmd_draw(frame.render_cb, self.imgui.render())?;
         };
 

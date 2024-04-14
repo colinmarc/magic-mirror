@@ -19,15 +19,16 @@ pub struct DpbPicture {
     free: bool,
 }
 
-/// A DPB pool using one layer for each picture. Guaranteed to be supported,
-/// where distinct images are not, but otherwise unoptimal and awkward.
-pub struct DpbLayerBuffer {
-    pub image: VkImage,
+pub struct DpbPool {
+    _store: Vec<VkImage>,
     slots: Vec<DpbPicture>,
     ids: HashMap<u32, usize>,
 }
 
-impl DpbLayerBuffer {
+impl DpbPool {
+    /// Creates a DPB pool using one layer of a shared image for each picture.
+    /// Guaranteed to be supported, where distinct images are not, but otherwise
+    /// unoptimal and awkward.
     pub fn new(
         vk: Arc<VkContext>,
         format: vk::Format,
@@ -55,7 +56,42 @@ impl DpbLayerBuffer {
         }
 
         Ok(Self {
-            image,
+            _store: vec![image],
+            slots,
+            ids: HashMap::new(),
+        })
+    }
+
+    /// Creates a dpb pool using separate images for each slot.
+    pub fn new_separate_images(
+        vk: Arc<VkContext>,
+        format: vk::Format,
+        width: u32,
+        height: u32,
+        profile: &mut vk::VideoProfileInfoKHR,
+        size: usize,
+    ) -> anyhow::Result<Self> {
+        let mut store = Vec::with_capacity(size);
+        let mut slots = Vec::with_capacity(size);
+        for i in 0..size {
+            let image = create_dpb_image(vk.clone(), profile, format, width, height, 1)?;
+
+            slots.push(DpbPicture {
+                image: image.image,
+                picture_resource_info: vk::VideoPictureResourceInfoKHR::default()
+                    .image_view_binding(image.view)
+                    .coded_extent(vk::Extent2D { width, height })
+                    .base_array_layer(0),
+                index: i,
+                currently_active: false,
+                free: true,
+            });
+
+            store.push(image);
+        }
+
+        Ok(Self {
+            _store: store,
             slots,
             ids: HashMap::new(),
         })
