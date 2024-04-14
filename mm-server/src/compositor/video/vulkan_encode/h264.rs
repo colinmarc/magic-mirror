@@ -319,7 +319,6 @@ impl H264Encoder {
 
         let mut std_slice_header = vk::native::StdVideoEncodeH264SliceHeader {
             slice_type,
-            disable_deblocking_filter_idc: 1,
             pWeightTable: &weight_table,
             ..std::mem::zeroed()
         };
@@ -331,7 +330,7 @@ impl H264Encoder {
             .std_slice_header(&std_slice_header)
             .constant_qp(
                 if self.rc_mode == vk::VideoEncodeRateControlModeFlagsKHR::DISABLED {
-                    35
+                    25
                 } else {
                     0
                 },
