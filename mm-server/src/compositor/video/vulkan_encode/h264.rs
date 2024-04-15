@@ -330,7 +330,7 @@ impl H264Encoder {
             .std_slice_header(&std_slice_header)
             .constant_qp(
                 if self.rc_mode == vk::VideoEncodeRateControlModeFlagsKHR::DISABLED {
-                    25
+                    17
                 } else {
                     0
                 },
