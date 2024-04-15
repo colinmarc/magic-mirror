@@ -959,7 +959,7 @@ impl Renderer {
                     );
 
                     ui.text("Headroom:");
-                    ui.slider("##headroom", 1.0, 4.0, &mut self.pc.color_mul);
+                    ui.slider("##headroom", 0.75, 4.0, &mut self.pc.color_mul);
                 }
 
                 platform.prepare_render(ui, &self.window);
