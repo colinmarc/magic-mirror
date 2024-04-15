@@ -245,7 +245,6 @@ impl App {
                                 session_id: self.session_id,
                                 streaming_resolution: self.remote_display_params.resolution.clone(),
                                 video_codec: self.configured_codec.into(),
-                                server_side_cursor_enabled: false,
                                 ..Default::default()
                             },
                             None,
@@ -746,7 +745,6 @@ fn main() -> Result<()> {
             session_id: session.session_id,
             streaming_resolution: Some(streaming_resolution),
             video_codec: configured_codec.into(),
-            server_side_cursor_enabled: false,
             ..Default::default()
         },
         None,
@@ -1008,7 +1006,6 @@ fn launch_session(
     match conn.blocking_request(
         protocol::LaunchSession {
             application_name: app.to_string(),
-            server_side_cursor_enabled: false,
             display_params: Some(display_params),
         },
         INIT_TIMEOUT,
