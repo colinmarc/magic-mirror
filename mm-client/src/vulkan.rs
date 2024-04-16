@@ -440,7 +440,7 @@ impl VkContext {
         let mut decode_queue = None;
         if device_info.decode_family.is_some() {
             info!(
-                "hardware decode support: (h264: {}, h265: {}, av1: {})",
+                "vulkan video decode support: (h264: {}, h265: {}, av1: {})",
                 device_info.supports_h264, device_info.supports_h265, device_info.supports_av1
             );
 
@@ -449,7 +449,7 @@ impl VkContext {
                 device_info.decode_family.unwrap(),
             )?);
         } else {
-            warn!("no hardware decode support found!")
+            warn!("no vulkan video support found!")
         }
 
         if !device_info.host_mem_is_cached {
