@@ -1014,7 +1014,7 @@ fn default_structure(
     // let mut layers = std::cmp::min(4, max_layers);
     let mut layers = 1;
 
-    const DEFAULT_GOP_SIZE: u32 = 128;
+    const DEFAULT_GOP_SIZE: u32 = 32;
     let gop_size = if device_vendor == Vendor::Nvidia {
         1
     } else {
