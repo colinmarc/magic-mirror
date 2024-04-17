@@ -41,7 +41,10 @@ pub struct Conn {
     next_stream_id: u64,
 }
 
-pub struct BoundConn(Conn, std::thread::JoinHandle<()>);
+pub struct BoundConn {
+    inner: Conn,
+    _handle: std::thread::JoinHandle<()>,
+}
 
 impl Conn {
     pub fn new(addr: &str) -> anyhow::Result<Self> {
@@ -147,7 +150,10 @@ impl Conn {
             proxy.send_event(ConnEvent::ConnectionClosed.into()).ok();
         });
 
-        BoundConn(self, handle)
+        BoundConn {
+            inner: self,
+            _handle: handle,
+        }
     }
 
     pub fn close(self) -> anyhow::Result<()> {
@@ -169,11 +175,11 @@ impl BoundConn {
         sid: Option<u64>,
         fin: bool,
     ) -> anyhow::Result<u64> {
-        self.0.send(msg, sid, fin)
+        self.inner.send(msg, sid, fin)
     }
 
     pub fn close(self) -> anyhow::Result<()> {
-        self.0.close()
+        self.inner.close()
     }
 }
 
