@@ -151,7 +151,6 @@ fn main() -> anyhow::Result<()> {
                 framerate_hz: framerate,
                 ..Default::default()
             }),
-            server_side_cursor_enabled: false,
         },
         time::Duration::from_secs(1),
     )? {
@@ -166,7 +165,6 @@ fn main() -> anyhow::Result<()> {
             client_name: "latency-test".to_string(),
             video_codec: codec.into(),
             streaming_resolution: Some(resolution),
-            server_side_cursor_enabled: false,
             ..Default::default()
         },
         None,
