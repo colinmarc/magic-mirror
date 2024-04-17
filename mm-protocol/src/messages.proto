@@ -616,7 +616,9 @@ message AudioChunk {
 
 // ## Input
 //
-// TODO
+// Input messages are used by the client to indicate user interaction, whether
+// it be via a keyboard, mouse, controller, or some other input. Input is
+// always scoped to an attachment and sent on the attachment stream.
 
 // ### 060 - Keyboard Input
 //
@@ -805,7 +807,8 @@ message PointerLeft {}
 // original `030 - Attach` message, indicates that the Pointer has moved to a
 // new position.
 //
-// TODO: which coordinate space? what if videostreamstart had different res?
+// The coordinates should be in the space defined by the `resolution` parameter
+// of the `VirtualDisplayParams` set on the session.
 message PointerMotion {
   double x = 1; // Required.
   double y = 2; // Required.
@@ -835,4 +838,30 @@ message PointerInput {
   ButtonState state = 2; // Required.
   double x = 3;          // Required.
   double y = 4;          // Required.
+}
+
+// ### 065 - Pointer Scroll
+//
+// This message, which must be sent by the client on the same stream as the
+// original `030 - Attach` message, indicates that the user has scrolled,
+// either using the mouse wheel, a touchpad, or some other mechanism.
+//
+// The scroll_type determines how the values of x and y are interpreted.
+// `CONTINUOUS` indicates a vector in pixels, in the coordinate space defined
+// by the `resolution` parameter of the `VirtualDisplayParams` set on the
+// session. Discrete indicates individual steps, for example on a clicky
+// scroll wheel.
+//
+// In both cases, positive values indicate that the scrolled content should
+// move right and down, revealing more content to the top and left.
+message PointerScroll {
+  enum ScrollType {
+    SCROLL_TYPE_UNKNOWN = 0;
+    SCROLL_TYPE_CONTINUOUS = 1;
+    SCROLL_TYPE_DISCRETE = 2;
+  }
+
+  double x = 1;
+  double y = 2;
+  ScrollType scroll_type = 3;
 }

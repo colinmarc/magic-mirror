@@ -463,6 +463,20 @@ fn attach(
                                     state,
                                 }).ok();
                             }
+                            protocol::MessageType::PointerScroll(ev) => {
+                                match ev.scroll_type.try_into() {
+                                    Ok(protocol::pointer_scroll::ScrollType::Continuous) => {
+                                        handle.control.send(ControlMessage::PointerAxis(ev.x, ev.y)).ok();
+                                    }
+                                    Ok(protocol::pointer_scroll::ScrollType::Discrete) => {
+                                        handle.control.send(ControlMessage::PointerAxisDiscrete(ev.x, ev.y)).ok();
+                                    },
+                                    _ => {
+                                        send_err(outgoing, ErrorCode::ErrorProtocol, Some("invalid scroll type".to_string()));
+                                        return;
+                                    }
+                                }
+                            }
                             msg => {
                                 debug!("received {} from client on attachment stream", msg);
                                 send_err(outgoing, ErrorCode::ErrorProtocolUnexpectedMessage, None);

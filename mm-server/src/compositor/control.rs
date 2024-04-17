@@ -56,6 +56,8 @@ pub enum ControlMessage {
         button_code: u32,
         state: smithay::backend::input::ButtonState,
     },
+    PointerAxis(f64, f64),
+    PointerAxisDiscrete(f64, f64),
 }
 
 #[derive(Debug, Clone)]

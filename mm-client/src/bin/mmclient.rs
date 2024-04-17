@@ -26,6 +26,8 @@ use tracing::{debug, error};
 use tracing_subscriber::Layer;
 use winit::event::ElementState;
 use winit::event::KeyEvent;
+use winit::event::MouseScrollDelta;
+use winit::event::TouchPhase;
 use winit::event_loop::ControlFlow;
 use winit::event_loop::EventLoopBuilder;
 use winit::event_loop::EventLoopProxy;
@@ -500,15 +502,35 @@ impl App {
                     }
                 }
                 WindowEvent::CursorMoved { position, .. } => {
-                    // Returns coordinates in the [0.0, 1.0] range.
-                    let new_position = if let Some((x, y)) =
-                        self.renderer.to_texture_coords(position)
-                    {
+                    let new_position = self.renderer.get_texture_aspect().and_then(|aspect| {
+                        // Calculate coordinates in [-1.0, 1.0];
+                        let (clip_x, clip_y) = (
+                            (position.x / self.window_width as f64) * 2.0 - 1.0,
+                            (position.y / self.window_height as f64) * 2.0 - 1.0,
+                        );
+
+                        // Stretch the space to account for letterboxing.
+                        let clip_x = clip_x * aspect.0;
+                        let clip_y = clip_y * aspect.1;
+
+                        // In the letterbox.
+                        if clip_x.abs() > 1.0 || clip_y.abs() > 1.0 {
+                            return None;
+                        }
+
+                        // Convert to texture coordinates.
+                        let x = (clip_x + 1.0) / 2.0;
+                        let y = (clip_y + 1.0) / 2.0;
+
                         // Convert the position to physical coordinates in the remote display.
                         let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
                         let cursor_x = x * remote_size.width as f64;
                         let cursor_y = y * remote_size.height as f64;
 
+                        Some((cursor_x, cursor_y))
+                    });
+
+                    if let Some((cursor_x, cursor_y)) = new_position {
                         let msg = protocol::PointerMotion {
                             x: cursor_x,
                             y: cursor_y,
@@ -516,20 +538,16 @@ impl App {
 
                         self.conn.send(msg, Some(self.attachment_sid), false)?;
 
-                        Some((cursor_x, cursor_y))
-                    } else {
-                        None
-                    };
+                        if new_position.is_some() && self.cursor_pos.is_none() {
+                            let msg = protocol::PointerEntered {};
+                            self.conn.send(msg, Some(self.attachment_sid), false)?;
+                        } else if new_position.is_none() && self.cursor_pos.is_some() {
+                            let msg = protocol::PointerLeft {};
+                            self.conn.send(msg, Some(self.attachment_sid), false)?;
+                        }
 
-                    if new_position.is_some() && self.cursor_pos.is_none() {
-                        let msg = protocol::PointerEntered {};
-                        self.conn.send(msg, Some(self.attachment_sid), false)?;
-                    } else if new_position.is_none() && self.cursor_pos.is_some() {
-                        let msg = protocol::PointerLeft {};
-                        self.conn.send(msg, Some(self.attachment_sid), false)?;
+                        self.cursor_pos = new_position;
                     }
-
-                    self.cursor_pos = new_position;
                 }
                 WindowEvent::MouseInput { state, button, .. } => {
                     use protocol::pointer_input::*;
@@ -565,9 +583,51 @@ impl App {
 
                     self.conn.send(msg, Some(self.attachment_sid), false)?;
                 }
-                _ => {
-                    // debug!("window event: {:?}", event);
+                WindowEvent::MouseWheel {
+                    delta: MouseScrollDelta::LineDelta(x, y),
+                    phase: TouchPhase::Moved,
+                    ..
+                } => {
+                    let msg = protocol::PointerScroll {
+                        scroll_type: protocol::pointer_scroll::ScrollType::Discrete.into(),
+                        x: x as f64,
+                        y: y as f64,
+                    };
+
+                    self.conn.send(msg, Some(self.attachment_sid), false)?;
                 }
+                WindowEvent::MouseWheel {
+                    delta: MouseScrollDelta::PixelDelta(vector),
+                    phase: TouchPhase::Moved,
+                    ..
+                } => {
+                    if let Some(aspect) = self.renderer.get_texture_aspect() {
+                        // Map vector to [0, 1]. (It can also be negative.)
+                        let (x, y) = (
+                            (vector.x / self.window_width as f64),
+                            (vector.y / self.window_height as f64),
+                        );
+
+                        // Stretch the space to account for letterboxing. For
+                        // example, if the video texture only takes up one third
+                        // of the screen vertically, and we scroll up one third
+                        // of the window height, the resulting vector should be [0,
+                        // -1.0].
+                        let x = x * aspect.0;
+                        let y = y * aspect.1;
+
+                        // Map to the remote virtual display.
+                        let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
+                        let msg = protocol::PointerScroll {
+                            scroll_type: protocol::pointer_scroll::ScrollType::Continuous.into(),
+                            x: x * remote_size.width as f64,
+                            y: y * remote_size.height as f64,
+                        };
+
+                        self.conn.send(msg, Some(self.attachment_sid), false)?;
+                    }
+                }
+                _ => trace!("window event: {:?}", event),
             },
             _ => (),
         }

@@ -637,6 +637,57 @@ impl Compositor {
                                 );
                                 handle.frame(&mut self.state);
                             }
+                            Ok(ControlMessage::PointerAxis(x, y)) => {
+                                let handle = self.state.pointer_handle.clone();
+
+                                if x != 0.0 || y != 0.0 {
+                                    handle.axis(
+                                        &mut self.state,
+                                        smithay::input::pointer::AxisFrame {
+                                            source: Some(
+                                                smithay::backend::input::AxisSource::Continuous,
+                                            ),
+                                            relative_direction: (
+                                                smithay::backend::input::AxisRelativeDirection::Identical,
+                                                smithay::backend::input::AxisRelativeDirection::Identical,
+                                            ),
+                                            time: EPOCH.elapsed().as_millis() as u32,
+                                            axis: (-x, -y),
+                                            v120: None,
+                                            stop: (false, false),
+                                        },
+                                    );
+
+                                    handle.frame(&mut self.state);
+                                }
+                            }
+                            Ok(ControlMessage::PointerAxisDiscrete(x, y)) => {
+                                let handle = self.state.pointer_handle.clone();
+
+                                if x != 0.0 || y != 0.0 {
+                                    let x = (-x * 120.0).round() as i32;
+                                    let y = (-y * 120.0).round() as i32;
+
+                                    handle.axis(
+                                        &mut self.state,
+                                        smithay::input::pointer::AxisFrame {
+                                            source: Some(
+                                                smithay::backend::input::AxisSource::Wheel,
+                                            ),
+                                            relative_direction: (
+                                                smithay::backend::input::AxisRelativeDirection::Identical,
+                                                smithay::backend::input::AxisRelativeDirection::Identical,
+                                            ),
+                                            time: EPOCH.elapsed().as_millis() as u32,
+                                            axis: (0.0, 0.0),
+                                            v120: Some((x, y)),
+                                            stop: (false, false),
+                                        },
+                                    );
+
+                                    handle.frame(&mut self.state);
+                                }
+                            }
                             Err(crossbeam::TryRecvError::Empty) => break,
                             Err(crossbeam::TryRecvError::Disconnected) => {
                                 panic!("control channel disconnected")

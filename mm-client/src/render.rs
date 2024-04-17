@@ -600,38 +600,18 @@ impl Renderer {
         Ok(())
     }
 
-    // Takes a position in the output texture and returns a position in the
-    // video texture in the space [0.0, 1.0]. Returns None if there's no video
-    // texture or if the position is outside the video texture (i.e. in the
-    // letterbox).
-    pub fn to_texture_coords(
-        &self,
-        position: winit::dpi::PhysicalPosition<f64>,
-    ) -> Option<(f64, f64)> {
+    // Returns the normalized relationship between the output dimensions and the
+    // video texture dimensions, after scaling. For example, if the video
+    // texture is 250x250 and the output is 1000x500, the aspect would be (2.0,
+    // 1.0).
+    pub fn get_texture_aspect(&self) -> Option<(f64, f64)> {
         if let Some(Swapchain {
             bound_video_texture: Some((_, _)),
             aspect,
             ..
         }) = self.swapchain.as_ref()
         {
-            // Calculate coordinates in [-1.0, 1.0];
-            let (clip_x, clip_y) = (
-                (position.x / self.width as f64) * 2.0 - 1.0,
-                (position.y / self.height as f64) * 2.0 - 1.0,
-            );
-
-            // Stretch the space to account for letterboxing.
-            let clip_x = clip_x * aspect.0;
-            let clip_y = clip_y * aspect.1;
-
-            if clip_x.abs() > 1.0 || clip_y.abs() > 1.0 {
-                return None;
-            }
-
-            // Convert to texture coordinates.
-            let x = (clip_x + 1.0) / 2.0;
-            let y = (clip_y + 1.0) / 2.0;
-            Some((x, y))
+            Some(*aspect)
         } else {
             None
         }
