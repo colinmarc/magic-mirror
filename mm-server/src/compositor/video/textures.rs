@@ -340,6 +340,27 @@ impl TextureManager {
     }
 }
 
+impl Drop for TextureManager {
+    fn drop(&mut self) {
+        unsafe {
+            self.vk
+                .device
+                .queue_wait_idle(self.vk.graphics_queue.queue)
+                .unwrap()
+        };
+
+        for (_, tex) in self.committed_surfaces.drain() {
+            if let SurfaceTexture::Imported { buffer, .. } = tex {
+                buffer.release();
+            }
+        }
+
+        for (_, entry) in self.dmabuf_cache.0.drain() {
+            unsafe { self.vk.device.destroy_semaphore(entry.semaphore, None) };
+        }
+    }
+}
+
 pub unsafe fn cmd_upload_shm(
     device: &ash::Device,
     cb: vk::CommandBuffer,
