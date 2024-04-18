@@ -402,7 +402,7 @@ impl H265Encoder {
             .std_slice_segment_header(&std_slice_header)
             .constant_qp(
                 if self.rc_mode == vk::VideoEncodeRateControlModeFlagsKHR::DISABLED {
-                    17
+                    25
                 } else {
                     0
                 },
