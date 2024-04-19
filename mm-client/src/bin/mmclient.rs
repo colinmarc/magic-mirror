@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: MIT
 
 use std::io::Write;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time;
 
@@ -29,14 +28,10 @@ use winit::event::KeyEvent;
 use winit::event::MouseScrollDelta;
 use winit::event::TouchPhase;
 use winit::event_loop::ControlFlow;
-use winit::event_loop::EventLoopBuilder;
 use winit::event_loop::EventLoopProxy;
 use winit::keyboard::ModifiersState;
-use winit::{
-    event::{Event, WindowEvent},
-    event_loop::EventLoop,
-    window::WindowBuilder,
-};
+use winit::window::Window;
+use winit::{event::WindowEvent, event_loop::EventLoop};
 
 use mm_client::conn::*;
 use mm_client::flash::Flash;
@@ -123,7 +118,7 @@ struct App {
     configured_codec: protocol::VideoCodec,
     configured_framerate: u32,
 
-    window: Rc<winit::window::Window>,
+    window: Arc<winit::window::Window>,
     _proxy: EventLoopProxy<AppEvent>,
 
     exiting: bool,
@@ -162,26 +157,302 @@ struct App {
     _vk: Arc<vulkan::VkContext>,
 }
 
+impl winit::application::ApplicationHandler<AppEvent> for App {
+    fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {}
+
+    fn window_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        if window_id == self.window.id() {
+            if let Err(e) = self.renderer.handle_event(&event) {
+                error!("renderer error: {:#}", e);
+                event_loop.exit();
+                return;
+            }
+
+            let res = self.handle_window_event(event);
+            self.exit_on_error(event_loop, res);
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: AppEvent) {
+        let res = self.handle_app_event(event);
+        self.exit_on_error(event_loop, res);
+    }
+
+    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let res = self.idle();
+        self.exit_on_error(event_loop, res);
+    }
+}
+
 impl App {
-    fn handle(&mut self, event: winit::event::Event<AppEvent>) -> anyhow::Result<bool> {
+    fn exit_on_error(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        res: anyhow::Result<bool>,
+    ) {
+        match res {
+            Ok(true) => {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
+            }
+            Ok(false) => event_loop.exit(),
+            Err(e) => {
+                error!("{:#}", e);
+                event_loop.exit()
+            }
+        }
+    }
+
+    fn handle_window_event(&mut self, event: winit::event::WindowEvent) -> anyhow::Result<bool> {
+        trace!(?event, "handling window event");
+
+        match event {
+            WindowEvent::RedrawRequested => {
+                self.video_stream.prepare_frame()?;
+                self.video_stream.mark_frame_rendered();
+
+                if !self.minimized && self.video_stream.is_ready() {
+                    unsafe {
+                        self.renderer.render(|ui| {
+                            self.flash.build(ui)?;
+                            if let Some(ref mut overlay) = self.overlay {
+                                overlay.build(ui)?;
+                            }
+
+                            Ok(())
+                        })?;
+                    };
+                }
+
+                self.next_frame = time::Instant::now() + MAX_FRAME_TIME;
+            }
+            WindowEvent::CloseRequested => self.detach()?,
+            WindowEvent::Resized(size) => {
+                if size.width == 0 || size.height == 0 {
+                    self.minimized = true;
+                } else {
+                    debug!("resize event: {}x{}", size.width, size.height);
+                    if size.width != self.window_width || size.height != self.window_height {
+                        if let Some(ref mut overlay) = self.overlay {
+                            overlay.reposition();
+                        }
+
+                        // Trigger a stream resize, but debounce first.
+                        self.resize_cooldown = Some(time::Instant::now() + RESIZE_COOLDOWN);
+                    }
+
+                    self.minimized = false;
+                }
+            }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                debug!("window scale factor changed to {}", scale_factor);
+
+                // Winit sends us a Resized event, immediately after this
+                // one, with the new physical resolution.
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.cursor_modifiers = modifiers.state();
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: winit::keyboard::PhysicalKey::Code(code),
+                        logical_key,
+                        state,
+                        repeat,
+                        ..
+                    },
+                ..
+            } => {
+                use protocol::keyboard_input::*;
+
+                if state == ElementState::Pressed
+                    && logical_key == winit::keyboard::Key::Character("d".into())
+                    && self.cursor_modifiers.control_key()
+                {
+                    self.detach()?;
+                } else {
+                    let char = match logical_key {
+                        winit::keyboard::Key::Character(text) => {
+                            text.chars().next().unwrap() as u32
+                        }
+                        _ => 0,
+                    };
+
+                    let state = match state {
+                        _ if repeat => KeyState::Repeat,
+                        ElementState::Pressed => KeyState::Pressed,
+                        ElementState::Released => KeyState::Released,
+                    };
+
+                    let key = winit_key_to_proto(code);
+                    if key == protocol::keyboard_input::Key::Unknown {
+                        debug!("unknown key: {:?}", code);
+                    } else {
+                        let msg = protocol::KeyboardInput {
+                            key: key.into(),
+                            state: state.into(),
+                            char,
+                        };
+
+                        self.conn.send(msg, Some(self.attachment_sid), false)?;
+                    }
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let new_position = self.renderer.get_texture_aspect().and_then(|aspect| {
+                    // Calculate coordinates in [-1.0, 1.0];
+                    let (clip_x, clip_y) = (
+                        (position.x / self.window_width as f64) * 2.0 - 1.0,
+                        (position.y / self.window_height as f64) * 2.0 - 1.0,
+                    );
+
+                    // Stretch the space to account for letterboxing.
+                    let clip_x = clip_x * aspect.0;
+                    let clip_y = clip_y * aspect.1;
+
+                    // In the letterbox.
+                    if clip_x.abs() > 1.0 || clip_y.abs() > 1.0 {
+                        return None;
+                    }
+
+                    // Convert to texture coordinates.
+                    let x = (clip_x + 1.0) / 2.0;
+                    let y = (clip_y + 1.0) / 2.0;
+
+                    // Convert the position to physical coordinates in the remote display.
+                    let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
+                    let cursor_x = x * remote_size.width as f64;
+                    let cursor_y = y * remote_size.height as f64;
+
+                    Some((cursor_x, cursor_y))
+                });
+
+                if let Some((cursor_x, cursor_y)) = new_position {
+                    let msg = protocol::PointerMotion {
+                        x: cursor_x,
+                        y: cursor_y,
+                    };
+
+                    self.conn.send(msg, Some(self.attachment_sid), false)?;
+
+                    if new_position.is_some() && self.cursor_pos.is_none() {
+                        let msg = protocol::PointerEntered {};
+                        self.conn.send(msg, Some(self.attachment_sid), false)?;
+                    } else if new_position.is_none() && self.cursor_pos.is_some() {
+                        let msg = protocol::PointerLeft {};
+                        self.conn.send(msg, Some(self.attachment_sid), false)?;
+                    }
+
+                    self.cursor_pos = new_position;
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                use protocol::pointer_input::*;
+
+                if self.cursor_pos.is_none() {
+                    return Ok(true);
+                }
+
+                let button = match button {
+                    winit::event::MouseButton::Left => Button::Left,
+                    winit::event::MouseButton::Right => Button::Right,
+                    winit::event::MouseButton::Middle => Button::Middle,
+                    winit::event::MouseButton::Back => Button::Back,
+                    winit::event::MouseButton::Forward => Button::Forward,
+                    winit::event::MouseButton::Other(id) => {
+                        debug!("skipping unknown mouse button: {}", id);
+                        return Ok(true);
+                    }
+                };
+
+                let state = match state {
+                    ElementState::Pressed => ButtonState::Pressed,
+                    ElementState::Released => ButtonState::Released,
+                };
+
+                let (cursor_x, cursor_y) = self.cursor_pos.unwrap();
+                let msg = protocol::PointerInput {
+                    button: button.into(),
+                    state: state.into(),
+                    x: cursor_x,
+                    y: cursor_y,
+                };
+
+                self.conn.send(msg, Some(self.attachment_sid), false)?;
+            }
+            WindowEvent::MouseWheel {
+                delta: MouseScrollDelta::LineDelta(x, y),
+                phase: TouchPhase::Moved,
+                ..
+            } => {
+                let msg = protocol::PointerScroll {
+                    scroll_type: protocol::pointer_scroll::ScrollType::Discrete.into(),
+                    x: x as f64,
+                    y: y as f64,
+                };
+
+                self.conn.send(msg, Some(self.attachment_sid), false)?;
+            }
+            WindowEvent::MouseWheel {
+                delta: MouseScrollDelta::PixelDelta(vector),
+                phase: TouchPhase::Moved,
+                ..
+            } => {
+                if let Some(aspect) = self.renderer.get_texture_aspect() {
+                    // Map vector to [0, 1]. (It can also be negative.)
+                    let (x, y) = (
+                        (vector.x / self.window_width as f64),
+                        (vector.y / self.window_height as f64),
+                    );
+
+                    // Stretch the space to account for letterboxing. For
+                    // example, if the video texture only takes up one third
+                    // of the screen vertically, and we scroll up one third
+                    // of the window height, the resulting vector should be [0,
+                    // -1.0].
+                    let x = x * aspect.0;
+                    let y = y * aspect.1;
+
+                    // Map to the remote virtual display.
+                    let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
+                    let msg = protocol::PointerScroll {
+                        scroll_type: protocol::pointer_scroll::ScrollType::Continuous.into(),
+                        x: x * remote_size.width as f64,
+                        y: y * remote_size.height as f64,
+                    };
+
+                    self.conn.send(msg, Some(self.attachment_sid), false)?;
+                }
+            }
+            _ => (),
+        }
+
+        Ok(true)
+    }
+
+    fn handle_app_event(&mut self, event: AppEvent) -> anyhow::Result<bool> {
         if tracing::event_enabled!(tracing::Level::TRACE) {
             let event_debug = match event {
-                Event::UserEvent(AppEvent::StreamMessage(_, ref msg)) => {
+                AppEvent::StreamMessage(_, ref msg) => {
                     format!("StreamMessage({})", msg)
                 }
-                Event::UserEvent(AppEvent::Datagram(ref msg)) => format!("Datagram({})", msg),
+                AppEvent::Datagram(ref msg) => format!("Datagram({})", msg),
                 _ => format!("{:?}", event),
             };
+
             trace!(event = event_debug, "handling event");
         }
 
-        self.renderer.handle_event(&event)?;
-
         match event {
-            Event::UserEvent(AppEvent::ConnectionClosed) => {
+            AppEvent::ConnectionClosed => {
                 bail!("connection closed unexpectedly")
             }
-            Event::UserEvent(AppEvent::StreamMessage(_, msg)) => match msg {
+            AppEvent::StreamMessage(_, msg) => match msg {
                 protocol::MessageType::SessionEnded(_) => {
                     if !self.exiting {
                         info!("session ended by server");
@@ -230,7 +501,7 @@ impl App {
                 }
                 _ => bail!("unexpected message: {:?}", msg),
             },
-            Event::UserEvent(AppEvent::StreamClosed(sid)) => {
+            AppEvent::StreamClosed(sid) => {
                 if sid == self.attachment_sid {
                     if self.exiting {
                         return Ok(false);
@@ -257,7 +528,7 @@ impl App {
                     }
                 }
             }
-            Event::UserEvent(AppEvent::Datagram(msg)) => match msg {
+            AppEvent::Datagram(msg) => match msg {
                 protocol::MessageType::VideoChunk(chunk) => {
                     self.last_frame_received = time::Instant::now();
 
@@ -305,331 +576,111 @@ impl App {
                 }
                 _ => bail!("unexpected datagram: {}", msg),
             },
-            Event::UserEvent(AppEvent::VideoStreamReady(texture, params)) => {
+            AppEvent::VideoStreamReady(texture, params) => {
                 self.renderer.bind_video_texture(texture, params)?;
             }
-            Event::UserEvent(AppEvent::VideoFrameAvailable) => {
+            AppEvent::VideoFrameAvailable => {
                 if self.video_stream.prepare_frame()? {
                     self.window.request_redraw();
                 }
             }
-            Event::NewEvents(_) => {
-                if self.next_frame.elapsed() > time::Duration::ZERO {
-                    self.window.request_redraw();
-                }
+        }
 
-                if self.last_keepalive.elapsed() > time::Duration::from_secs(1) {
-                    self.conn
-                        .send(protocol::KeepAlive {}, Some(self.attachment_sid), false)?;
-                    self.last_keepalive = time::Instant::now();
-                }
+        Ok(true)
+    }
 
-                let last_frame = self.last_frame_received.elapsed();
-                if last_frame > time::Duration::from_secs(1) {
-                    if last_frame > INIT_TIMEOUT {
-                        // TODO: this fires when we've tabbed away.
-                        bail!("timed out waiting for video frames");
-                    } else {
-                        self.flash.set_message("waiting for server...");
-                    }
-                }
+    fn idle(&mut self) -> anyhow::Result<bool> {
+        if self.next_frame.elapsed() > time::Duration::ZERO {
+            self.window.request_redraw();
+        }
 
-                // Debounced processing of the resize event.
-                if self.resize_cooldown.is_some()
-                    && self.resize_cooldown.unwrap().elapsed() > time::Duration::ZERO
+        if self.last_keepalive.elapsed() > time::Duration::from_secs(1) {
+            self.conn
+                .send(protocol::KeepAlive {}, Some(self.attachment_sid), false)?;
+            self.last_keepalive = time::Instant::now();
+        }
+
+        let last_frame = self.last_frame_received.elapsed();
+        if last_frame > time::Duration::from_secs(1) {
+            if last_frame > INIT_TIMEOUT {
+                // TODO: this fires when we've tabbed away.
+                bail!("timed out waiting for video frames");
+            } else {
+                self.flash.set_message("waiting for server...");
+            }
+        }
+
+        // Debounced processing of the resize event.
+        if self.resize_cooldown.is_some()
+            && self.resize_cooldown.unwrap().elapsed() > time::Duration::ZERO
+        {
+            let size = self.window.inner_size();
+            let scale_factor = self.window.scale_factor();
+
+            if size.width != self.window_width
+                || size.height != self.window_height
+                || scale_factor != self.window_ui_scale
+            {
+                debug!(
+                    width = size.width,
+                    height = size.height,
+                    scale_factor,
+                    "window resized"
+                );
+
+                self.window_width = size.width;
+                self.window_height = size.height;
+                self.window_ui_scale = scale_factor;
+
+                let current_streaming_res = self
+                    .attachment
+                    .as_ref()
+                    .and_then(|a| a.streaming_resolution.clone());
+                let remote_scale = self.remote_display_params.ui_scale.as_ref().unwrap();
+
+                let desired_ui_scale = determine_ui_scale(self.window.scale_factor());
+                let desired_streaming_res = Some(determine_resolution(
+                    self.configured_resolution,
+                    self.window_width,
+                    self.window_height,
+                ));
+
+                // Update the session to match our desired resolution or
+                // scale. Note that this is skipped if there is no
+                // current attachment (and `current_streaming_res` is
+                // None).
+                if desired_streaming_res != current_streaming_res
+                    || desired_ui_scale != *remote_scale
                 {
-                    let size = self.window.inner_size();
-                    let scale_factor = self.window.scale_factor();
+                    debug!(
+                        "resizing session to {}x{}@{} (scale: {})",
+                        desired_streaming_res.as_ref().unwrap().width,
+                        desired_streaming_res.as_ref().unwrap().height,
+                        self.configured_framerate,
+                        desired_ui_scale.numerator as f64 / desired_ui_scale.denominator as f64
+                    );
 
-                    if size.width != self.window_width
-                        || size.height != self.window_height
-                        || scale_factor != self.window_ui_scale
-                    {
-                        debug!(
-                            width = size.width,
-                            height = size.height,
-                            scale_factor,
-                            "window resized"
-                        );
+                    self.flash.set_message("resizing...");
 
-                        self.window_width = size.width;
-                        self.window_height = size.height;
-                        self.window_ui_scale = scale_factor;
-
-                        let current_streaming_res = self
-                            .attachment
-                            .as_ref()
-                            .and_then(|a| a.streaming_resolution.clone());
-                        let remote_scale = self.remote_display_params.ui_scale.as_ref().unwrap();
-
-                        let desired_ui_scale = determine_ui_scale(self.window.scale_factor());
-                        let desired_streaming_res = Some(determine_resolution(
-                            self.configured_resolution,
-                            self.window_width,
-                            self.window_height,
-                        ));
-
-                        // Update the session to match our desired resolution or
-                        // scale. Note that this is skipped if there is no
-                        // current attachment (and `current_streaming_res` is
-                        // None).
-                        if desired_streaming_res != current_streaming_res
-                            || desired_ui_scale != *remote_scale
-                        {
-                            debug!(
-                                "resizing session to {}x{}@{} (scale: {})",
-                                desired_streaming_res.as_ref().unwrap().width,
-                                desired_streaming_res.as_ref().unwrap().height,
-                                self.configured_framerate,
-                                desired_ui_scale.numerator as f64
-                                    / desired_ui_scale.denominator as f64
-                            );
-
-                            self.flash.set_message("resizing...");
-
-                            // This will trigger a new attachment at the new
-                            // resolution once the server updates and notifies
-                            // us.
-                            self.conn.send(
-                                protocol::UpdateSession {
-                                    session_id: self.session_id,
-                                    display_params: Some(protocol::VirtualDisplayParameters {
-                                        resolution: desired_streaming_res,
-                                        framerate_hz: self.configured_framerate,
-                                        ui_scale: Some(desired_ui_scale),
-                                    }),
-                                },
-                                None,
-                                false,
-                            )?;
-                        }
-                    }
-
-                    self.resize_cooldown = None;
+                    // This will trigger a new attachment at the new
+                    // resolution once the server updates and notifies
+                    // us.
+                    self.conn.send(
+                        protocol::UpdateSession {
+                            session_id: self.session_id,
+                            display_params: Some(protocol::VirtualDisplayParameters {
+                                resolution: desired_streaming_res,
+                                framerate_hz: self.configured_framerate,
+                                ui_scale: Some(desired_ui_scale),
+                            }),
+                        },
+                        None,
+                        false,
+                    )?;
                 }
             }
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::RedrawRequested => {
-                    self.video_stream.prepare_frame()?;
-                    self.video_stream.mark_frame_rendered();
 
-                    if !self.minimized && self.video_stream.is_ready() {
-                        unsafe {
-                            self.renderer.render(|ui| {
-                                self.flash.build(ui)?;
-                                if let Some(ref mut overlay) = self.overlay {
-                                    overlay.build(ui)?;
-                                }
-
-                                Ok(())
-                            })?;
-                        };
-                    }
-
-                    self.next_frame = time::Instant::now() + MAX_FRAME_TIME;
-                }
-                WindowEvent::CloseRequested => self.detach()?,
-                WindowEvent::Resized(size) => {
-                    if size.width == 0 || size.height == 0 {
-                        self.minimized = true;
-                    } else {
-                        debug!("resize event: {}x{}", size.width, size.height);
-                        if size.width != self.window_width || size.height != self.window_height {
-                            if let Some(ref mut overlay) = self.overlay {
-                                overlay.reposition();
-                            }
-
-                            // Trigger a stream resize, but debounce first.
-                            self.resize_cooldown = Some(time::Instant::now() + RESIZE_COOLDOWN);
-                        }
-
-                        self.minimized = false;
-                    }
-                }
-                WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                    debug!("window scale factor changed to {}", scale_factor);
-
-                    // Winit sends us a Resized event, immediately after this
-                    // one, with the new physical resolution.
-                }
-                WindowEvent::ModifiersChanged(modifiers) => {
-                    self.cursor_modifiers = modifiers.state();
-                }
-                WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            physical_key: winit::keyboard::PhysicalKey::Code(code),
-                            logical_key,
-                            state,
-                            repeat,
-                            ..
-                        },
-                    ..
-                } => {
-                    use protocol::keyboard_input::*;
-
-                    if state == ElementState::Pressed
-                        && logical_key == winit::keyboard::Key::Character("d".into())
-                        && self.cursor_modifiers.control_key()
-                    {
-                        self.detach()?;
-                    } else {
-                        let char = match logical_key {
-                            winit::keyboard::Key::Character(text) => {
-                                text.chars().next().unwrap() as u32
-                            }
-                            _ => 0,
-                        };
-
-                        let state = match state {
-                            _ if repeat => KeyState::Repeat,
-                            ElementState::Pressed => KeyState::Pressed,
-                            ElementState::Released => KeyState::Released,
-                        };
-
-                        let key = winit_key_to_proto(code);
-                        if key == protocol::keyboard_input::Key::Unknown {
-                            debug!("unknown key: {:?}", code);
-                        } else {
-                            let msg = protocol::KeyboardInput {
-                                key: key.into(),
-                                state: state.into(),
-                                char,
-                            };
-
-                            self.conn.send(msg, Some(self.attachment_sid), false)?;
-                        }
-                    }
-                }
-                WindowEvent::CursorMoved { position, .. } => {
-                    let new_position = self.renderer.get_texture_aspect().and_then(|aspect| {
-                        // Calculate coordinates in [-1.0, 1.0];
-                        let (clip_x, clip_y) = (
-                            (position.x / self.window_width as f64) * 2.0 - 1.0,
-                            (position.y / self.window_height as f64) * 2.0 - 1.0,
-                        );
-
-                        // Stretch the space to account for letterboxing.
-                        let clip_x = clip_x * aspect.0;
-                        let clip_y = clip_y * aspect.1;
-
-                        // In the letterbox.
-                        if clip_x.abs() > 1.0 || clip_y.abs() > 1.0 {
-                            return None;
-                        }
-
-                        // Convert to texture coordinates.
-                        let x = (clip_x + 1.0) / 2.0;
-                        let y = (clip_y + 1.0) / 2.0;
-
-                        // Convert the position to physical coordinates in the remote display.
-                        let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
-                        let cursor_x = x * remote_size.width as f64;
-                        let cursor_y = y * remote_size.height as f64;
-
-                        Some((cursor_x, cursor_y))
-                    });
-
-                    if let Some((cursor_x, cursor_y)) = new_position {
-                        let msg = protocol::PointerMotion {
-                            x: cursor_x,
-                            y: cursor_y,
-                        };
-
-                        self.conn.send(msg, Some(self.attachment_sid), false)?;
-
-                        if new_position.is_some() && self.cursor_pos.is_none() {
-                            let msg = protocol::PointerEntered {};
-                            self.conn.send(msg, Some(self.attachment_sid), false)?;
-                        } else if new_position.is_none() && self.cursor_pos.is_some() {
-                            let msg = protocol::PointerLeft {};
-                            self.conn.send(msg, Some(self.attachment_sid), false)?;
-                        }
-
-                        self.cursor_pos = new_position;
-                    }
-                }
-                WindowEvent::MouseInput { state, button, .. } => {
-                    use protocol::pointer_input::*;
-
-                    if self.cursor_pos.is_none() {
-                        return Ok(true);
-                    }
-
-                    let button = match button {
-                        winit::event::MouseButton::Left => Button::Left,
-                        winit::event::MouseButton::Right => Button::Right,
-                        winit::event::MouseButton::Middle => Button::Middle,
-                        winit::event::MouseButton::Back => Button::Back,
-                        winit::event::MouseButton::Forward => Button::Forward,
-                        winit::event::MouseButton::Other(id) => {
-                            debug!("skipping unknown mouse button: {}", id);
-                            return Ok(true);
-                        }
-                    };
-
-                    let state = match state {
-                        ElementState::Pressed => ButtonState::Pressed,
-                        ElementState::Released => ButtonState::Released,
-                    };
-
-                    let (cursor_x, cursor_y) = self.cursor_pos.unwrap();
-                    let msg = protocol::PointerInput {
-                        button: button.into(),
-                        state: state.into(),
-                        x: cursor_x,
-                        y: cursor_y,
-                    };
-
-                    self.conn.send(msg, Some(self.attachment_sid), false)?;
-                }
-                WindowEvent::MouseWheel {
-                    delta: MouseScrollDelta::LineDelta(x, y),
-                    phase: TouchPhase::Moved,
-                    ..
-                } => {
-                    let msg = protocol::PointerScroll {
-                        scroll_type: protocol::pointer_scroll::ScrollType::Discrete.into(),
-                        x: x as f64,
-                        y: y as f64,
-                    };
-
-                    self.conn.send(msg, Some(self.attachment_sid), false)?;
-                }
-                WindowEvent::MouseWheel {
-                    delta: MouseScrollDelta::PixelDelta(vector),
-                    phase: TouchPhase::Moved,
-                    ..
-                } => {
-                    if let Some(aspect) = self.renderer.get_texture_aspect() {
-                        // Map vector to [0, 1]. (It can also be negative.)
-                        let (x, y) = (
-                            (vector.x / self.window_width as f64),
-                            (vector.y / self.window_height as f64),
-                        );
-
-                        // Stretch the space to account for letterboxing. For
-                        // example, if the video texture only takes up one third
-                        // of the screen vertically, and we scroll up one third
-                        // of the window height, the resulting vector should be [0,
-                        // -1.0].
-                        let x = x * aspect.0;
-                        let y = y * aspect.1;
-
-                        // Map to the remote virtual display.
-                        let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
-                        let msg = protocol::PointerScroll {
-                            scroll_type: protocol::pointer_scroll::ScrollType::Continuous.into(),
-                            x: x * remote_size.width as f64,
-                            y: y * remote_size.height as f64,
-                        };
-
-                        self.conn.send(msg, Some(self.attachment_sid), false)?;
-                    }
-                }
-                _ => trace!("window event: {:?}", event),
-            },
-            _ => (),
+            self.resize_cooldown = None;
         }
 
         Ok(true)
@@ -714,7 +765,7 @@ fn main() -> Result<()> {
         }
     }
 
-    let event_loop: EventLoop<AppEvent> = EventLoopBuilder::with_user_event().build()?;
+    let event_loop: EventLoop<AppEvent> = EventLoop::with_user_event().build()?;
 
     let target = args.app.unwrap();
     let mut matched = find_sessions(sessions, &target);
@@ -727,15 +778,15 @@ fn main() -> Result<()> {
         bail!("no session found matching {:?}", target);
     }
 
-    let window = if args.fullscreen {
-        WindowBuilder::new()
+    let window_attr = if args.fullscreen {
+        Window::default_attributes()
             .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
-            .build(&event_loop)?
     } else {
-        WindowBuilder::new().build(&event_loop)?
+        Window::default_attributes()
     };
 
-    let window = Rc::new(window);
+    #[allow(deprecated)]
+    let window = Arc::new(event_loop.create_window(window_attr)?);
     let window_size = window.inner_size();
     let window_ui_scale = window.scale_factor();
 
@@ -794,7 +845,10 @@ fn main() -> Result<()> {
     let remote_display_params = session.display_params.unwrap();
     let streaming_resolution = remote_display_params.resolution.clone().unwrap();
 
-    let vk = Arc::new(vulkan::VkContext::new(&window, cfg!(debug_assertions))?);
+    let vk = Arc::new(vulkan::VkContext::new(
+        window.clone(),
+        cfg!(debug_assertions),
+    )?);
     let renderer = Renderer::new(vk.clone(), window.clone())?;
 
     debug!("attaching session {:?}", session.session_id);
@@ -828,7 +882,7 @@ fn main() -> Result<()> {
         None
     };
 
-    let mut app = Some(App {
+    let mut app = App {
         configured_codec,
         configured_framerate: args.framerate,
         configured_resolution: args.resolution,
@@ -870,29 +924,16 @@ fn main() -> Result<()> {
         overlay,
 
         _vk: vk,
-    });
+    };
 
-    event_loop.run(move |event, el| {
-        if app.is_some() {
-            match app.as_mut().unwrap().handle(event) {
-                Ok(true) => {
-                    el.set_control_flow(ControlFlow::WaitUntil(app.as_ref().unwrap().next_frame));
-                    return; // continue
-                }
-                Ok(false) => el.exit(),
-                Err(e) => {
-                    error!("{:#}", e);
-                    el.exit()
-                }
-            }
+    event_loop.run_app(&mut app)?;
 
-            let app = app.take().unwrap(); // Drop everything.
-            match app.conn.close() {
-                Ok(_) => (),
-                Err(e) => error!("failed to shutdown connection cleanly: {:#}", e),
-            }
-        }
-    })?;
+    // Close the connection.
+    let App { conn, .. } = app;
+    match conn.close() {
+        Ok(_) => (),
+        Err(e) => error!("failed to shutdown connection cleanly: {:#}", e),
+    }
 
     Ok(())
 }

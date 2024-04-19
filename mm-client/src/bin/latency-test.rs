@@ -10,10 +10,7 @@ use clap::Parser;
 use mm_client::{conn::*, video::*, vulkan::*};
 use mm_protocol as protocol;
 use tracing::{debug, error, warn};
-use winit::{
-    event::Event,
-    event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
-};
+use winit::event_loop::EventLoop;
 
 const APP_DIMENSION: u32 = 256;
 
@@ -121,11 +118,12 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Invisible window.
-    let event_loop: EventLoop<AppEvent> = EventLoopBuilder::with_user_event().build()?;
-    let window = winit::window::WindowBuilder::new()
-        .with_visible(false)
-        .build(&event_loop)?;
-    let vk = Arc::new(VkContext::new(&window, cfg!(debug_assertions))?);
+    let event_loop: EventLoop<AppEvent> = EventLoop::with_user_event().build()?;
+    let attr = winit::window::Window::default_attributes().with_visible(false);
+
+    #[allow(deprecated)]
+    let window = Arc::new(event_loop.create_window(attr)?);
+    let vk = Arc::new(VkContext::new(window.clone(), cfg!(debug_assertions))?);
 
     let codec = match args.codec.as_deref() {
         Some("h264") => protocol::VideoCodec::H264,
@@ -213,21 +211,7 @@ fn main() -> anyhow::Result<()> {
         vk: vk.clone(),
     };
 
-    event_loop.run(|ev, el| {
-        el.set_control_flow(ControlFlow::Poll);
-
-        match app.handle(ev) {
-            Ok(true) => (),
-            Ok(false) => {
-                debug!("done!");
-                el.exit();
-            }
-            Err(e) => {
-                error!("error: {}", e);
-                el.exit();
-            }
-        }
-    })?;
+    event_loop.run_app(&mut app)?;
 
     drop(app.stream);
     unsafe {
@@ -243,6 +227,8 @@ fn main() -> anyhow::Result<()> {
 
     app.conn
         .send(protocol::EndSession { session_id: sess }, None, true)?;
+
+    // Give the server a chance to clean up.
     std::thread::sleep(time::Duration::from_millis(1000));
 
     debug!("disconnecting...");
@@ -263,89 +249,111 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+impl winit::application::ApplicationHandler<AppEvent> for LatencyTest {
+    fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {}
+
+    fn window_event(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        _event: winit::event::WindowEvent,
+    ) {
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        if self.last_keepalive.elapsed() > time::Duration::from_secs(1) {
+            self.conn
+                .send(protocol::KeepAlive {}, Some(self.attachment_sid), false)
+                .unwrap();
+            self.last_keepalive = time::Instant::now();
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: AppEvent) {
+        match self.event(event) {
+            Ok(true) => (),
+            Ok(false) => event_loop.exit(),
+            Err(e) => {
+                error!("error: {}", e);
+                event_loop.exit();
+            }
+        }
+    }
+}
+
 impl LatencyTest {
-    fn handle(&mut self, ev: Event<AppEvent>) -> anyhow::Result<bool> {
-        match ev {
-            Event::UserEvent(app_event) => match app_event {
-                AppEvent::StreamMessage(sid, msg) if sid == self.attachment_sid => match msg {
-                    protocol::MessageType::Attached(protocol::Attached {
-                        session_id,
-                        attachment_id,
-                        ..
-                    }) => {
-                        if self.attachment_id.is_some() {
-                            bail!("already attached");
-                        } else {
-                            self.attachment_id = Some(sid);
-                            debug!(attachment_id, session_id, "attached to session");
-                        }
-                    }
-                    protocol::MessageType::Error(protocol::Error {
-                        err_code,
-                        error_text,
-                        ..
-                    }) => {
-                        bail!("server error: {}: {}", err_code, error_text);
-                    }
-                    msg => debug!("unexpected message: {}", msg),
-                },
-                AppEvent::Datagram(protocol::MessageType::VideoChunk(chunk)) => {
-                    if self.first_frame_recvd.is_none() {
-                        self.first_frame_recvd = Some(time::Instant::now());
-                    }
-
-                    if self.stream_seq.is_none() && self.attachment_id.is_some() {
-                        self.stream_seq = Some(chunk.stream_seq);
-                        self.stream.reset(
-                            self.attachment_id.unwrap(),
-                            chunk.stream_seq,
-                            APP_DIMENSION,
-                            APP_DIMENSION,
-                            self.codec,
-                        )?;
-                    }
-
-                    self.total_video_bytes += chunk.data.len();
-                    self.stream.recv_chunk(chunk)?;
-                }
-                AppEvent::Datagram(protocol::MessageType::AudioChunk(_)) => (),
-                AppEvent::VideoStreamReady(tex, params) => {
-                    assert_eq!(params.width, 256);
-                    assert_eq!(params.height, 256);
-
-                    self.video_texture = Some(tex);
-                }
-                AppEvent::VideoFrameAvailable => {
-                    if self.stream.prepare_frame()? {
-                        self.frames_recvd += 1;
-
-                        match self.frames_recvd.cmp(&100) {
-                            std::cmp::Ordering::Less => (),
-                            std::cmp::Ordering::Equal => {
-                                debug!("starting test...");
-                                self.send_space()?;
-                                self.block_started = time::Instant::now();
-                                self.next_block = 0;
-                            }
-                            std::cmp::Ordering::Greater => {
-                                self.check_frame()?;
-                                if self.next_block >= self.num_tests {
-                                    return Ok(false);
-                                }
-                            }
-                        }
+    fn event(&mut self, event: AppEvent) -> anyhow::Result<bool> {
+        match event {
+            AppEvent::StreamMessage(sid, msg) if sid == self.attachment_sid => match msg {
+                protocol::MessageType::Attached(protocol::Attached {
+                    session_id,
+                    attachment_id,
+                    ..
+                }) => {
+                    if self.attachment_id.is_some() {
+                        bail!("already attached to session");
+                    } else {
+                        self.attachment_id = Some(sid);
+                        debug!(attachment_id, session_id, "attached to session");
                     }
                 }
-                ev => debug!("unxpected event: {:?}", ev),
+                protocol::MessageType::Error(protocol::Error {
+                    err_code,
+                    error_text,
+                    ..
+                }) => {
+                    bail!("server error: {}: {}", err_code, error_text);
+                }
+                msg => debug!("unexpected message: {}", msg),
             },
-            Event::NewEvents(_) => {
-                if self.last_keepalive.elapsed() > time::Duration::from_secs(1) {
-                    self.conn
-                        .send(protocol::KeepAlive {}, Some(self.attachment_sid), false)?;
-                    self.last_keepalive = time::Instant::now();
+            AppEvent::Datagram(protocol::MessageType::VideoChunk(chunk)) => {
+                if self.first_frame_recvd.is_none() {
+                    self.first_frame_recvd = Some(time::Instant::now());
+                }
+
+                if self.stream_seq.is_none() && self.attachment_id.is_some() {
+                    self.stream_seq = Some(chunk.stream_seq);
+                    self.stream.reset(
+                        self.attachment_id.unwrap(),
+                        chunk.stream_seq,
+                        APP_DIMENSION,
+                        APP_DIMENSION,
+                        self.codec,
+                    )?;
+                }
+
+                self.total_video_bytes += chunk.data.len();
+                self.stream.recv_chunk(chunk)?;
+            }
+            AppEvent::Datagram(protocol::MessageType::AudioChunk(_)) => (),
+            AppEvent::VideoStreamReady(tex, params) => {
+                assert_eq!(params.width, 256);
+                assert_eq!(params.height, 256);
+
+                self.video_texture = Some(tex);
+            }
+            AppEvent::VideoFrameAvailable => {
+                if self.stream.prepare_frame()? {
+                    self.frames_recvd += 1;
+
+                    match self.frames_recvd.cmp(&100) {
+                        std::cmp::Ordering::Less => (),
+                        std::cmp::Ordering::Equal => {
+                            debug!("starting test...");
+                            self.send_space()?;
+                            self.block_started = time::Instant::now();
+                            self.next_block = 0;
+                        }
+                        std::cmp::Ordering::Greater => {
+                            self.check_frame()?;
+                            if self.next_block >= self.num_tests {
+                                return Ok(false);
+                            }
+                        }
+                    }
                 }
             }
-            _ => (),
+            ev => debug!("unxpected event: {:?}", ev),
         }
 
         Ok(true)

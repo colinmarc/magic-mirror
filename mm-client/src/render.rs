@@ -538,27 +538,25 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn handle_event<T>(&mut self, event: &winit::event::Event<T>) -> anyhow::Result<()> {
+    pub fn handle_event(&mut self, event: &winit::event::WindowEvent) -> anyhow::Result<()> {
         let now = time::Instant::now();
         self.imgui.io_mut().update_delta_time(now - self.imgui_time);
         self.imgui_time = now;
 
+        let wrapped: winit::event::Event<()> = winit::event::Event::WindowEvent {
+            window_id: self.window.id(),
+            event: event.clone(),
+        };
+
         self.imgui_platform
-            .handle_event(self.imgui.io_mut(), &self.window, event);
+            .handle_event(self.imgui.io_mut(), self.window.as_ref(), &wrapped);
 
         match event {
-            winit::event::Event::WindowEvent { window_id, event }
-                if *window_id == self.window.id() =>
-            {
-                match event {
-                    winit::event::WindowEvent::Resized(size) => {
-                        self.resize(size.width, size.height);
-                    }
-                    winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                        self.scale_factor_changed(*scale_factor)?;
-                    }
-                    _ => (),
-                }
+            winit::event::WindowEvent::Resized(size) => {
+                self.resize(size.width, size.height);
+            }
+            winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.scale_factor_changed(*scale_factor)?;
             }
             _ => (),
         }
