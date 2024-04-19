@@ -583,6 +583,19 @@ fn attach(
                                 outgoing_dgrams.send(msg.into()).ok();
                             }
                     }
+                    Ok(CompositorEvent::CursorUpdate{ image, icon, hotspot_x, hotspot_y }) => {
+                        use protocol::update_cursor::CursorIcon;
+                        let icon: CursorIcon = icon.map(cursor_icon_to_proto).unwrap_or(CursorIcon::None);
+
+                        let msg = protocol::UpdateCursor {
+                            image: image.unwrap_or_default(),
+                            icon: icon.into(),
+                            hotspot_x,
+                            hotspot_y,
+                        };
+
+                        outgoing.send(msg.into()).ok();
+                    }
                     Err(e) => {
                         // Mark the session defunct. It'll get GC'd.
                         error!("error in attach handler: {:#}", e);
@@ -772,6 +785,47 @@ fn key_to_evdev(key: protocol::keyboard_input::Key) -> Option<u32> {
         | Key::NumpadMemoryStore
         | Key::NumpadMemorySubtract => None,
         Key::Unknown => None,
+    }
+}
+
+fn cursor_icon_to_proto(icon: cursor_icon::CursorIcon) -> protocol::update_cursor::CursorIcon {
+    use protocol::update_cursor::CursorIcon;
+
+    match icon {
+        cursor_icon::CursorIcon::ContextMenu => CursorIcon::ContextMenu,
+        cursor_icon::CursorIcon::Help => CursorIcon::Help,
+        cursor_icon::CursorIcon::Pointer => CursorIcon::Pointer,
+        cursor_icon::CursorIcon::Progress => CursorIcon::Progress,
+        cursor_icon::CursorIcon::Wait => CursorIcon::Wait,
+        cursor_icon::CursorIcon::Cell => CursorIcon::Cell,
+        cursor_icon::CursorIcon::Crosshair => CursorIcon::Crosshair,
+        cursor_icon::CursorIcon::Text => CursorIcon::Text,
+        cursor_icon::CursorIcon::VerticalText => CursorIcon::VerticalText,
+        cursor_icon::CursorIcon::Alias => CursorIcon::Alias,
+        cursor_icon::CursorIcon::Copy => CursorIcon::Copy,
+        cursor_icon::CursorIcon::Move => CursorIcon::Move,
+        cursor_icon::CursorIcon::NoDrop => CursorIcon::NoDrop,
+        cursor_icon::CursorIcon::NotAllowed => CursorIcon::NotAllowed,
+        cursor_icon::CursorIcon::Grab => CursorIcon::Grab,
+        cursor_icon::CursorIcon::Grabbing => CursorIcon::Grabbing,
+        cursor_icon::CursorIcon::EResize => CursorIcon::EResize,
+        cursor_icon::CursorIcon::NResize => CursorIcon::NResize,
+        cursor_icon::CursorIcon::NeResize => CursorIcon::NeResize,
+        cursor_icon::CursorIcon::NwResize => CursorIcon::NwResize,
+        cursor_icon::CursorIcon::SResize => CursorIcon::SResize,
+        cursor_icon::CursorIcon::SeResize => CursorIcon::SeResize,
+        cursor_icon::CursorIcon::SwResize => CursorIcon::SwResize,
+        cursor_icon::CursorIcon::WResize => CursorIcon::WResize,
+        cursor_icon::CursorIcon::EwResize => CursorIcon::EwResize,
+        cursor_icon::CursorIcon::NsResize => CursorIcon::NsResize,
+        cursor_icon::CursorIcon::NeswResize => CursorIcon::NeswResize,
+        cursor_icon::CursorIcon::NwseResize => CursorIcon::NwseResize,
+        cursor_icon::CursorIcon::ColResize => CursorIcon::ColResize,
+        cursor_icon::CursorIcon::RowResize => CursorIcon::RowResize,
+        cursor_icon::CursorIcon::AllScroll => CursorIcon::AllScroll,
+        cursor_icon::CursorIcon::ZoomIn => CursorIcon::ZoomIn,
+        cursor_icon::CursorIcon::ZoomOut => CursorIcon::ZoomOut,
+        _ => CursorIcon::Default,
     }
 }
 

@@ -80,5 +80,11 @@ pub enum CompositorEvent {
         ts: u64,
         frame: bytes::Bytes,
     },
+    CursorUpdate {
+        image: Option<bytes::Bytes>,
+        icon: Option<cursor_icon::CursorIcon>,
+        hotspot_x: u32,
+        hotspot_y: u32,
+    },
     Shutdown,
 }

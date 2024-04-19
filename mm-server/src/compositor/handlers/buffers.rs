@@ -9,7 +9,7 @@ use smithay::{
     },
     wayland::{buffer, dmabuf, shm},
 };
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 
 use super::State;
 
@@ -65,10 +65,16 @@ pub fn buffer_commit(
     trace!(
         surface = surface.id().protocol_id(),
         buffer = buffer.id().protocol_id(),
+        is_cursor = state.cursor_surface.as_ref() == Some(surface),
         "committing buffer"
     );
 
-    tracy_client::frame_mark();
+    if state.cursor_surface.as_ref() == Some(surface) {
+        debug!(surface = surface.id().protocol_id(), "marking cursor dirty");
+        state.cursor_dirty = true;
+    } else {
+        tracy_client::frame_mark();
+    }
 
     match dmabuf::get_dmabuf(buffer) {
         Ok(dmabuf) => {

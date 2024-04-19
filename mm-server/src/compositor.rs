@@ -24,8 +24,8 @@ use crossbeam_channel as crossbeam;
 use lazy_static::*;
 use pathsearch::find_executable_in_path;
 use smithay::{
-    reexports::wayland_server::{self, Resource},
-    wayland::xwayland_shell,
+    reexports::wayland_server::{self, protocol::wl_surface, Resource},
+    wayland::{compositor, xwayland_shell},
     xwayland,
 };
 use tracing::{debug, info, trace, trace_span, warn};
@@ -130,6 +130,10 @@ pub struct State {
     seat: smithay::input::Seat<Self>,
     keyboard_handle: smithay::input::keyboard::KeyboardHandle<Self>,
     pointer_handle: smithay::input::pointer::PointerHandle<Self>,
+
+    new_cursor_status: Option<smithay::input::pointer::CursorImageStatus>,
+    cursor_surface: Option<wl_surface::WlSurface>,
+    cursor_dirty: bool,
 
     xwayland_shell_state: xwayland_shell::XWaylandShellState,
     xwm: Option<xwayland::xwm::X11Wm>,
@@ -241,6 +245,11 @@ impl Compositor {
             seat,
             keyboard_handle,
             pointer_handle,
+
+            new_cursor_status: None,
+            cursor_surface: None,
+            cursor_dirty: false,
+
             xwayland_shell_state,
             xwm: None,
             xwindows_pending_map_on_surface: Vec::new(),
@@ -468,6 +477,69 @@ impl Compositor {
                             timer.set_timeout_interval(&time::Duration::from_nanos(
                                 1_000_000_000 / self.state.display_params.framerate as u64,
                             ))?;
+                        }
+
+                        // Check if the cursor was updated.
+                        if let Some(status) = self.state.new_cursor_status.take() {
+                            match status {
+                                smithay::input::pointer::CursorImageStatus::Hidden => {
+                                    self.attachments.dispatch(CompositorEvent::CursorUpdate {
+                                        image: None,
+                                        icon: None,
+                                        hotspot_x: 0,
+                                        hotspot_y: 0,
+                                    });
+                                }
+                                smithay::input::pointer::CursorImageStatus::Named(icon) => {
+                                    self.attachments.dispatch(CompositorEvent::CursorUpdate {
+                                        image: None,
+                                        icon: Some(icon),
+                                        hotspot_x: 0,
+                                        hotspot_y: 0,
+                                    });
+                                }
+                                smithay::input::pointer::CursorImageStatus::Surface(surf) => {
+                                    match self.state.cursor_surface.replace(surf.clone()) {
+                                        Some(old) if old != surf => {
+                                            // From the spec: "when the use as a
+                                            // cursor ends, the wl_surface is
+                                            // unmapped".
+                                            self.state.texture_manager.remove_surface(&old)?;
+                                        }
+                                        _ => (),
+                                    }
+
+                                    self.state.cursor_dirty = true;
+                                }
+                            }
+                        }
+
+                        if self.state.cursor_dirty && self.state.cursor_surface.is_some() {
+                            let surf = self.state.cursor_surface.as_ref().unwrap();
+                            if let Some(tex) = self.state.texture_manager.get_mut(surf) {
+                                let attachments = self.attachments.clone();
+
+                                video::texture_to_png(tex, move |image| {
+                                    attachments.dispatch(CompositorEvent::CursorUpdate {
+                                        image: Some(bytes::Bytes::copy_from_slice(image)),
+                                        icon: Some(cursor_icon::CursorIcon::Default),
+                                        hotspot_x: 0, // TODO
+                                        hotspot_y: 0, // TODO
+                                    });
+                                });
+
+                                self.state.cursor_dirty = false;
+                                compositor::with_states(surf, |states| {
+                                    let mut attrs = states
+                                        .cached_state
+                                        .current::<smithay::wayland::compositor::SurfaceAttributes>(
+                                    );
+
+                                    for callback in attrs.frame_callbacks.drain(..) {
+                                        callback.done(EPOCH.elapsed().as_millis() as u32);
+                                    }
+                                });
+                            }
                         }
 
                         self.render().context("render failed")?;

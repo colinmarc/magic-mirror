@@ -116,6 +116,7 @@ message_types! {
     63 => PointerMotion,
     64 => PointerInput,
     65 => PointerScroll,
+    66 => UpdateCursor,
 }
 
 /// Reads a header-prefixed message from a byte slice, and returns the number

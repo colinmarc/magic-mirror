@@ -7,6 +7,7 @@ use std::{rc::Rc, sync::Arc};
 use anyhow::anyhow;
 use ash::vk;
 use hashbrown::{hash_map::Entry, HashMap};
+use image::ImageEncoder;
 use smithay::{
     backend::allocator::dmabuf,
     reexports::wayland_server::{
@@ -272,6 +273,8 @@ impl TextureManager {
     }
 
     pub fn remove_surface(&mut self, surface: &wl_surface::WlSurface) -> anyhow::Result<()> {
+        trace!(surface = surface.id().protocol_id(), "removing surface");
+
         if let Some(tex) = self.committed_surfaces.remove(surface) {
             self.free_surface_texture(tex)?;
         }
@@ -393,4 +396,67 @@ pub unsafe fn cmd_upload_shm(
 unsafe fn copy_shm(dst: &mut VkHostBuffer, src: &[u8]) {
     let dst = std::slice::from_raw_parts_mut(dst.access as *mut u8, src.len());
     dst.copy_from_slice(src);
+}
+
+pub fn texture_to_png<F>(tex: &SurfaceTexture, f: F)
+where
+    F: FnOnce(&[u8]) + Send + 'static,
+{
+    match tex {
+        SurfaceTexture::Uploaded {
+            staging_buffer,
+            buffer_params,
+            ..
+        } => {
+            // Needs to be updated if we start supporting float shm buffers.
+            assert_eq!(4, buffer_params.bpp);
+
+            // Do a copy before returning.
+            let src = unsafe {
+                std::slice::from_raw_parts_mut(
+                    staging_buffer.access as *mut u8,
+                    staging_buffer.size,
+                )
+            };
+
+            let mut buf = vec![0_u8; buffer_params.stride * buffer_params.height];
+            buf.copy_from_slice(src);
+
+            let format = buffer_params.format;
+            let width = buffer_params.width;
+            let height = buffer_params.height;
+
+            // The rest happens in a thread.
+            std::thread::spawn(move || {
+                // For png, we need rgba8 with no padding.
+                let mut out = Vec::with_capacity(width * height * 4);
+                match format {
+                    vk::Format::B8G8R8A8_UNORM => {
+                        for row in buf.chunks_exact(width * 4) {
+                            for px in row.chunks_exact(4) {
+                                let out_px = [px[2], px[1], px[0], px[3]];
+                                out.extend_from_slice(&out_px);
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+
+                let mut png = std::io::Cursor::new(Vec::new());
+                image::codecs::png::PngEncoder::new(&mut png)
+                    .write_image(
+                        &out,
+                        width as u32,
+                        height as u32,
+                        image::ExtendedColorType::Rgba8,
+                    )
+                    .unwrap();
+
+                f(&png.into_inner());
+            });
+        }
+        SurfaceTexture::Imported { .. } => {
+            todo!()
+        }
+    }
 }

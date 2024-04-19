@@ -865,3 +865,69 @@ message PointerScroll {
   double y = 2;
   ScrollType scroll_type = 3;
 }
+
+// ### 066 - Update Cursor
+//
+// This message, which must be sent by the server on the same stream as the
+// original `030 - Attach` message, indicates that the cursor image has changed
+// and the client should use the new one when the cursor is over the window.
+message UpdateCursor {
+  // Corresponds to the W3C UI specification.
+  //
+  // https://www.w3.org/TR/css-ui-3/#cursor
+  enum CursorIcon {
+    CURSOR_ICON_UNKNOWN = 0;
+    CURSOR_ICON_AUTO = 1;
+    CURSOR_ICON_DEFAULT = 2;
+    CURSOR_ICON_NONE = 3;
+
+    CURSOR_ICON_CONTEXT_MENU = 4;
+    CURSOR_ICON_HELP = 5;
+    CURSOR_ICON_POINTER = 6;
+    CURSOR_ICON_PROGRESS = 7;
+    CURSOR_ICON_WAIT = 8;
+
+    CURSOR_ICON_CELL = 9;
+    CURSOR_ICON_CROSSHAIR = 10;
+    CURSOR_ICON_TEXT = 11;
+    CURSOR_ICON_VERTICAL_TEXT = 12;
+
+    CURSOR_ICON_ALIAS = 13;
+    CURSOR_ICON_COPY = 14;
+    CURSOR_ICON_MOVE = 15;
+    CURSOR_ICON_NO_DROP = 16;
+    CURSOR_ICON_NOT_ALLOWED = 17;
+    CURSOR_ICON_GRAB = 18;
+    CURSOR_ICON_GRABBING = 19;
+
+    CURSOR_ICON_E_RESIZE = 20;
+    CURSOR_ICON_N_RESIZE = 21;
+    CURSOR_ICON_NE_RESIZE = 22;
+    CURSOR_ICON_NW_RESIZE = 23;
+    CURSOR_ICON_S_RESIZE = 24;
+    CURSOR_ICON_SE_RESIZE = 25;
+    CURSOR_ICON_SW_RESIZE = 26;
+    CURSOR_ICON_W_RESIZE = 27;
+    CURSOR_ICON_EW_RESIZE = 28;
+    CURSOR_ICON_NS_RESIZE = 29;
+    CURSOR_ICON_NESW_RESIZE = 30;
+    CURSOR_ICON_NWSE_RESIZE = 31;
+    CURSOR_ICON_COL_RESIZE = 32;
+    CURSOR_ICON_ROW_RESIZE = 33;
+    CURSOR_ICON_ALL_SCROLL = 34;
+
+    CURSOR_ICON_ZOOM_IN = 35;
+    CURSOR_ICON_ZOOM_OUT = 36;
+  }
+
+  // Required.
+  CursorIcon icon = 1;
+
+  // The cursor image, encoded as a PNG file. If set, the client should use
+  // this and use the icon field solely as a fallback.
+  bytes image = 2;
+
+  // Relates to the image, if set.
+  uint32 hotspot_x = 3;
+  uint32 hotspot_y = 4;
+}

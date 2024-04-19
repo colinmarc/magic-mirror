@@ -12,11 +12,6 @@ use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
 use ffmpeg_sys_next as ffmpeg_sys;
-use mm_client::audio;
-use mm_client::conn::ConnEvent;
-use mm_client::overlay::Overlay;
-use mm_client::video;
-use mm_client::video::VideoStreamEvent;
 use mm_protocol as protocol;
 use protocol::MessageType;
 use tracing::info;
@@ -33,10 +28,16 @@ use winit::keyboard::ModifiersState;
 use winit::window::Window;
 use winit::{event::WindowEvent, event_loop::EventLoop};
 
+use mm_client::audio;
+use mm_client::conn::ConnEvent;
 use mm_client::conn::*;
+use mm_client::cursor::*;
 use mm_client::flash::Flash;
-use mm_client::keys::winit_key_to_proto;
+use mm_client::keys::*;
+use mm_client::overlay::Overlay;
 use mm_client::render::Renderer;
+use mm_client::video;
+use mm_client::video::VideoStreamEvent;
 use mm_client::vulkan;
 
 const INIT_TIMEOUT: time::Duration = time::Duration::from_secs(10);
@@ -179,7 +180,7 @@ impl winit::application::ApplicationHandler<AppEvent> for App {
     }
 
     fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: AppEvent) {
-        let res = self.handle_app_event(event);
+        let res = self.handle_app_event(event_loop, event);
         self.exit_on_error(event_loop, res);
     }
 
@@ -435,7 +436,11 @@ impl App {
         Ok(true)
     }
 
-    fn handle_app_event(&mut self, event: AppEvent) -> anyhow::Result<bool> {
+    fn handle_app_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        event: AppEvent,
+    ) -> anyhow::Result<bool> {
         if tracing::event_enabled!(tracing::Level::TRACE) {
             let event_debug = match event {
                 AppEvent::StreamMessage(_, ref msg) => {
@@ -496,6 +501,30 @@ impl App {
                     }
                 }
                 protocol::MessageType::SessionUpdated(_) => {}
+                protocol::MessageType::UpdateCursor(protocol::UpdateCursor {
+                    icon,
+                    image,
+                    hotspot_x,
+                    hotspot_y,
+                }) => {
+                    info!(icon, image_len = image.len(), "cursor update");
+
+                    let cursor: anyhow::Result<winit::window::Cursor> = if !image.is_empty() {
+                        load_cursor_image(&image, hotspot_x, hotspot_y)
+                            .map(|src| event_loop.create_custom_cursor(src).into())
+                    } else {
+                        icon.try_into()
+                            .map(cursor_icon_from_proto)
+                            .map_err(anyhow::Error::new)
+                            .map(Into::into)
+                    };
+
+                    if let Ok(cursor) = cursor {
+                        self.window.set_cursor(cursor);
+                    } else {
+                        debug!(?icon, image_len = image.len(), "cursor update failed");
+                    }
+                }
                 protocol::MessageType::Error(e) => {
                     error!("server error: {:#}", server_error(e));
                 }

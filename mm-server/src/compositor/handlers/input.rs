@@ -20,9 +20,10 @@ impl smithay::input::SeatHandler for State {
     fn cursor_image(
         &mut self,
         _seat: &smithay::input::Seat<Self>,
-        _image: smithay::input::pointer::CursorImageStatus,
+        status: smithay::input::pointer::CursorImageStatus,
     ) {
-        debug!("cursor image changed");
+        debug!(?status, "cursor image changed");
+        self.new_cursor_status = Some(status);
     }
 
     fn focus_changed(

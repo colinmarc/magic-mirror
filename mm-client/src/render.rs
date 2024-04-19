@@ -8,7 +8,6 @@ use anyhow::{anyhow, Context, Result};
 use ash::vk;
 use cstr::cstr;
 use imgui_rs_vulkan_renderer as imgui_vulkan;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time;
 use tracing::debug;
@@ -35,7 +34,6 @@ pub struct Renderer {
     height: u32,
     scale_factor: f64,
 
-    window: Rc<winit::window::Window>,
     imgui: imgui::Context,
     imgui_platform: imgui_winit_support::WinitPlatform,
     imgui_font: font_kit::font::Font,
@@ -48,6 +46,7 @@ pub struct Renderer {
     video_texture: Option<VideoTexture>,
 
     vk: Arc<VkContext>,
+    window: Arc<winit::window::Window>,
 }
 
 struct Swapchain {
@@ -92,7 +91,7 @@ struct VideoTexture {
 }
 
 impl Renderer {
-    pub fn new(vk: Arc<VkContext>, window: Rc<winit::window::Window>) -> Result<Self> {
+    pub fn new(vk: Arc<VkContext>, window: Arc<winit::window::Window>) -> Result<Self> {
         let window_size = window.inner_size();
         let scale_factor = window.scale_factor();
 

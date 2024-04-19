@@ -4,6 +4,7 @@
 
 pub mod audio;
 pub mod conn;
+pub mod cursor;
 pub mod flash;
 pub mod font;
 pub mod keys;

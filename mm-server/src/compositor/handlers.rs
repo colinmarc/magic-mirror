@@ -74,6 +74,9 @@ impl compositor::CompositorHandler for State {
     fn destroyed(&mut self, surface: &wl_surface::WlSurface) {
         debug!("surface destroyed: {:?}", surface.id());
         self.texture_manager.remove_surface(surface).unwrap();
+        if self.cursor_surface == Some(surface.clone()) {
+            self.cursor_surface = None;
+        }
     }
 }
 

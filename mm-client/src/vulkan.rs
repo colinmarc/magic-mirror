@@ -66,6 +66,9 @@ pub struct VkContext {
     pub debug: Option<VkDebugContext>,
 
     pub tracy_context: Option<tracy_client::GpuContext>,
+
+    // Hold on to a reference to the window, so that it gets dropped last.
+    _window: Arc<winit::window::Window>,
 }
 
 impl VkDeviceInfo {
@@ -217,7 +220,7 @@ impl VkDeviceInfo {
 }
 
 impl VkContext {
-    pub fn new(window: &winit::window::Window, debug: bool) -> anyhow::Result<Self> {
+    pub fn new(window: Arc<winit::window::Window>, debug: bool) -> anyhow::Result<Self> {
         let entry = unsafe { ash::Entry::load().context("failed to load vulkan libraries!") }?;
         debug!("creating vulkan instance");
 
@@ -484,6 +487,8 @@ impl VkContext {
             decode_queue,
             debug: debug_utils,
             tracy_context,
+
+            _window: window,
         })
     }
 }

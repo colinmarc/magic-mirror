@@ -27,8 +27,8 @@ use crate::{codec::VideoCodec, vulkan::*};
 use super::{AttachedClients, DisplayParams, VideoStreamParams};
 
 pub use dmabuf::dmabuf_feedback;
-pub use textures::TextureManager;
 use textures::*;
+pub use textures::{texture_to_png, TextureManager};
 use vulkan_encode::VulkanEncoder;
 
 pub struct VkPlaneView {
