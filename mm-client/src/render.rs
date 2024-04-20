@@ -175,8 +175,8 @@ impl Renderer {
         let mut present_modes = present_modes.clone();
         present_modes.sort_by_key(|&mode| match mode {
             vk::PresentModeKHR::MAILBOX => 0,
-            vk::PresentModeKHR::IMMEDIATE => 1,
-            vk::PresentModeKHR::FIFO => 2,
+            vk::PresentModeKHR::FIFO => 1,
+            vk::PresentModeKHR::IMMEDIATE => 2,
             _ => 4,
         });
 
