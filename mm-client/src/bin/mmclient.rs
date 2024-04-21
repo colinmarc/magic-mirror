@@ -507,8 +507,6 @@ impl App {
                     hotspot_x,
                     hotspot_y,
                 }) => {
-                    info!(icon, image_len = image.len(), "cursor update");
-
                     let cursor: anyhow::Result<winit::window::Cursor> = if !image.is_empty() {
                         load_cursor_image(&image, hotspot_x, hotspot_y)
                             .map(|src| event_loop.create_custom_cursor(src).into())
@@ -519,10 +517,13 @@ impl App {
                             .map(Into::into)
                     };
 
-                    if let Ok(cursor) = cursor {
-                        self.window.set_cursor(cursor);
-                    } else {
-                        debug!(?icon, image_len = image.len(), "cursor update failed");
+                    match cursor {
+                        Ok(cursor) => {
+                            self.window.set_cursor(cursor);
+                        }
+                        Err(err) => {
+                            debug!(?err, ?icon, image_len = image.len(), "cursor update failed");
+                        }
                     }
                 }
                 protocol::MessageType::Error(e) => {

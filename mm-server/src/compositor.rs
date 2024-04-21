@@ -516,15 +516,46 @@ impl Compositor {
 
                         if self.state.cursor_dirty && self.state.cursor_surface.is_some() {
                             let surf = self.state.cursor_surface.as_ref().unwrap();
+
+                            let scale = match self.state.visible_windows().next() {
+                                Some(Window {
+                                    ty: window::SurfaceType::X11Window(_),
+                                    ..
+                                })
+                                | Some(Window {
+                                    ty: window::SurfaceType::X11Popup(_, _),
+                                    ..
+                                }) => PixelScale(window::TODO_X11_SCALE as u32, 1),
+                                _ => self.state.ui_scale,
+                            };
+
                             if let Some(tex) = self.state.texture_manager.get_mut(surf) {
                                 let attachments = self.attachments.clone();
+
+                                let hotspot = compositor::with_states(surf, |states| {
+                                    states
+                                        .data_map
+                                        .get::<std::sync::Mutex<
+                                            smithay::input::pointer::CursorImageAttributes,
+                                        >>()
+                                        .unwrap()
+                                        .lock()
+                                        .unwrap()
+                                        .hotspot
+                                });
+
+                                let scale: smithay::output::Scale = scale.into();
+                                let hotspot = hotspot
+                                    .to_f64()
+                                    .to_physical(scale.fractional_scale())
+                                    .to_i32_round();
 
                                 video::texture_to_png(tex, move |image| {
                                     attachments.dispatch(CompositorEvent::CursorUpdate {
                                         image: Some(bytes::Bytes::copy_from_slice(image)),
                                         icon: Some(cursor_icon::CursorIcon::Default),
-                                        hotspot_x: 0, // TODO
-                                        hotspot_y: 0, // TODO
+                                        hotspot_x: hotspot.x,
+                                        hotspot_y: hotspot.y,
                                     });
                                 });
 
