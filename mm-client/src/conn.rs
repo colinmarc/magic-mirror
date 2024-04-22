@@ -220,7 +220,7 @@ impl InnerConn {
 
         let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION)?;
         config.verify_peer(false); // TODO
-        config.set_application_protos(&[b"mm/0.1"])?; // TODO
+        config.set_application_protos(&[b"mm00"])?;
 
         config.set_max_idle_timeout(30_000);
         config.set_max_recv_udp_payload_size(MAX_QUIC_PACKET_SIZE);

@@ -101,7 +101,7 @@ impl Server {
             }
         };
 
-        config.set_application_protos(&[b"mm/0.1"])?; // TODO clarify ALPN in the protocol.
+        config.set_application_protos(&[b"mm00"])?;
         config.set_max_idle_timeout(10_000);
         config.set_initial_max_data(65536);
         config.set_initial_max_stream_data_bidi_remote(65536);

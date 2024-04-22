@@ -8,7 +8,7 @@ import "google/protobuf/timestamp.proto";
 
 package messages;
 
-// # The Magic Mirror Streaming Protocol (MMSP)
+// # The Magic Mirror Streaming Protocol (MMSP) version 0.1.0
 //
 // This document describes a protocol for remote application streaming. Using
 // this protocol, a client can remotely launch and/or attach an application on a
@@ -39,7 +39,9 @@ package messages;
 // At a high level, the protocol consists of messages passed bidirectionally
 // over a QUIC connection.
 //
-// TODO NPN details
+// Servers and clients should use the `mm00` ALPN identifier. The number
+// will increase in future revisions of the protocol - see 'Protocol Versioning'
+// below.
 //
 // A message is an arbitrary-length byte blob, beginning with two unsigned
 // varints. The first varint holds the total length of the rest of the message,
@@ -78,7 +80,20 @@ package messages;
 // and their absence (in the form of empty values) should be handled gracefully
 // by the receiver. A field marked as required may not be empty.
 //
-// TODO extensions?
+// ## Protocol Versioning
+//
+// The protocol follows Semantic Versioning rules, as defined by this document:
+//
+//     https://semver.org/
+//
+// As such, servers should support clients using the same major version of the
+// protocol, and vice versa, with the exception of major version 0 (the current
+// version), for which these rules are relaxed.
+//
+// Compatibility considers the QUIC features used, protobuf wire compatibility
+// (such as changes to field tags, but not field or message naming), and
+// required/optional semantics of messages as documented (in particular, adding
+// a field that is documented as required is a breaking change).
 //
 // # Message types
 //
