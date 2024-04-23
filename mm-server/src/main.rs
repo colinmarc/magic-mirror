@@ -29,6 +29,9 @@ use tracing_subscriber::{util::SubscriberInitExt, EnvFilter, Layer};
 #[command(name = "mmserver")]
 #[command(about = "The Magic Mirror server", long_about = None)]
 struct Cli {
+    /// Print the version.
+    #[arg(short, long)]
+    version: bool,
     /// The address to bind. Defaults to [::0]:9599.
     #[arg(long, value_name = "HOST[:PORT]")]
     bind: Option<String>,
@@ -50,6 +53,22 @@ struct Cli {
 
 fn main() -> Result<()> {
     let args = Cli::parse();
+
+    let version = format!(
+        "mmserver {}",
+        git_version::git_version!(
+            args = ["--always", "--tags", "--match", "mmserver-v"],
+            prefix = "git:",
+            cargo_prefix = "",
+        )
+    );
+
+    if args.version {
+        println!("{}", version);
+        return Ok(());
+    }
+
+    debug!(version, "starting up");
 
     let bug_report_dir = if args.bug_report {
         let dirname = std::env::temp_dir().join(format!("magic-mirror-{}", uuid::Uuid::new_v4()));

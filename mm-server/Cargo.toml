@@ -71,6 +71,7 @@ converge = "0.0.5"
 serde_json = "1.0.114"
 cursor-icon = "1.1.0"
 image = { version = "0.25.1", default-features = false, features = ["png"] }
+git-version = "0.3.9"
 
 [dependencies.pulseaudio]
 git = "https://github.com/colinmarc/pulseaudio-rs"
