@@ -94,10 +94,13 @@ default-features = false
 features = ["xwayland", "wayland_frontend", "desktop"]
 
 [build-dependencies]
-slang = { git = "https://github.com/colinmarc/slang-rs", features = [
-    "from-source",
-] }
 system-deps = "6"
+
+[build-dependencies.slang]
+git = "https://github.com/colinmarc/slang-rs"
+rev = "47322afed6bc5e9c9627cae8bdbcbcc336652aa8"
+# Uses SLANG_DIR if set, otherwise builds slang from source
+features = ["from-source"]
 
 [package.metadata.system-deps]
 libavcodec = { version = "6", feature = "ffmpeg_encode" }

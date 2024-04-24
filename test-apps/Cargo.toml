@@ -65,10 +65,11 @@ features = [
     #"bevy_debug_stepping",
 ]
 
-[build-dependencies]
-slang = { git = "https://github.com/colinmarc/slang-rs", features = [
-    "from-source",
-] }
+[build-dependencies.slang]
+git = "https://github.com/colinmarc/slang-rs"
+rev = "47322afed6bc5e9c9627cae8bdbcbcc336652aa8"
+# Uses SLANG_DIR if set, otherwise builds slang from source
+features = ["from-source"]
 
 [patch.crates-io]
 imgui = { git = "https://github.com/colinmarc/imgui-rs" }

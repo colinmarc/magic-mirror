@@ -84,10 +84,11 @@ rev = "e2da7720106c23a8f0bb5b2b30fb7a68e18e9450"
 version = "1.12"
 features = ["dynamic-rendering"]
 
-[build-dependencies]
-slang = { git = "https://github.com/colinmarc/slang-rs", features = [
-    "from-source",
-] }
+[build-dependencies.slang]
+git = "https://github.com/colinmarc/slang-rs"
+rev = "47322afed6bc5e9c9627cae8bdbcbcc336652aa8"
+# Uses SLANG_DIR if set, otherwise builds slang from source
+features = ["from-source"]
 
 [features]
 default = []
