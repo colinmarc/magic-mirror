@@ -12,7 +12,7 @@ use std::{
 use anyhow::{anyhow, bail, Context};
 use crossbeam_channel as crossbeam;
 use mm_protocol as protocol;
-use tracing::{debug, error, instrument, trace};
+use tracing::{debug, error, instrument, trace, warn};
 
 use crate::stats::STATS;
 
@@ -219,7 +219,12 @@ impl InnerConn {
         let mut socket = mio::net::UdpSocket::bind(bind_addr.parse()?)?;
 
         let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION)?;
-        config.verify_peer(false); // TODO
+
+        if !ip_rfc::global(&server_addr.ip()) {
+            warn!("skipping TLS verification for private server address");
+            config.verify_peer(false);
+        }
+
         config.set_application_protos(&[b"mm00"])?;
 
         config.set_max_idle_timeout(30_000);
