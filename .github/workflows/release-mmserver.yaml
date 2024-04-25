@@ -31,7 +31,8 @@ jobs:
       - name: create release tarball
         run: |-
           mkdir "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
-          cp -r mm-server/target/x86_64-unknown-linux-gnu/release/mmserver README.md "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
+          cp -r mm-server/target/x86_64-unknown-linux-gnu/release/mmserver README.md mmserver.defaults.toml \
+            "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
           cp LICENSES/BUSL-1.1.txt "${RUNNER_TEMP}/${GITHUB_REF_NAME}/LICENSE.txt"
           tar -C "${RUNNER_TEMP}" --numeric-owner -cvzf "${GITHUB_REF_NAME}-linux-amd64.tar.gz" "$GITHUB_REF_NAME"
 
@@ -39,7 +40,7 @@ jobs:
         run: cargo install git-cliff
       - name: generate release notes
         run: |-
-          echo "Server version ${GITHUB_REF_NAME/mmserver-v//}" >> release-notes.txt
+          echo "# Server version ${GITHUB_REF_NAME/mmserver-v/}" >> release-notes.txt
           git cliff -c .github/workflows/cliff.toml --include-path "mm-server/**/*" | tail -n +2 >> release-notes.txt
 
       - name: create release
