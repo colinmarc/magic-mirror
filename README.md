@@ -40,12 +40,10 @@ To see if your GPU supports video encoding, see the following matrix for your ve
 
 Note that with the `ffmpeg` feature, linking against a system-installed `ffmpeg` is supported, which may allow you to use specific CPU-based codecs not considered in this table.
 
-| Codec | CPU |  AMD  | NVIDIA | Intel |
-| ----- | :-: | :---: | :----: | :---: |
-| H.264 |  ❌  | ✔️[^1]|   🚧    | ❔[^2] |
-| H.265 |  ✔️ |  ✔️[^1]|   🚧    |   ❌   |
-|  AV1  |  ✔️ |   ❌   |   ❌    |   ❌   |
+| Codec | CPU | AMD | NVIDIA | Intel |
+| ----- | :-: | :-: | :----: | :---: |
+| H.264 |  ❌ |  ✔️  |   ✔️    |   ❔  |
+| H.265 |  ✔️  |  ✔️  |   ✔️    |   ❔  |
+|  AV1  |  ✔️  |  ❌ |   ❌   |   ❌  |
 
-[^1]: Requires [this draft MR](https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/25900).
-
-[^2]: I don't have a card available to test, and it's difficult to find information online about driver/card support for hardware encode. Please let me know how it goes!
+I don't have an Intel card available to test, and it's difficult to find information online about driver/card support for hardware encode. Please let me know how it goes!
