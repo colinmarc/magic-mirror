@@ -508,7 +508,7 @@ impl EncoderInner {
                         .src_access_mask(vk::AccessFlags2::NONE)
                         .dst_stage_mask(vk::PipelineStageFlags2::VIDEO_ENCODE_KHR)
                         .dst_access_mask(vk::AccessFlags2::VIDEO_ENCODE_READ_KHR)
-                        .old_layout(vk::ImageLayout::UNDEFINED)
+                        .old_layout(vk::ImageLayout::VIDEO_ENCODE_DPB_KHR)
                         .new_layout(vk::ImageLayout::VIDEO_ENCODE_DPB_KHR)
                         .image(pic.image)
                         .subresource_range(vk::ImageSubresourceRange {
@@ -531,7 +531,7 @@ impl EncoderInner {
                         vk::AccessFlags2::VIDEO_ENCODE_WRITE_KHR
                             | vk::AccessFlags2::VIDEO_ENCODE_READ_KHR,
                     )
-                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .old_layout(vk::ImageLayout::VIDEO_ENCODE_DPB_KHR)
                     .new_layout(vk::ImageLayout::VIDEO_ENCODE_DPB_KHR)
                     .image(setup_pic.image)
                     .subresource_range(vk::ImageSubresourceRange {
@@ -1014,9 +1014,11 @@ fn default_structure(
     // let mut layers = std::cmp::min(4, max_layers);
     let mut layers = 1;
 
-    const DEFAULT_GOP_SIZE: u32 = 32;
-    let gop_size = if device_vendor == Vendor::Nvidia {
-        1
+    const DEFAULT_GOP_SIZE: u32 = 256;
+
+    // TODO: Radv has a bug that causes the encoder to truncate POC.
+    let gop_size = if device_vendor == Vendor::Amd {
+        32
     } else {
         DEFAULT_GOP_SIZE
     };
