@@ -250,9 +250,14 @@ pub fn import_dma_texture(
             .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT)
             .fd(fd.into_raw_fd()); // Vulkan owns the fd now.
 
+        // Technically we can query whether this is required, but it doesn't
+        // hurt anyways. It seems to be only required on some NVIDIA cards.
+        let mut dedicated_memory_info = vk::MemoryDedicatedAllocateInfo::default().image(image);
+
         let image_allocate_info = vk::MemoryAllocateInfo::default()
             .allocation_size(image_memory_req.size)
-            .push_next(&mut external_mem_info);
+            .push_next(&mut external_mem_info)
+            .push_next(&mut dedicated_memory_info);
 
         unsafe { vk.device.allocate_memory(&image_allocate_info, None)? }
     };
