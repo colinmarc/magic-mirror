@@ -5,9 +5,6 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
@@ -17,6 +14,9 @@ jobs:
             mm-server
             mm-client
             mm-protocol
+
+      - name: install deps
+        run: sudo apt install nasm cmake
 
       - uses: actions/checkout@v2
 
