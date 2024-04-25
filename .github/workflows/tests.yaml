@@ -1,13 +1,19 @@
-on: [push, pull_request]
+on:
+  push:
+    branches: [main, test-ci]
+  pull_request:
+    branches: [main]
 name: Tests
 jobs:
   tests:
-    name: Tests
+    name: Server Tests
     runs-on: ubuntu-latest
     steps:
       - uses: dtolnay/rust-toolchain@stable
       - name: install deps
-        run: sudo apt install nasm cmake protobuf-compiler libxkbcommon-dev
+        run: |
+          sudo apt install \
+            nasm cmake protobuf-compiler libxkbcommon-dev
 
       - uses: actions/checkout@v4
       - uses: swatinem/rust-cache@v2
@@ -17,20 +23,13 @@ jobs:
             mm-client
             mm-protocol
 
+      - name: server tests
+        run: (cd mm-server && cargo test)
+      - name: protocol tests
+        run: (cd mm-protocol && cargo test)
       - name: server cargo clippy
         run: (cd mm-server && cargo clippy)
-
-      - name: client cargo clippy
-        run: (cd mm-client && cargo clippy)
-
       - name: protocol cargo clippy
         run: (cd mm-protocol && cargo clippy)
 
-      - name: server tests
-        run: (cd mm-server && cargo test)
 
-      - name: client tests
-        run: (cd mm-client && cargo test)
-
-      - name: protocol tests
-        run: (cd mm-protocol && cargo test)

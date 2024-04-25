@@ -15,6 +15,9 @@ jobs:
         with:
           targets: x86_64-unknown-linux-gnu
 
+      - name: install deps
+        run: sudo apt install nasm cmake protobuf-compiler libxkbcommon-dev
+
       - uses: actions/checkout@v4
       - uses: swatinem/rust-cache@v2
         with:
@@ -22,9 +25,6 @@ jobs:
             mm-server
             mm-client
             mm-protocol
-
-      - name: install deps
-        run: sudo apt install nasm cmake protobuf-compiler libxkbcommon-dev
 
       - name: cargo build
         run: (cd mm-server && cargo build --bin mmserver --release --target x86_64-unknown-linux-gnu)
