@@ -12,6 +12,12 @@ jobs:
         with:
           toolchain: stable
       - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            mm-server
+            mm-client
+            mm-protocol
+
       - uses: actions/checkout@v2
 
       - name: server cargo clippy
