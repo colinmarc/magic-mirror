@@ -5,20 +5,17 @@ jobs:
     name: Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      - uses: dtolnay/rust-toolchain@stable
+      - name: install deps
+        run: sudo apt install nasm cmake protobuf-compiler libxkbcommon-dev
+
+      - uses: actions/checkout@v4
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: |
             mm-server
             mm-client
             mm-protocol
-
-      - name: install deps
-        run: sudo apt install nasm cmake
-
-      - uses: actions/checkout@v2
 
       - name: server cargo clippy
         run: (cd mm-server && cargo clippy)
