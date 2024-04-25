@@ -29,6 +29,7 @@ commit_parsers = [
   { message = "^chore\\(pr\\)", skip = true },
   { message = "^chore\\(pull\\)", skip = true },
   { message = "^chore|^ci", skip = true },
+  { message = "build", skip = true },
   { body = ".*security", skip = true },
   { message = "^revert", skip = true },
 ]
