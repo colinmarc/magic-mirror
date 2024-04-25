@@ -1,0 +1,29 @@
+jobs:
+  check:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - uses: actions-rs/toolchain@v1
+      - uses: swatinem/rust-cache@v2
+      - uses: actions/checkout@v2
+
+      - name: server cargo clippy
+        run: (cd mm-server && cargo clippy)
+
+      - name: client cargo clippy
+        run: (cd mm-client && cargo clippy)
+
+      - name: protocol cargo clippy
+        run: (cd mm-protocol && cargo clippy)
+
+      - name: server tests
+        run: (cd mm-server && cargo test)
+
+      - name: client tests
+        run: (cd mm-client && cargo test)
+
+      - name: protocol tests
+        run: (cd mm-protocol && cargo test)
