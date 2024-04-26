@@ -10,15 +10,13 @@ use std::{
 };
 
 use anyhow::{bail, Context as _};
-use bytes::Buf as _;
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait};
 use crossbeam_channel as crossbeam;
 use dasp::Signal;
 use tracing::{debug, error, info, trace};
 
-use crate::packet_ring::{self, PacketRing};
 use buffer::PlaybackBuffer;
-use mm_protocol as protocol;
+use mm_client_common as client;
 
 trait DecodePacket<T> {
     fn decode(&mut self, input: &[u8], output: &mut [T]) -> anyhow::Result<usize>;
@@ -49,14 +47,14 @@ trait StreamWrapper {
         Self: Sized;
 
     fn sync(&mut self, pts: u64);
-    fn send_packet(&mut self, packet: packet_ring::Packet) -> anyhow::Result<()>;
+    fn send_packet(&mut self, packet: Arc<client::Packet>) -> anyhow::Result<()>;
 }
 
 struct StreamInner<F: dasp::Frame> {
     sync_point: Arc<Mutex<Option<(u64, time::Instant)>>>,
     _buffer: Arc<Mutex<PlaybackBuffer<F>>>,
     thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
-    undecoded_tx: Option<crossbeam::Sender<packet_ring::Packet>>,
+    undecoded_tx: Option<crossbeam::Sender<Arc<client::Packet>>>,
 }
 
 impl<F> StreamWrapper for StreamInner<F>
@@ -83,7 +81,7 @@ where
         };
 
         let buffer = Arc::new(Mutex::new(PlaybackBuffer::new()));
-        let (undecoded_tx, undecoded_recv) = crossbeam::unbounded::<packet_ring::Packet>();
+        let (undecoded_tx, undecoded_recv) = crossbeam::unbounded::<Arc<client::Packet>>();
 
         // Spawn a thread to eagerly decode packets.
         let buffer_clone = buffer.clone();
@@ -95,13 +93,13 @@ where
                     vec![Default::default(); (sample_rate * F::CHANNELS as u32 / 10) as usize];
 
                 loop {
-                    let mut packet = match undecoded_recv.recv() {
+                    let packet = match undecoded_recv.recv() {
                         Ok(packet) => packet,
                         Err(crossbeam::RecvError) => return Ok(()),
                     };
 
-                    let pts = packet.pts;
-                    let packet = packet.copy_to_bytes(packet.remaining());
+                    let pts = packet.pts();
+                    let packet = packet.data();
                     match DecodePacket::decode(&mut decoder, &packet, &mut output) {
                         Ok(len) => {
                             if len == 0 {
@@ -217,7 +215,7 @@ where
         *self.sync_point.lock().unwrap() = Some((pts, time::Instant::now()));
     }
 
-    fn send_packet(&mut self, packet: packet_ring::Packet) -> anyhow::Result<()> {
+    fn send_packet(&mut self, packet: Arc<client::Packet>) -> anyhow::Result<()> {
         self.undecoded_tx
             .as_ref()
             .unwrap()
@@ -252,7 +250,6 @@ pub struct AudioStream {
 
     stream_waiting: bool,
 
-    ring: PacketRing,
     stream_seq: u64,
     packet_count: u64,
 }
@@ -273,7 +270,6 @@ impl AudioStream {
             stream_waiting: true,
             packet_count: 0,
 
-            ring: PacketRing::new(),
             stream_seq: 0,
         })
     }
@@ -314,22 +310,18 @@ impl AudioStream {
         Ok(())
     }
 
-    pub fn recv_chunk(&mut self, chunk: protocol::AudioChunk) -> anyhow::Result<()> {
-        self.ring.recv_chunk(chunk)?;
-
+    pub fn recv_packet(&mut self, packet: Arc<client::Packet>) -> anyhow::Result<()> {
         if let Some(inner) = &mut self.inner {
-            for packet in self.ring.drain_completed(self.stream_seq) {
-                trace!(
-                    stream_seq = self.stream_seq,
-                    seq = packet.seq,
-                    pts = packet.pts,
-                    len = bytes::Buf::remaining(&packet),
-                    "received full audio packet"
-                );
+            trace!(
+                stream_seq = packet.stream_seq(),
+                seq = packet.seq(),
+                pts = packet.pts(),
+                len = packet.len(),
+                "received full audio packet"
+            );
 
-                self.packet_count += 1;
-                inner.send_packet(packet)?;
-            }
+            self.packet_count += 1;
+            inner.send_packet(packet)?;
         }
 
         if self.stream.is_some() && self.stream_waiting && self.packet_count > 2 {

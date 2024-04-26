@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: MIT
 
+mod timestamp;
+
 use prost::Message as _;
+
+#[cfg(feature = "uniffi")]
+uniffi::setup_scaffolding!();
 
 include!(concat!(env!("OUT_DIR"), "/_include.rs"));
 pub use messages::*;
