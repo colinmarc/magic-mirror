@@ -225,10 +225,10 @@ impl VkContext {
         #[cfg(target_os = "macos")]
         std::env::set_var("MVK_CONFIG_LOG_LEVEL", std::env::var("MVK_CONFIG_LOG_LEVEL").unwrap_or("0".to_string()));
 
-        #[cfg(all(target_os = "macos", not(debug_assertions)))]
+        #[cfg(all(target_os = "macos", feature = "moltenvk_static"))]
         let entry = ash_molten::load();
 
-        #[cfg(any(not(target_os = "macos"), debug_assertions))]
+        #[cfg(not(all(target_os = "macos", feature = "moltenvk_static")))]
         let entry = unsafe { ash::Entry::load().context("failed to load vulkan libraries!") }?;
 
         debug!("creating vulkan instance");
@@ -248,7 +248,7 @@ impl VkContext {
         }
 
         // MoltenVK doesn't actually support 1.3.
-        let (major, minor) = if cfg!(any(target_os = "macos", target_os = "ios")) {
+        let (major, minor) = if cfg!(any(target_os = "macos")) {
             (1, 2)
         } else {
             (major, minor)
@@ -266,7 +266,7 @@ impl VkContext {
 
         let mut layers = Vec::new();
 
-        #[cfg(all(target_os = "macos", debug_assertions))]
+        #[cfg(all(target_os = "macos", not(feature = "moltenvk_static")))]
         {
             extensions.push(vk::KhrPortabilityEnumerationFn::name().as_ptr());
             // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
