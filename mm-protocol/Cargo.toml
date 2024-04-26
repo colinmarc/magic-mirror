@@ -12,6 +12,10 @@ bytes = "1"
 octets = "0.2"
 prost = "0.13"
 thiserror = "1"
+uniffi = { version = "0.28", optional = true }
 
 [build-dependencies]
 prost-build = "0.13"
+
+[features]
+uniffi = ["dep:uniffi"]

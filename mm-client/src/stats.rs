@@ -44,7 +44,7 @@ impl Stats {
     }
 
     /// Starts tracking a frame, and tracks total video frame bytes transferred.
-    /// Should be called whenever a chunk arnives.
+    /// Should be called whenever a chunk arrives.
     pub fn frame_chunk_received(&self, stream_seq: u64, seq: u64, len: usize) {
         let now = time::Instant::now();
         let mut inner = self.inner.write().unwrap();
