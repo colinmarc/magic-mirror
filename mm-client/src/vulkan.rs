@@ -221,7 +221,16 @@ impl VkDeviceInfo {
 
 impl VkContext {
     pub fn new(window: Arc<winit::window::Window>, debug: bool) -> anyhow::Result<Self> {
+        // MoltenVK is very noisy.
+        #[cfg(target_os = "macos")]
+        std::env::set_var("MVK_CONFIG_LOG_LEVEL", std::env::var("MVK_CONFIG_LOG_LEVEL").unwrap_or("0".to_string()));
+
+        #[cfg(all(target_os = "macos", not(debug_assertions)))]
+        let entry = ash_molten::load();
+
+        #[cfg(any(not(target_os = "macos"), debug_assertions))]
         let entry = unsafe { ash::Entry::load().context("failed to load vulkan libraries!") }?;
+
         debug!("creating vulkan instance");
 
         let (major, minor) = match entry.try_enumerate_instance_version()? {
@@ -257,7 +266,7 @@ impl VkContext {
 
         let mut layers = Vec::new();
 
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        #[cfg(all(target_os = "macos", debug_assertions))]
         {
             extensions.push(vk::KhrPortabilityEnumerationFn::name().as_ptr());
             // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
