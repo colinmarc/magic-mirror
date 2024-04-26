@@ -90,7 +90,7 @@ ash-molten = { version = "0.18", optional = true }
 
 [build-dependencies.slang]
 git = "https://github.com/colinmarc/slang-rs"
-rev = "47322afed6bc5e9c9627cae8bdbcbcc336652aa8"
+rev = "cede1ccd06c8de392533d25bd32052a4cd50e9d5"
 # Uses SLANG_DIR if set, otherwise builds slang from source
 features = ["from-source"]
 
