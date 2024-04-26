@@ -815,6 +815,8 @@ fn main() -> Result<()> {
         Window::default_attributes()
     };
 
+    let window_attr = window_attr.with_title("Magic Mirror");
+
     #[allow(deprecated)]
     let window = Arc::new(event_loop.create_window(window_attr)?);
     let window_size = window.inner_size();
