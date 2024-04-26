@@ -114,6 +114,10 @@ struct Cli {
     overlay: bool,
 }
 
+struct MainLoop {
+    app: Option<App>,
+}
+
 struct App {
     configured_resolution: Resolution,
     configured_codec: protocol::VideoCodec,
@@ -158,7 +162,7 @@ struct App {
     _vk: Arc<vulkan::VkContext>,
 }
 
-impl winit::application::ApplicationHandler<AppEvent> for App {
+impl winit::application::ApplicationHandler<AppEvent> for MainLoop {
     fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {}
 
     fn window_event(
@@ -167,47 +171,69 @@ impl winit::application::ApplicationHandler<AppEvent> for App {
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
-        if window_id == self.window.id() {
-            if let Err(e) = self.renderer.handle_event(&event) {
-                error!("renderer error: {:#}", e);
-                event_loop.exit();
-                return;
-            }
+        if let Some(app) = &mut self.app {
+            if window_id == app.window.id() {
+                if let Err(e) = app.renderer.handle_event(&event) {
+                    error!("renderer error: {:#}", e);
+                    event_loop.exit();
+                    return;
+                }
 
-            let res = self.handle_window_event(event);
-            self.exit_on_error(event_loop, res);
+                match app.handle_window_event(event) {
+                    Ok(true) => {
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(app.next_frame));
+                    }
+                    Ok(false) => event_loop.exit(),
+                    Err(e) => {
+                        error!("{:#}", e);
+                        event_loop.exit()
+                    }
+                }
+            }
         }
     }
 
     fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: AppEvent) {
-        let res = self.handle_app_event(event_loop, event);
-        self.exit_on_error(event_loop, res);
-    }
-
-    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let res = self.idle();
-        self.exit_on_error(event_loop, res);
-    }
-}
-
-impl App {
-    fn exit_on_error(
-        &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        res: anyhow::Result<bool>,
-    ) {
-        match res {
-            Ok(true) => {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
-            }
-            Ok(false) => event_loop.exit(),
-            Err(e) => {
-                error!("{:#}", e);
-                event_loop.exit()
+        if let Some(app) = &mut self.app {
+            match app.handle_app_event(event_loop, event) {
+                Ok(true) => {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(app.next_frame));
+                }
+                Ok(false) => event_loop.exit(),
+                Err(e) => {
+                    error!("{:#}", e);
+                    event_loop.exit()
+                }
             }
         }
     }
 
+    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        if let Some(app) = &mut self.app {
+            match app.idle() {
+                Ok(true) => {
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(app.next_frame));
+                }
+                Ok(false) => event_loop.exit(),
+                Err(e) => {
+                    error!("{:#}", e);
+                    event_loop.exit()
+                }
+            }
+        }
+    }
+
+    fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        // Close the connection, but drop everything else first.
+        let App { conn, .. } = self.app.take().unwrap();
+        match conn.close() {
+            Ok(_) => (),
+            Err(e) => error!("failed to shutdown connection cleanly: {:#}", e),
+        }
+    }
+}
+
+impl App {
     fn handle_window_event(&mut self, event: winit::event::WindowEvent) -> anyhow::Result<bool> {
         trace!(?event, "handling window event");
 
@@ -914,7 +940,7 @@ fn main() -> Result<()> {
         None
     };
 
-    let mut app = App {
+    let app = App {
         configured_codec,
         configured_framerate: args.framerate,
         configured_resolution: args.resolution,
@@ -958,15 +984,8 @@ fn main() -> Result<()> {
         _vk: vk,
     };
 
-    event_loop.run_app(&mut app)?;
-
-    // Close the connection.
-    let App { conn, .. } = app;
-    match conn.close() {
-        Ok(_) => (),
-        Err(e) => error!("failed to shutdown connection cleanly: {:#}", e),
-    }
-
+    let mut ml = MainLoop { app: Some(app) };
+    event_loop.run_app(&mut ml)?;
     Ok(())
 }
 

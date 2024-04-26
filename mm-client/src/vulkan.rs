@@ -223,7 +223,10 @@ impl VkContext {
     pub fn new(window: Arc<winit::window::Window>, debug: bool) -> anyhow::Result<Self> {
         // MoltenVK is very noisy.
         #[cfg(target_os = "macos")]
-        std::env::set_var("MVK_CONFIG_LOG_LEVEL", std::env::var("MVK_CONFIG_LOG_LEVEL").unwrap_or("0".to_string()));
+        std::env::set_var(
+            "MVK_CONFIG_LOG_LEVEL",
+            std::env::var("MVK_CONFIG_LOG_LEVEL").unwrap_or("0".to_string()),
+        );
 
         #[cfg(all(target_os = "macos", feature = "moltenvk_static"))]
         let entry = ash_molten::load();
