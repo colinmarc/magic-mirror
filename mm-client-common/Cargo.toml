@@ -1,0 +1,27 @@
+[package]
+name = "mm-client-common"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["lib", "cdylib"]
+name = "mm_client_common"
+
+[dependencies]
+mm-protocol = { path = "../mm-protocol", features = ["uniffi"] }
+async-mutex = "1"
+bytes = "1"
+ip_rfc = "0.1"
+flume = "0.11"
+futures = { version = "0.3", features = ["executor"] }
+mio = { version = "1", features = ["net", "os-ext", "os-poll"] }
+prost-types = "0.13"
+quiche = { version = "0.22", features = ["qlog"] }
+ring = "0.17"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["time", "env-filter"] }
+uniffi = "0.28"
+
+[build-dependencies]
+uniffi = { version = "0.27", features = ["build"] }

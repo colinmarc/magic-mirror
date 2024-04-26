@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: MIT
 
+mod timestamp;
+
 use prost::Message as _;
+
+#[cfg(feature = "uniffi")]
+uniffi::setup_scaffolding!();
 
 include!(concat!(env!("OUT_DIR"), "/_include.rs"));
 pub use messages::*;
@@ -15,10 +20,8 @@ enum ProtobufError {
     ProtobufEncode(#[from] prost::EncodeError),
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum ProtocolError {
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
     #[error("protobuf encode error: {0}")]
     ProtobufEncode(#[from] prost::EncodeError),
     #[error("protobuf decode error: {0}")]

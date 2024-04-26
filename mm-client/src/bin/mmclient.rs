@@ -2,46 +2,32 @@
 //
 // SPDX-License-Identifier: MIT
 
-use std::io::Write;
-use std::sync::Arc;
-use std::time;
+use std::{sync::Arc, time};
 
-use anyhow::anyhow;
-use anyhow::bail;
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{anyhow, bail};
 use clap::Parser;
 use ffmpeg_sys_next as ffmpeg_sys;
+use pollster::FutureExt as _;
+use tracing::{debug, error, info, trace};
+use tracing_subscriber::Layer as _;
+use winit::{event_loop::ControlFlow, window};
+
+use mm_client::{
+    audio,
+    cursor::{cursor_icon_from_proto, load_cursor_image},
+    delegate::{AttachmentEvent, AttachmentProxy},
+    flash::Flash,
+    gamepad::{spawn_gamepad_monitor, GamepadEvent},
+    keys::winit_key_to_proto,
+    overlay::Overlay,
+    render::Renderer,
+    video::{self, VideoStreamEvent},
+    vulkan,
+};
+use mm_client_common as client;
 use mm_protocol as protocol;
-use protocol::MessageType;
-use tracing::info;
-use tracing::trace;
-use tracing::{debug, error};
-use tracing_subscriber::Layer;
-use winit::event::ElementState;
-use winit::event::KeyEvent;
-use winit::event::MouseScrollDelta;
-use winit::event::TouchPhase;
-use winit::event_loop::ControlFlow;
-use winit::event_loop::EventLoopProxy;
-use winit::keyboard::ModifiersState;
-use winit::window::Window;
-use winit::{event::WindowEvent, event_loop::EventLoop};
 
-use mm_client::audio;
-use mm_client::conn::ConnEvent;
-use mm_client::conn::*;
-use mm_client::cursor::*;
-use mm_client::flash::Flash;
-use mm_client::gamepad::*;
-use mm_client::keys::*;
-use mm_client::overlay::Overlay;
-use mm_client::render::Renderer;
-use mm_client::video;
-use mm_client::video::VideoStreamEvent;
-use mm_client::vulkan;
-
-const INIT_TIMEOUT: time::Duration = time::Duration::from_secs(30);
+const DEFAULT_TIMEOUT: time::Duration = time::Duration::from_secs(5);
 const MAX_FRAME_TIME: time::Duration = time::Duration::from_nanos(1_000_000_000 / 24);
 const RESIZE_COOLDOWN: time::Duration = time::Duration::from_millis(500);
 
@@ -112,48 +98,31 @@ struct Cli {
     /// Framerate to render at on the server side.
     #[arg(long, default_value = "30")]
     framerate: u32,
-    #[arg(short, long, default_value = "6")]
     /// The quality preset to use, from 0-9.
+    #[arg(short, long, default_value = "6")]
     preset: u32,
-    #[arg(long)]
     /// Open in fullscreen mode.
+    #[arg(long)]
     fullscreen: bool,
     /// Enable the overlay, which shows various stats.
     #[arg(long)]
     overlay: bool,
 }
 
-struct MainLoop {
-    app: Option<App>,
-}
-
-struct App {
+struct AttachmentWindow {
     configured_resolution: Resolution,
     configured_ui_scale: Option<f64>,
-    configured_codec: protocol::VideoCodec,
-    configured_profile: protocol::VideoProfile,
     configured_framerate: u32,
-    configured_preset: u32,
 
     window: Arc<winit::window::Window>,
-    _proxy: EventLoopProxy<AppEvent>,
+    attachment: client::Attachment,
+    attachment_config: client::AttachmentConfig,
+    delegate: Arc<AttachmentProxy<AppEvent>>,
 
-    exiting: bool,
-    reattaching: bool,
-    conn: BoundConn,
-    session_id: u64,
-
-    remote_display_params: protocol::VirtualDisplayParameters,
-    attachment: Option<protocol::Attached>,
-
-    attachment_sid: Option<u64>,
-    last_keepalive: time::Instant,
-    end_session_on_exit: bool,
+    session: client::Session,
 
     video_stream: video::VideoStream<AppEvent>,
-    video_stream_seq: Option<u64>,
     audio_stream: audio::AudioStream,
-    audio_stream_seq: Option<u64>,
 
     renderer: Renderer,
     window_width: u32,
@@ -162,11 +131,10 @@ struct App {
 
     minimized: bool,
     next_frame: time::Instant,
-    resize_cooldown: Option<time::Instant>,
     last_frame_received: time::Instant,
-    last_sync: time::Instant,
+    resize_cooldown: Option<time::Instant>,
 
-    cursor_modifiers: ModifiersState,
+    cursor_modifiers: winit::keyboard::ModifiersState,
     cursor_pos: Option<(f64, f64)>,
 
     flash: Flash,
@@ -175,27 +143,69 @@ struct App {
     _vk: Arc<vulkan::VkContext>,
 }
 
-impl winit::application::ApplicationHandler<AppEvent> for MainLoop {
-    fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {}
+struct App {
+    client: client::Client,
+    args: Cli,
+    attachment_window: Option<AttachmentWindow>,
+    proxy: winit::event_loop::EventLoopProxy<AppEvent>,
 
-    fn device_event(
-        &mut self,
-        _event_loop: &winit::event_loop::ActiveEventLoop,
-        _device_id: winit::event::DeviceId,
-        event: winit::event::DeviceEvent,
-    ) {
-        if let winit::event::DeviceEvent::MouseMotion { delta: (x, y) } = event {
-            if let Some(app) = &mut self.app {
-                if app.attachment.is_some() && app.attachment_sid.is_some() {
-                    if let Some((x, y)) = app.motion_vector_to_session_space(x, y) {
-                        let _ = app.conn.send(
-                            protocol::RelativePointerMotion { x, y },
-                            app.attachment_sid,
-                            false,
-                        );
-                    }
+    end_session_on_exit: bool,
+}
+
+pub enum AppEvent {
+    VideoStreamReady(Arc<vulkan::VkImage>, video::VideoStreamParams),
+    VideoFrameAvailable,
+    AttachmentEvent(AttachmentEvent),
+    GamepadEvent(GamepadEvent),
+}
+
+impl From<VideoStreamEvent> for AppEvent {
+    fn from(event: VideoStreamEvent) -> Self {
+        use VideoStreamEvent::*;
+
+        match event {
+            VideoStreamReady(tex, params) => AppEvent::VideoStreamReady(tex, params),
+            VideoFrameAvailable => AppEvent::VideoFrameAvailable,
+        }
+    }
+}
+
+impl From<AttachmentEvent> for AppEvent {
+    fn from(value: AttachmentEvent) -> Self {
+        Self::AttachmentEvent(value)
+    }
+}
+
+impl From<GamepadEvent> for AppEvent {
+    fn from(event: GamepadEvent) -> Self {
+        Self::GamepadEvent(event)
+    }
+}
+
+impl std::fmt::Debug for AppEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppEvent::VideoStreamReady(_, params) => write!(f, "VideoStreamReady({params:?})"),
+            AppEvent::VideoFrameAvailable => write!(f, "VideoFrameAvailable"),
+            AppEvent::AttachmentEvent(ev) => std::fmt::Debug::fmt(ev, f),
+            AppEvent::GamepadEvent(ev) => std::fmt::Debug::fmt(ev, f),
+        }
+    }
+}
+
+impl winit::application::ApplicationHandler<AppEvent> for App {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        if self.attachment_window.is_none() {
+            let window = match init_window(&self.args, &self.client, event_loop, &self.proxy) {
+                Ok(w) => w,
+                Err(e) => {
+                    error!("failed to attach to session: {:#}", e);
+                    event_loop.exit();
+                    return;
                 }
-            }
+            };
+
+            self.attachment_window = Some(window);
         }
     }
 
@@ -203,83 +213,83 @@ impl winit::application::ApplicationHandler<AppEvent> for MainLoop {
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
         window_id: winit::window::WindowId,
-        event: WindowEvent,
+        event: winit::event::WindowEvent,
     ) {
-        if let Some(app) = &mut self.app {
-            if window_id == app.window.id() {
-                if let Err(e) = app.renderer.handle_event(&event) {
-                    error!("renderer error: {:#}", e);
-                    event_loop.exit();
-                    return;
-                }
+        let Some(win) = &mut self.attachment_window else {
+            return;
+        };
 
-                match app.handle_window_event(event) {
-                    Ok(true) => {
-                        event_loop.set_control_flow(ControlFlow::WaitUntil(app.next_frame));
-                    }
-                    Ok(false) => event_loop.exit(),
-                    Err(e) => {
-                        error!("{:#}", e);
-                        event_loop.exit()
-                    }
-                }
-            }
+        if win.window.id() != window_id {
+            return;
         }
+
+        if let Err(e) = win.renderer.handle_event(&event) {
+            error!("renderer error: {:#}", e);
+            event_loop.exit();
+            return;
+        }
+
+        let res = win.handle_window_event(event);
+        win.schedule_next_frame(event_loop, res);
     }
 
     fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: AppEvent) {
-        if let Some(app) = &mut self.app {
-            match app.handle_app_event(event_loop, event) {
-                Ok(true) => {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(app.next_frame));
-                }
-                Ok(false) => event_loop.exit(),
-                Err(e) => {
-                    error!("{:#}", e);
-                    event_loop.exit()
-                }
-            }
-        }
+        let Some(win) = &mut self.attachment_window else {
+            return;
+        };
+
+        let res = win.handle_app_event(event_loop, &self.client, event);
+        win.schedule_next_frame(event_loop, res);
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        if let Some(app) = &mut self.app {
-            match app.idle() {
-                Ok(true) => {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(app.next_frame));
-                }
-                Ok(false) => event_loop.exit(),
-                Err(e) => {
-                    error!("{:#}", e);
-                    event_loop.exit()
-                }
-            }
-        }
+        let Some(win) = &mut self.attachment_window else {
+            return;
+        };
+
+        let res = win.idle(&self.client);
+        win.schedule_next_frame(event_loop, res);
     }
 
     fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
-        // Close the connection, but drop everything else first.
-        let App { conn, .. } = self.app.take().unwrap();
-        match conn.close() {
-            Ok(_) => (),
-            Err(e) => error!("failed to shutdown connection cleanly: {:#}", e),
+        if let Some(AttachmentWindow {
+            attachment,
+            session,
+            ..
+        }) = self.attachment_window.take()
+        {
+            debug!("detaching from session");
+            match attachment.detach().block_on() {
+                Ok(()) | Err(client::ClientError::Detached) => (),
+                Err(err) => error!(?err, "failed to detach cleanly"),
+            }
+
+            if self.end_session_on_exit {
+                debug!("ending session");
+
+                match self
+                    .client
+                    .end_session(session.id, DEFAULT_TIMEOUT)
+                    .block_on()
+                {
+                    Ok(()) => (),
+                    Err(client::ClientError::ServerError(err))
+                        if err.err_code() == protocol::error::ErrorCode::ErrorSessionNotFound => {}
+                    Err(err) => error!(?err, "failed to end session"),
+                }
+            }
         }
     }
 }
 
-impl App {
+impl AttachmentWindow {
     fn handle_window_event(&mut self, event: winit::event::WindowEvent) -> anyhow::Result<bool> {
         trace!(?event, "handling window event");
 
+        use winit::event::*;
         match event {
             WindowEvent::RedrawRequested => {
-                if let Some(metadata) = self.video_stream.prepare_frame()? {
-                    if self.last_sync.elapsed() > time::Duration::from_secs(1) {
-                        self.audio_stream.sync(metadata.pts);
-                        self.last_sync = time::Instant::now();
-                    }
-                }
-
+                self.video_stream.prepare_frame()?;
                 self.video_stream.mark_frame_rendered();
 
                 if !self.minimized && self.video_stream.is_ready() {
@@ -297,7 +307,7 @@ impl App {
 
                 self.next_frame = time::Instant::now() + MAX_FRAME_TIME;
             }
-            WindowEvent::CloseRequested => self.detach()?,
+            WindowEvent::CloseRequested => return Ok(false),
             WindowEvent::Resized(size) => {
                 if size.width == 0 || size.height == 0 {
                     self.minimized = true;
@@ -335,40 +345,29 @@ impl App {
                     },
                 ..
             } => {
-                use protocol::keyboard_input::*;
-
                 if state == ElementState::Pressed
                     && logical_key == winit::keyboard::Key::Character("d".into())
                     && self.cursor_modifiers.control_key()
                 {
-                    self.detach()?;
+                    return Ok(false);
                 } else {
                     let char = match logical_key {
-                        winit::keyboard::Key::Character(text) => {
-                            text.chars().next().unwrap() as u32
-                        }
-                        _ => 0,
+                        winit::keyboard::Key::Character(text) => text.chars().next(),
+                        _ => None,
                     };
 
                     let state = match state {
-                        _ if repeat => KeyState::Repeat,
-                        ElementState::Pressed => KeyState::Pressed,
-                        ElementState::Released => KeyState::Released,
+                        _ if repeat => client::input::KeyState::Repeat,
+                        ElementState::Pressed => client::input::KeyState::Pressed,
+                        ElementState::Released => client::input::KeyState::Released,
                     };
 
                     let key = winit_key_to_proto(code);
                     if key == protocol::keyboard_input::Key::Unknown {
                         debug!("unknown key: {:?}", code);
                     } else {
-                        let msg = protocol::KeyboardInput {
-                            key: key.into(),
-                            state: state.into(),
-                            char,
-                        };
-
-                        if self.attachment_sid.is_some() {
-                            self.conn.send(msg, self.attachment_sid, false)?;
-                        }
+                        self.attachment
+                            .keyboard_input(key, state, char.map_or(0, Into::into));
                     }
                 }
             }
@@ -394,35 +393,25 @@ impl App {
                     let y = (clip_y + 1.0) / 2.0;
 
                     // Convert the position to physical coordinates in the remote display.
-                    let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
-                    let cursor_x = x * remote_size.width as f64;
-                    let cursor_y = y * remote_size.height as f64;
+                    let cursor_x = x * self.session.display_params.width as f64;
+                    let cursor_y = y * self.session.display_params.height as f64;
 
                     Some((cursor_x, cursor_y))
                 });
 
                 if let Some((cursor_x, cursor_y)) = new_position {
-                    if self.attachment_sid.is_some() {
-                        let msg = protocol::PointerMotion {
-                            x: cursor_x,
-                            y: cursor_y,
-                        };
+                    self.attachment.pointer_motion(cursor_x, cursor_y);
 
-                        self.conn.send(msg, self.attachment_sid, false)?;
-
-                        if new_position.is_some() && self.cursor_pos.is_none() {
-                            let msg = protocol::PointerEntered {};
-                            self.conn.send(msg, self.attachment_sid, false)?;
-                        } else if new_position.is_none() && self.cursor_pos.is_some() {
-                            let msg = protocol::PointerLeft {};
-                            self.conn.send(msg, self.attachment_sid, false)?;
-                        }
+                    if new_position.is_some() && self.cursor_pos.is_none() {
+                        self.attachment.pointer_entered();
+                    } else if new_position.is_none() && self.cursor_pos.is_some() {
+                        self.attachment.pointer_left();
                     }
 
                     self.cursor_pos = new_position;
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } if self.attachment_sid.is_some() => {
+            WindowEvent::MouseInput { state, button, .. } => {
                 use protocol::pointer_input::*;
 
                 if self.cursor_pos.is_none() {
@@ -447,41 +436,44 @@ impl App {
                 };
 
                 let (cursor_x, cursor_y) = self.cursor_pos.unwrap();
-                let msg = protocol::PointerInput {
-                    button: button.into(),
-                    state: state.into(),
-                    x: cursor_x,
-                    y: cursor_y,
-                };
-
-                self.conn.send(msg, self.attachment_sid, false)?;
+                self.attachment
+                    .pointer_input(button, state, cursor_x, cursor_y);
             }
             WindowEvent::MouseWheel {
                 delta: MouseScrollDelta::LineDelta(x, y),
                 phase: TouchPhase::Moved,
                 ..
-            } if self.attachment_sid.is_some() => {
-                let msg = protocol::PointerScroll {
-                    scroll_type: protocol::pointer_scroll::ScrollType::Discrete.into(),
-                    x: x as f64,
-                    y: y as f64,
-                };
-
-                self.conn.send(msg, self.attachment_sid, false)?;
-            }
+            } => self.attachment.pointer_scroll(
+                client::input::ScrollType::Discrete,
+                x as f64,
+                y as f64,
+            ),
             WindowEvent::MouseWheel {
                 delta: MouseScrollDelta::PixelDelta(vector),
                 phase: TouchPhase::Moved,
                 ..
-            } if self.attachment_sid.is_some() => {
-                if let Some((x, y)) = self.motion_vector_to_session_space(vector.x, vector.y) {
-                    let msg = protocol::PointerScroll {
-                        scroll_type: protocol::pointer_scroll::ScrollType::Continuous.into(),
-                        x,
-                        y,
-                    };
+            } => {
+                if let Some(aspect) = self.renderer.get_texture_aspect() {
+                    // Map vector to [0, 1]. (It can also be negative.)
+                    let (x, y) = (
+                        (vector.x / self.window_width as f64),
+                        (vector.y / self.window_height as f64),
+                    );
 
-                    self.conn.send(msg, self.attachment_sid, false)?;
+                    // Stretch the space to account for letterboxing. For
+                    // example, if the video texture only takes up one third
+                    // of the screen vertically, and we scroll up one third
+                    // of the window height, the resulting vector should be [0,
+                    // -1.0].
+                    let x = x * aspect.0;
+                    let y = y * aspect.1;
+
+                    // Map to the remote virtual display.
+                    self.attachment.pointer_scroll(
+                        client::input::ScrollType::Continuous,
+                        x * self.session.display_params.width as f64,
+                        y * self.session.display_params.height as f64,
+                    );
                 }
             }
             _ => (),
@@ -493,121 +485,46 @@ impl App {
     fn handle_app_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
+        client: &client::Client,
         event: AppEvent,
     ) -> anyhow::Result<bool> {
-        if tracing::event_enabled!(tracing::Level::TRACE) {
-            let event_debug = match event {
-                AppEvent::StreamMessage(_, ref msg) => {
-                    format!("StreamMessage({})", msg)
-                }
-                AppEvent::Datagram(ref msg) => format!("Datagram({})", msg),
-                _ => format!("{:?}", event),
-            };
+        trace!(?event, "handling event");
 
-            trace!(event = event_debug, "handling event");
-        }
-
+        use AttachmentEvent::*;
         match event {
-            AppEvent::StreamMessage(_, protocol::MessageType::VideoChunk(chunk))
-            | AppEvent::Datagram(protocol::MessageType::VideoChunk(chunk)) => {
-                self.last_frame_received = time::Instant::now();
-
-                // Detect stream restarts. In the case that we're
-                // reattaching, two unordered things have to happen: we have
-                // to get the new attachment ID, and we have to get a
-                // datagram with a new stream seq.
-                if let Some(attachment) = &self.attachment {
-                    if chunk.attachment_id == attachment.attachment_id
-                        && (self.video_stream_seq.is_none()
-                            || chunk.stream_seq > self.video_stream_seq.unwrap())
-                    {
-                        let protocol::Size { width, height } =
-                            attachment.streaming_resolution.unwrap();
-                        self.video_stream_seq = Some(chunk.stream_seq);
-                        self.video_stream.reset(
-                            attachment.attachment_id,
-                            chunk.stream_seq,
-                            width,
-                            height,
-                            self.configured_codec,
-                        )?;
-                    }
+            AppEvent::AttachmentEvent(ev) => match ev {
+                VideoStreamStart(stream_seq, params) => {
+                    self.attachment_config.video_stream_seq_offset =
+                        stream_seq.max(self.attachment_config.video_stream_seq_offset);
+                    self.video_stream.reset(
+                        stream_seq,
+                        params.width,
+                        params.height,
+                        params.codec,
+                    )?;
                 }
-
-                self.video_stream.recv_chunk(chunk)?;
-            }
-            AppEvent::StreamMessage(_, protocol::MessageType::AudioChunk(chunk))
-            | AppEvent::Datagram(protocol::MessageType::AudioChunk(chunk)) => {
-                // Detect stream restarts.
-                if let Some(attachment) = &self.attachment {
-                    if chunk.attachment_id == attachment.attachment_id
-                        && (self.audio_stream_seq.is_none()
-                            || chunk.stream_seq > self.audio_stream_seq.unwrap())
-                    {
-                        self.audio_stream_seq = Some(chunk.stream_seq);
-                        self.audio_stream.reset(
-                            chunk.stream_seq,
-                            attachment.sample_rate_hz,
-                            attachment.channels.as_ref().unwrap().channels.len() as u32,
-                        )?;
-                    }
+                VideoPacket(packet) => {
+                    self.last_frame_received = time::Instant::now();
+                    self.video_stream.recv_packet(packet)?;
                 }
-
-                self.audio_stream.recv_chunk(chunk)?;
-            }
-            AppEvent::ConnectionClosed => {
-                bail!("connection closed unexpectedly")
-            }
-            AppEvent::StreamMessage(_, msg) => match msg {
-                protocol::MessageType::SessionEnded(_) => {
-                    if !self.exiting {
-                        info!("session ended by server");
-                    }
-
-                    return Ok(false);
+                AudioStreamStart(stream_seq, params) => {
+                    self.attachment_config.audio_stream_seq_offset =
+                        stream_seq.max(self.attachment_config.audio_stream_seq_offset);
+                    self.audio_stream.reset(
+                        stream_seq,
+                        params.sample_rate,
+                        params.channels.len() as u32,
+                    )?;
                 }
-                protocol::MessageType::SessionParametersChanged(params) => {
-                    if let Some(protocol::VirtualDisplayParameters {
-                        resolution: Some(res),
-                        ui_scale: Some(scale),
-                        ..
-                    }) = &params.display_params
-                    {
-                        debug!(
-                            width = res.width,
-                            height = res.height,
-                            scale = (scale.numerator as f64 / scale.denominator as f64),
-                            "session parameters changed"
-                        )
-                    } else {
-                        bail!("session parameters changed without valid display params");
-                    }
-
-                    let new_params = params.display_params.unwrap();
-                    self.remote_display_params = new_params;
-                    if params.reattach_required {
-                        // The server is about to close the stream. We'll
-                        // reattach once that happens.
-                        self.attachment = None;
-                        self.reattaching = true;
-                    }
+                AudioPacket(packet) => {
+                    self.audio_stream.recv_packet(packet)?;
                 }
-                protocol::MessageType::Attached(msg) => {
-                    info!(msg.session_id, "successfully (re)attached to session");
-                    self.reattaching = false;
-                    self.attachment = Some(msg.clone());
-
-                    if let Some(ref mut overlay) = self.overlay {
-                        overlay.update_params(&msg);
-                    }
-                }
-                protocol::MessageType::SessionUpdated(_) => {}
-                protocol::MessageType::UpdateCursor(protocol::UpdateCursor {
+                UpdateCursor {
                     icon,
                     image,
                     hotspot_x,
                     hotspot_y,
-                }) => {
+                } => {
                     if !image.is_empty() {
                         if let Ok(cursor) = load_cursor_image(&image, hotspot_x, hotspot_y)
                             .map(|src| event_loop.create_custom_cursor(src))
@@ -617,16 +534,14 @@ impl App {
                         } else {
                             error!(image_len = image.len(), "custom cursor image update failed");
                         }
-                    } else if icon.try_into() == Ok(protocol::update_cursor::CursorIcon::None) {
+                    } else if icon == protocol::update_cursor::CursorIcon::None {
                         self.window.set_cursor_visible(false);
-                    } else if let Ok(icon) = icon.try_into().map(cursor_icon_from_proto) {
-                        self.window.set_cursor(icon);
-                        self.window.set_cursor_visible(true);
                     } else {
-                        error!(icon, "cursor shape update failed");
+                        self.window.set_cursor(cursor_icon_from_proto(icon));
+                        self.window.set_cursor_visible(true);
                     }
                 }
-                protocol::MessageType::LockPointer(protocol::LockPointer { x, y }) => {
+                LockPointer(x, y) => {
                     debug!(x, y, "cursor locked");
 
                     // On most platforms, we have to lock the cursor before we
@@ -636,12 +551,8 @@ impl App {
                         .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
 
                     if let Some(aspect) = self.renderer.get_texture_aspect() {
-                        let (width, height) = self
-                            .remote_display_params
-                            .resolution
-                            .as_ref()
-                            .map(|p| (p.width, p.height))
-                            .unwrap();
+                        let width = self.session.display_params.width;
+                        let height = self.session.display_params.height;
 
                         // Map vector to [-0.5, 0.5].
                         let x = (x / width as f64) - 0.5;
@@ -663,73 +574,38 @@ impl App {
                     self.window
                         .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
                 }
-                protocol::MessageType::ReleasePointer(_) => {
-                    debug!("cursor released");
+                ReleasePointer => {
                     self.window
                         .set_cursor_grab(winit::window::CursorGrabMode::None)?;
                 }
-                protocol::MessageType::Error(e) => {
-                    let err = server_error(e);
-                    error!("server error: {:#}", err);
-                    if self.reattaching {
-                        // This is fatal.
-                        return Err(err);
-                    }
-                }
-                _ => bail!("unexpected message: {:?}", msg),
-            },
-            AppEvent::StreamClosed(sid) if Some(sid) == self.attachment_sid => {
-                self.attachment_sid.take();
+                DisplayParamsChanged {
+                    params,
+                    reattach_required,
+                } => {
+                    if reattach_required {
+                        self.attachment_config.width = params.width;
+                        self.attachment_config.height = params.height;
 
-                if self.exiting {
+                        // TODO: this blocks the app, which is not ideal.
+                        // We could spawn a thread for this, or reuse one.
+                        debug!("reattaching to session after resize");
+                        self.attachment = client
+                            .attach_session(
+                                self.session.id,
+                                self.attachment_config.clone(),
+                                self.delegate.clone(),
+                                DEFAULT_TIMEOUT,
+                            )
+                            .block_on()?;
+                    }
+
+                    self.session.display_params = params;
+                }
+                AttachmentEnded => {
+                    info!("attachment ended by server");
+
                     return Ok(false);
-                } else if self.reattaching {
-                    // Open a new attachment stream.
-                    debug!(
-                        "reattaching to session with resolution: {:?}",
-                        self.remote_display_params.resolution.clone()
-                    );
-
-                    let sid = self.conn.send(
-                        protocol::Attach {
-                            attachment_type: protocol::AttachmentType::Operator.into(),
-                            client_name: "mmclient".to_string(),
-                            session_id: self.session_id,
-                            streaming_resolution: self.remote_display_params.resolution,
-                            video_codec: self.configured_codec.into(),
-                            quality_preset: self.configured_preset,
-                            video_profile: self.configured_profile.into(),
-                            ..Default::default()
-                        },
-                        None,
-                        false,
-                    )?;
-
-                    self.attachment_sid = Some(sid)
-                } else {
-                    bail!("server disconnected from session")
                 }
-            }
-            AppEvent::Datagram(msg) => match msg {
-                protocol::MessageType::AudioChunk(chunk) => {
-                    // Detect stream restarts.
-                    if let Some(attachment) = &self.attachment {
-                        if chunk.attachment_id == attachment.attachment_id
-                            && (self.audio_stream_seq.is_none()
-                                || chunk.stream_seq > self.audio_stream_seq.unwrap())
-                        {
-                            self.audio_stream_seq = Some(chunk.stream_seq);
-                            self.audio_stream.reset(
-                                chunk.stream_seq,
-                                attachment.sample_rate_hz,
-                                attachment.channels.as_ref().unwrap().channels.len() as u32,
-                            )?;
-                        }
-                    }
-
-                    self.audio_stream.recv_chunk(chunk)?;
-                }
-                _ => bail!("unexpected datagram: {}", msg),
             },
             AppEvent::VideoStreamReady(texture, params) => {
                 self.renderer.bind_video_texture(texture, params)?;
@@ -739,51 +615,29 @@ impl App {
                     self.window.request_redraw();
                 }
             }
-            AppEvent::GamepadEvent(gev) if self.attachment_sid.is_some() => {
-                let msg: protocol::MessageType = match gev {
-                    GamepadEvent::Available(pad) => {
-                        protocol::GamepadAvailable { gamepad: Some(pad) }.into()
-                    }
-                    GamepadEvent::Unavailable(id) => protocol::GamepadUnavailable { id }.into(),
-                    GamepadEvent::Input(id, button, state) => protocol::GamepadInput {
-                        gamepad_id: id,
-                        button: button.into(),
-                        state: state.into(),
-                    }
-                    .into(),
-                    GamepadEvent::Motion(id, axis, value) => protocol::GamepadMotion {
-                        gamepad_id: id,
-                        axis: axis.into(),
-                        value,
-                    }
-                    .into(),
-                };
-
-                self.conn.send(msg, self.attachment_sid, false)?;
-            }
-            _ => (),
+            AppEvent::GamepadEvent(gev) => match gev {
+                GamepadEvent::Available(pad) => self.attachment.gamepad_available(pad),
+                GamepadEvent::Unavailable(id) => self.attachment.gamepad_unavailable(id),
+                GamepadEvent::Input(id, button, state) => {
+                    self.attachment.gamepad_input(id, button, state)
+                }
+                GamepadEvent::Motion(id, axis, value) => {
+                    self.attachment.gamepad_motion(id, axis, value)
+                }
+            },
         }
 
         Ok(true)
     }
 
-    fn idle(&mut self) -> anyhow::Result<bool> {
+    fn idle(&mut self, client: &client::Client) -> anyhow::Result<bool> {
         if self.next_frame.elapsed() > time::Duration::ZERO {
             self.window.request_redraw();
         }
 
-        if self.last_keepalive.elapsed() > time::Duration::from_secs(1) {
-            if self.attachment_sid.is_some() {
-                self.conn
-                    .send(protocol::KeepAlive {}, self.attachment_sid, false)?;
-            }
-
-            self.last_keepalive = time::Instant::now();
-        }
-
         let last_frame = self.last_frame_received.elapsed();
         if last_frame > time::Duration::from_secs(1) {
-            if last_frame > INIT_TIMEOUT {
+            if last_frame > DEFAULT_TIMEOUT {
                 // TODO: this fires when we've tabbed away.
                 bail!("timed out waiting for video frames");
             } else {
@@ -813,55 +667,44 @@ impl App {
                 self.window_height = size.height;
                 self.window_ui_scale = scale_factor;
 
-                let current_streaming_res = self
-                    .attachment
-                    .as_ref()
-                    .and_then(|a| a.streaming_resolution);
-                let remote_scale = self.remote_display_params.ui_scale.as_ref().unwrap();
-
                 let desired_ui_scale = determine_ui_scale(
                     self.configured_ui_scale
                         .unwrap_or(self.window.scale_factor()),
                 );
 
-                let desired_streaming_res = Some(determine_resolution(
+                let (desired_width, desired_height) = determine_resolution(
                     self.configured_resolution,
                     self.window_width,
                     self.window_height,
-                ));
+                );
+
+                let desired_params = client::display_params::DisplayParams {
+                    width: desired_width,
+                    height: desired_height,
+                    ui_scale: desired_ui_scale,
+                    framerate: self.configured_framerate,
+                };
 
                 // Update the session to match our desired resolution or
                 // scale. Note that this is skipped if there is no
                 // current attachment (and `current_streaming_res` is
                 // None).
-                if desired_streaming_res != current_streaming_res
-                    || desired_ui_scale != *remote_scale
-                {
+                if desired_params != self.session.display_params {
                     debug!(
                         "resizing session to {}x{}@{} (scale: {})",
-                        desired_streaming_res.as_ref().unwrap().width,
-                        desired_streaming_res.as_ref().unwrap().height,
-                        self.configured_framerate,
-                        desired_ui_scale.numerator as f64 / desired_ui_scale.denominator as f64
+                        desired_width, desired_height, self.configured_framerate, desired_ui_scale,
                     );
 
                     self.flash.set_message("resizing...");
 
-                    // This will trigger a new attachment at the new
-                    // resolution once the server updates and notifies
-                    // us.
-                    self.conn.send(
-                        protocol::UpdateSession {
-                            session_id: self.session_id,
-                            display_params: Some(protocol::VirtualDisplayParameters {
-                                resolution: desired_streaming_res,
-                                framerate_hz: self.configured_framerate,
-                                ui_scale: Some(desired_ui_scale),
-                            }),
-                        },
-                        None,
-                        false,
-                    )?;
+                    // TODO: this blocks the app.
+                    client
+                        .update_session_display_params(
+                            self.session.id,
+                            desired_params,
+                            DEFAULT_TIMEOUT,
+                        )
+                        .block_on()?;
                 }
             }
 
@@ -871,59 +714,25 @@ impl App {
         Ok(true)
     }
 
-    fn detach(&mut self) -> anyhow::Result<()> {
-        self.exiting = true;
-
-        if self.end_session_on_exit {
-            match self.conn.send(
-                protocol::EndSession {
-                    session_id: self.session_id,
-                },
-                None,
-                true,
-            ) {
-                Ok(_) => (),
-                Err(e) => return Err(e).context("failed to end session"),
+    fn schedule_next_frame(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        res: anyhow::Result<bool>,
+    ) {
+        match res {
+            Ok(true) => {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
             }
-
-            self.flash.set_message("ending session...");
-        } else if let Some(sid) = self.attachment_sid {
-            match self.conn.send(protocol::Detach {}, Some(sid), true) {
-                Ok(_) => (),
-                Err(e) => return Err(e).context("failed to detach cleanly"),
+            Ok(false) => event_loop.exit(),
+            Err(e) => {
+                error!("{:#}", e);
+                event_loop.exit()
             }
-
-            self.flash.set_message("closing...");
-        }
-
-        Ok(())
-    }
-
-    fn motion_vector_to_session_space(&self, x: f64, y: f64) -> Option<(f64, f64)> {
-        if let Some(aspect) = self.renderer.get_texture_aspect() {
-            // Map vector to [0, 1]. (It can also be negative.)
-            let x = x / self.window_width as f64;
-            let y = y / self.window_height as f64;
-
-            // Stretch the space to account for letterboxing. For
-            // example, if the video texture only takes up one third
-            // of the screen vertically, and we scroll up one third
-            // of the window height, the resulting vector should be [0,
-            // -1.0].
-            let x = x * aspect.0;
-            let y = y * aspect.1;
-
-            // Map to the remote virtual display.
-            let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
-
-            Some((x * remote_size.width as f64, y * remote_size.height as f64))
-        } else {
-            None
         }
     }
 }
 
-fn main() -> Result<()> {
+pub fn main() -> anyhow::Result<()> {
     init_logging()?;
 
     let args = Cli::parse();
@@ -937,50 +746,43 @@ fn main() -> Result<()> {
         bail!("an app name or session ID must be specified");
     }
 
-    let configured_codec = match args.codec.as_deref() {
-        Some("h264") => protocol::VideoCodec::H264,
-        Some("h265") | None => protocol::VideoCodec::H265,
-        Some("av1") => protocol::VideoCodec::Av1,
-        Some(v) => bail!("invalid codec: {:?}", v),
-    };
-
-    let configured_profile = if args.hdr {
-        protocol::VideoProfile::Hdr10
-    } else {
-        protocol::VideoProfile::Hd
-    };
-
-    // TODO: anyhow errors are garbage for end-users.
     debug!("establishing connection to {:}", &args.host);
-    let mut conn = Conn::new(&args.host).context("failed to establish connection")?;
-
-    let sessions = match list_sessions(&mut conn) {
-        Ok(sessions) => sessions,
-        Err(e) => {
-            conn.close()?;
-            return Err(e);
-        }
-    };
-
-    debug!("found {} running sessions", sessions.list.len());
+    let client = client::Client::new(&args.host, "mmclient").block_on()?;
 
     if args.list {
-        return cmd_list(&args, sessions);
+        return cmd_list(&args, &client);
     } else if args.kill {
-        match cmd_kill(&args, &mut conn, sessions) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                conn.close()?;
-                return Err(e);
-            }
-        }
+        return cmd_kill(&args, &client);
     }
 
-    let event_loop: EventLoop<AppEvent> = EventLoop::with_user_event().build()?;
+    let event_loop = winit::event_loop::EventLoop::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
-    let target = args.app.unwrap();
-    let mut matched = find_sessions(sessions, &target);
+    let end_session_on_exit = args.kill_on_exit;
+    let mut app = App {
+        client,
+        args,
+        attachment_window: None,
+        proxy,
+
+        end_session_on_exit,
+    };
+
+    event_loop.run_app(&mut app)?;
+
+    Ok(())
+}
+
+fn init_window(
+    args: &Cli,
+    client: &client::Client,
+    event_loop: &winit::event_loop::ActiveEventLoop,
+    proxy: &winit::event_loop::EventLoopProxy<AppEvent>,
+) -> anyhow::Result<AttachmentWindow> {
+    let sessions = client.list_sessions(DEFAULT_TIMEOUT).block_on()?;
+    let target = args.app.clone().unwrap();
+    let matched = filter_sessions(sessions, args.app.as_ref().unwrap());
+
     if !args.launch && matched.len() > 1 {
         bail!(
                 "multiple sessions found matching {:?}, specify a session ID to attach or use --launch to create a new one.",
@@ -990,114 +792,88 @@ fn main() -> Result<()> {
         bail!("no session found matching {:?}", target);
     }
 
+    let configured_codec = match args.codec.as_deref() {
+        Some("h264") => client::codec::VideoCodec::H264,
+        Some("h265") | None => client::codec::VideoCodec::H265,
+        Some("av1") => client::codec::VideoCodec::Av1,
+        Some(v) => bail!("invalid codec: {:?}", v),
+    };
+
+    let configured_profile = if args.hdr {
+        protocol::VideoProfile::Hdr10
+    } else {
+        protocol::VideoProfile::Hd
+    };
+
+    let session = if args.launch || matched.is_empty() {
+        None
+    } else {
+        Some(matched[0].clone())
+    };
+
     let window_attr = if args.fullscreen {
-        Window::default_attributes()
-            .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
+        window::Window::default_attributes()
+            .with_fullscreen(Some(window::Fullscreen::Borderless(None)))
     } else {
-        Window::default_attributes()
+        window::Window::default_attributes()
     };
 
-    let window_attr = window_attr.with_title("Magic Mirror");
-
-    #[allow(deprecated)]
     let window = Arc::new(event_loop.create_window(window_attr)?);
-    let window_size = window.inner_size();
-    let window_ui_scale = window.scale_factor();
-
-    let desired_params = protocol::VirtualDisplayParameters {
-        resolution: Some(determine_resolution(
-            args.resolution,
-            window_size.width,
-            window_size.height,
-        )),
-        framerate_hz: args.framerate,
-        ui_scale: Some(determine_ui_scale(args.ui_scale.unwrap_or(window_ui_scale))),
-    };
-
-    // TODO: If any gamepads are plugged at startup, we send them as "permanent"
-    // gamepads. This could be exposed as an option.
-    let initial_gamepads = spawn_gamepad_monitor(proxy.clone())?;
-    let gamepads = initial_gamepads
-        .into_iter()
-        .map(|(id, layout)| protocol::Gamepad {
-            id,
-            layout: layout.into(),
-        })
-        .collect();
-
-    let session_id = if args.launch || matched.is_empty() {
-        info!("launching a new session for for app {:?}", target);
-
-        let new_sess = match launch_session(&mut conn, &target, desired_params, gamepads) {
-            Ok(v) => v,
-            Err(e) => {
-                conn.close()?;
-                return Err(e);
-            }
-        };
-
-        new_sess.id
-    } else {
-        let session = matched.pop().unwrap();
-        if session.display_params != Some(desired_params) {
-            debug!("updating session params to {:?}", desired_params);
-
-            match update_session(
-                &mut conn,
-                protocol::UpdateSession {
-                    session_id: session.session_id,
-                    display_params: Some(desired_params),
-                },
-            ) {
-                Ok(_) => (),
-                Err(e) => {
-                    conn.close()?;
-                    return Err(e);
-                }
-            };
-        }
-
-        session.session_id
-    };
-
-    // Refetch the session params.
-    let session = list_sessions(&mut conn)?
-        .list
-        .into_iter()
-        .find(|s| s.session_id == session_id)
-        .ok_or(anyhow!("new session not found in session list"))?;
-
-    let remote_display_params = session.display_params.unwrap();
-    let streaming_resolution = remote_display_params.resolution.unwrap();
-
     let vk = Arc::new(vulkan::VkContext::new(
         window.clone(),
         cfg!(debug_assertions),
     )?);
+
     let renderer = Renderer::new(vk.clone(), window.clone(), args.hdr)?;
 
-    let mut conn = conn.bind_event_loop(proxy.clone());
+    let window_size = window.inner_size();
+    let window_ui_scale = window.scale_factor();
 
-    let audio_stream = audio::AudioStream::new()?;
-    let video_stream = video::VideoStream::new(vk.clone(), proxy.clone());
+    let (width, height) =
+        determine_resolution(args.resolution, window_size.width, window_size.height);
+
+    let desired_params = client::display_params::DisplayParams {
+        width,
+        height,
+        framerate: args.framerate,
+        ui_scale: determine_ui_scale(args.ui_scale.unwrap_or(window_ui_scale)),
+    };
+
+    let initial_gamepads = spawn_gamepad_monitor(proxy.clone())?;
+
+    let session_id = if let Some(session) = session {
+        if session.display_params != desired_params {
+            debug!("updating session params to {:?}", desired_params);
+            client
+                .update_session_display_params(session.id, desired_params, DEFAULT_TIMEOUT)
+                .block_on()?;
+        }
+
+        session.id
+    } else {
+        let target = args.app.as_ref().unwrap();
+        info!("launching a new session for for app {:?}", target);
+
+        client
+            .launch_session(
+                target.clone(),
+                desired_params.clone(),
+                initial_gamepads.clone(),
+                DEFAULT_TIMEOUT,
+            )
+            .block_on()?
+            .id
+    };
+
+    // Refetch the session params.
+    let session = client
+        .list_sessions(DEFAULT_TIMEOUT)
+        .block_on()?
+        .into_iter()
+        .find(|s| s.id == session_id)
+        .ok_or(anyhow!("new session not found in session list"))?;
 
     let now = time::Instant::now();
-
-    debug!("attaching session {:?}", session.session_id);
-    let attachment_sid = conn.send(
-        protocol::Attach {
-            attachment_type: protocol::AttachmentType::Operator.into(),
-            client_name: "mmclient".to_string(),
-            session_id: session.session_id,
-            streaming_resolution: Some(streaming_resolution),
-            video_codec: configured_codec.into(),
-            quality_preset: args.preset + 1,
-            video_profile: configured_profile.into(),
-            ..Default::default()
-        },
-        None,
-        false,
-    )?;
 
     let mut flash = Flash::new();
     flash.set_message("connecting...");
@@ -1108,33 +884,49 @@ fn main() -> Result<()> {
         None
     };
 
-    let app = App {
-        configured_codec,
-        configured_framerate: args.framerate,
+    let delegate = Arc::new(AttachmentProxy::new(proxy.clone()));
+
+    let audio_stream = audio::AudioStream::new()?;
+    let video_stream = video::VideoStream::new(vk.clone(), proxy.clone());
+    spawn_gamepad_monitor(proxy.clone())?;
+
+    let attachment_config = client::AttachmentConfig {
+        width: session.display_params.width,
+        height: session.display_params.height,
+        video_codec: Some(configured_codec),
+        video_profile: Some(configured_profile),
+        quality_preset: Some(args.preset + 1),
+        audio_codec: None,
+        sample_rate: None,
+        channels: Vec::new(),
+        video_stream_seq_offset: 0,
+        audio_stream_seq_offset: 0,
+    };
+
+    debug!(session_id = session.id, "attaching to session");
+    let attachment = client
+        .attach_session(
+            session.id,
+            attachment_config.clone(),
+            delegate.clone(),
+            DEFAULT_TIMEOUT,
+        )
+        .block_on()?;
+
+    Ok(AttachmentWindow {
         configured_resolution: args.resolution,
+        configured_framerate: args.framerate,
         configured_ui_scale: args.ui_scale,
-        configured_preset: args.preset + 1,
-        configured_profile,
 
         window,
-        _proxy: proxy.clone(),
+        attachment,
+        attachment_config,
+        delegate,
 
-        exiting: false,
-        reattaching: false,
-        conn,
-        session_id: session.session_id,
-
-        attachment_sid: Some(attachment_sid),
-        last_keepalive: now,
-        end_session_on_exit: args.kill_on_exit,
-
-        remote_display_params,
-        attachment: None,
+        session,
 
         video_stream,
-        video_stream_seq: None,
         audio_stream,
-        audio_stream_seq: None,
 
         renderer,
         window_width: window_size.width,
@@ -1143,79 +935,20 @@ fn main() -> Result<()> {
 
         minimized: false,
         next_frame: now + MAX_FRAME_TIME,
-        resize_cooldown: None,
         last_frame_received: now,
-        last_sync: now,
+        resize_cooldown: None,
 
-        cursor_modifiers: ModifiersState::default(),
+        cursor_modifiers: winit::keyboard::ModifiersState::default(),
         cursor_pos: None,
 
         flash,
         overlay,
 
         _vk: vk,
-    };
-
-    let mut ml = MainLoop { app: Some(app) };
-    event_loop.run_app(&mut ml)?;
-    Ok(())
+    })
 }
 
-pub enum AppEvent {
-    StreamMessage(u64, MessageType),
-    Datagram(MessageType),
-    StreamClosed(u64),
-    ConnectionClosed,
-    VideoStreamReady(Arc<vulkan::VkImage>, video::VideoStreamParams),
-    VideoFrameAvailable,
-    GamepadEvent(GamepadEvent),
-}
-
-impl From<ConnEvent> for AppEvent {
-    fn from(event: ConnEvent) -> Self {
-        use ConnEvent::*;
-
-        match event {
-            StreamMessage(sid, msg) => AppEvent::StreamMessage(sid, msg),
-            Datagram(msg) => AppEvent::Datagram(msg),
-            StreamClosed(sid) => AppEvent::StreamClosed(sid),
-            ConnectionClosed => AppEvent::ConnectionClosed,
-        }
-    }
-}
-
-impl From<VideoStreamEvent> for AppEvent {
-    fn from(event: VideoStreamEvent) -> Self {
-        use VideoStreamEvent::*;
-
-        match event {
-            VideoStreamReady(tex, params) => AppEvent::VideoStreamReady(tex, params),
-            VideoFrameAvailable => AppEvent::VideoFrameAvailable,
-        }
-    }
-}
-
-impl From<GamepadEvent> for AppEvent {
-    fn from(event: GamepadEvent) -> Self {
-        Self::GamepadEvent(event)
-    }
-}
-
-impl std::fmt::Debug for AppEvent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AppEvent::StreamMessage(sid, msg) => write!(f, "StreamMessage({sid:?}, {msg:?})"),
-            AppEvent::Datagram(msg) => write!(f, "Datagram({msg:?})"),
-            AppEvent::StreamClosed(sid) => write!(f, "StreamClosed({sid:?})"),
-            AppEvent::ConnectionClosed => write!(f, "ConnectionClosed"),
-            AppEvent::VideoStreamReady(_, params) => write!(f, "VideoStreamReady({params:?})"),
-            AppEvent::VideoFrameAvailable => write!(f, "VideoFrameAvailable"),
-            AppEvent::GamepadEvent(gev) => write!(f, "GamepadEvent({gev:?})"),
-        }
-    }
-}
-
-fn init_logging() -> Result<()> {
+fn init_logging() -> anyhow::Result<()> {
     if cfg!(feature = "tracy") {
         use tracing_subscriber::layer::SubscriberExt;
 
@@ -1223,7 +956,8 @@ fn init_logging() -> Result<()> {
             .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
             .from_env()?
             .add_directive("mmclient=trace".parse()?)
-            .add_directive("mm_client=trace".parse()?);
+            .add_directive("mm_client=trace".parse()?)
+            .add_directive("mm_client_common=trace".parse()?);
 
         tracing::subscriber::set_global_default(
             tracing_subscriber::registry()
@@ -1236,7 +970,9 @@ fn init_logging() -> Result<()> {
         let filter = tracing_subscriber::EnvFilter::builder()
             .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
             .from_env()?
-            .add_directive("mmclient=info".parse()?);
+            .add_directive("mmclient=info".parse()?)
+            .add_directive("mm_client=info".parse()?)
+            .add_directive("mm_client_common=info".parse()?);
         tracing_subscriber::fmt().with_env_filter(filter).init();
     }
 
@@ -1250,11 +986,54 @@ fn init_logging() -> Result<()> {
     Ok(())
 }
 
-fn cmd_list(args: &Cli, sessions: protocol::SessionList) -> Result<()> {
+fn determine_ui_scale(scale_factor: f64) -> client::pixel_scale::PixelScale {
+    match scale_factor {
+        x if x < 1.0 => client::pixel_scale::PixelScale::ONE,
+        _ => {
+            // Multiplying by 6/6 captures most possible fractional scales.
+            let numerator = (scale_factor * 6.0).round() as u32;
+            let denominator = 6;
+            if numerator % denominator == 0 {
+                client::pixel_scale::PixelScale::new(numerator / denominator, 1)
+            } else {
+                client::pixel_scale::PixelScale::new(numerator, denominator)
+            }
+        }
+    }
+}
+
+fn determine_resolution(resolution: Resolution, width: u32, height: u32) -> (u32, u32) {
+    match resolution {
+        Resolution::Auto => (width.next_multiple_of(2), height.next_multiple_of(2)),
+        Resolution::Height(h) => {
+            let h = std::cmp::min(h, height);
+            let w = (h * width / height).next_multiple_of(2);
+            (w, h)
+        }
+        Resolution::Custom(w, h) => (w, h),
+    }
+}
+
+fn filter_sessions(sessions: Vec<client::Session>, app: &str) -> Vec<client::Session> {
+    if let Ok(id) = app.parse::<u64>() {
+        return match sessions.into_iter().find(|s| s.id == id) {
+            Some(s) => vec![s],
+            None => vec![],
+        };
+    }
+
+    sessions
+        .into_iter()
+        .filter(|s| s.application_name == app)
+        .collect()
+}
+
+fn cmd_list(args: &Cli, client: &client::Client) -> anyhow::Result<()> {
+    let sessions = client.list_sessions(DEFAULT_TIMEOUT).block_on()?;
     let sessions = if let Some(target) = args.app.as_ref() {
-        find_sessions(sessions, target)
+        filter_sessions(sessions, target)
     } else {
-        sessions.list
+        sessions
     };
 
     if sessions.is_empty() {
@@ -1262,45 +1041,24 @@ fn cmd_list(args: &Cli, sessions: protocol::SessionList) -> Result<()> {
         return Ok(());
     }
 
-    dump_session_list(&sessions)?;
-    Ok(())
-}
-
-fn cmd_kill(args: &Cli, conn: &mut Conn, sessions: protocol::SessionList) -> Result<()> {
-    let sessions = find_sessions(sessions, args.app.as_ref().unwrap());
-    if sessions.is_empty() {
-        println!("No (matching) sessions found.");
-        return Ok(());
-    } else if sessions.len() > 1 {
-        bail!("Multiple sessions matched!");
-    }
-
-    let id = sessions[0].session_id;
-    debug!("killing session {:?}", id);
-    end_session(conn, id)
-}
-
-fn dump_session_list(sessions: &[protocol::session_list::Session]) -> anyhow::Result<()> {
     let now = time::SystemTime::now();
     let mut tw = tabwriter::TabWriter::new(std::io::stdout()).padding(4);
+
+    use std::io::Write as _;
     writeln!(&mut tw, "Session ID\tApplication Name\tRuntime")?;
     writeln!(&mut tw, "----------\t----------------\t-------")?;
 
     for session in sessions {
-        let session_start = session.session_start.and_then(|s| s.try_into().ok());
-        let runtime = match session_start {
-            Some(start) if start < now => {
-                // Round to seconds.
-                let secs = now.duration_since(start)?.as_secs();
-                humantime::format_duration(time::Duration::from_secs(secs)).to_string()
-            }
-            _ => "".to_string(),
+        let runtime = {
+            // Round to seconds.
+            let secs = now.duration_since(session.start)?.as_secs();
+            humantime::format_duration(time::Duration::from_secs(secs)).to_string()
         };
 
         writeln!(
             &mut tw,
             "{}\t{}\t{}",
-            session.session_id, session.application_name, runtime,
+            session.id, session.application_name, runtime,
         )?;
     }
 
@@ -1308,128 +1066,19 @@ fn dump_session_list(sessions: &[protocol::session_list::Session]) -> anyhow::Re
     Ok(())
 }
 
-fn list_sessions(conn: &mut Conn) -> Result<protocol::SessionList> {
-    match conn.blocking_request(protocol::ListSessions {}, INIT_TIMEOUT) {
-        Ok(protocol::MessageType::SessionList(sessions)) => Ok(sessions),
-        Ok(protocol::MessageType::Error(e)) => Err(server_error(e)),
-        Ok(m) => Err(anyhow!("unexpected {} in response to ListSessions", m)),
-        Err(e) => Err(e).context("failed to list sessions"),
-    }
-}
+fn cmd_kill(args: &Cli, client: &client::Client) -> anyhow::Result<()> {
+    let target = args.app.as_ref().unwrap();
+    let sessions = filter_sessions(client.list_sessions(DEFAULT_TIMEOUT).block_on()?, target);
 
-fn update_session(
-    conn: &mut Conn,
-    msg: protocol::UpdateSession,
-) -> Result<protocol::SessionUpdated> {
-    match conn.blocking_request(msg, INIT_TIMEOUT) {
-        Ok(protocol::MessageType::SessionUpdated(session)) => Ok(session),
-        Ok(protocol::MessageType::Error(e)) => Err(server_error(e)),
-        Ok(m) => Err(anyhow!("unexpected {} in response to UpdateSession", m)),
-        Err(e) => Err(e).context("failed to update session"),
-    }
-}
-
-fn launch_session(
-    conn: &mut Conn,
-    app: &str,
-    display_params: protocol::VirtualDisplayParameters,
-    permanent_gamepads: Vec<protocol::Gamepad>,
-) -> Result<protocol::SessionLaunched> {
-    info!("launching session for app {:?}", app);
-
-    match conn.blocking_request(
-        protocol::LaunchSession {
-            application_name: app.to_string(),
-            display_params: Some(display_params),
-            permanent_gamepads,
-        },
-        INIT_TIMEOUT,
-    ) {
-        Ok(protocol::MessageType::SessionLaunched(session)) => Ok(session),
-        Ok(protocol::MessageType::Error(e)) => Err(server_error(e)),
-        Ok(m) => Err(anyhow!("unexpected {} in response to LaunchSession", m)),
-        Err(e) => Err(e).context("failed to launch session"),
-    }
-}
-
-fn end_session(conn: &mut Conn, id: u64) -> Result<()> {
-    match conn.blocking_request(protocol::EndSession { session_id: id }, INIT_TIMEOUT) {
-        Ok(protocol::MessageType::SessionEnded(_)) => Ok(()),
-        Ok(protocol::MessageType::Error(e)) => Err(server_error(e)),
-        Ok(m) => Err(anyhow!("unexpected {} in response to EndSession", m)),
-        Err(e) => Err(e).context("failed to end session"),
-    }
-}
-
-fn server_error(msg: protocol::Error) -> anyhow::Error {
-    if msg.error_text.is_empty() {
-        anyhow!("{}", msg.err_code().as_str_name())
-    } else {
-        anyhow!("{}: {}", msg.err_code().as_str_name(), msg.error_text)
-    }
-}
-
-fn find_sessions(
-    sessions: protocol::SessionList,
-    app: &str,
-) -> Vec<protocol::session_list::Session> {
-    if let Ok(id) = app.parse::<u64>() {
-        return match sessions.list.into_iter().find(|s| s.session_id == id) {
-            Some(s) => vec![s],
-            None => vec![],
-        };
+    if sessions.is_empty() {
+        println!("No (matching) sessions found.");
+        return Ok(());
+    } else if sessions.len() > 1 {
+        bail!("Multiple sessions matched!");
     }
 
-    sessions
-        .list
-        .into_iter()
-        .filter(|s| s.application_name == app)
-        .collect()
-}
-
-fn determine_resolution(resolution: Resolution, width: u32, height: u32) -> protocol::Size {
-    match resolution {
-        Resolution::Auto => protocol::Size {
-            width: width.next_multiple_of(2),
-            height: height.next_multiple_of(2),
-        },
-        Resolution::Height(h) => {
-            let h = std::cmp::min(h, height);
-
-            let w = (h * width / height).next_multiple_of(2);
-            protocol::Size {
-                width: w,
-                height: h,
-            }
-        }
-        Resolution::Custom(w, h) => protocol::Size {
-            width: w,
-            height: h,
-        },
-    }
-}
-
-fn determine_ui_scale(scale_factor: f64) -> protocol::PixelScale {
-    match scale_factor {
-        x if x < 1.0 => protocol::PixelScale {
-            numerator: 1,
-            denominator: 1,
-        },
-        _ => {
-            // Multiplying by 6/6 captures most possible fractional scales.
-            let numerator = (scale_factor * 6.0).round() as u32;
-            let denominator = 6;
-            if numerator % denominator == 0 {
-                protocol::PixelScale {
-                    numerator: numerator / denominator,
-                    denominator: 1,
-                }
-            } else {
-                protocol::PixelScale {
-                    numerator,
-                    denominator,
-                }
-            }
-        }
-    }
+    client
+        .end_session(sessions[0].id, DEFAULT_TIMEOUT)
+        .block_on()?;
+    Ok(())
 }

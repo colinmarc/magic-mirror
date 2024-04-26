@@ -14,18 +14,16 @@ use ffmpeg_next as ffmpeg;
 use ffmpeg_sys_next as ffmpeg_sys;
 use tracing::{debug, error, instrument, trace, trace_span, warn};
 
-use crate::{
-    packet_ring::{Packet as Undecoded, PacketRing},
-    stats::STATS,
-    vulkan::*,
-};
+use crate::{stats::STATS, vulkan::*};
+use mm_client_common as client;
 use mm_protocol as protocol;
 
 const DECODER_INIT_TIMEOUT: time::Duration = time::Duration::from_secs(5);
 
+type Undecoded = std::sync::Arc<client::Packet>;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct FrameMetadata {
-    pub attachment_id: u64,
     pub stream_seq: u64,
     pub seq: u64,
     pub pts: u64,
@@ -92,8 +90,6 @@ impl std::fmt::Debug for StreamState {
 
 pub struct VideoStream<T: From<VideoStreamEvent> + Send + 'static> {
     state: StreamState,
-    ring: PacketRing,
-
     proxy: winit::event_loop::EventLoopProxy<T>,
     vk: Arc<VkContext>,
 }
@@ -102,16 +98,16 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
     pub fn new(vk: Arc<VkContext>, proxy: winit::event_loop::EventLoopProxy<T>) -> Self {
         Self {
             state: StreamState::Empty,
-            ring: PacketRing::new(),
-
             proxy,
             vk,
         }
     }
 
+    /// Initiates a restart of the current video stream. The restart completes
+    /// once enough packets have been received to determine the stream metadata,
+    /// at which point a VideoStreamReady event is sent with the new texture.
     pub fn reset(
         &mut self,
-        attachment_id: u64,
         stream_seq: u64,
         width: u32,
         height: u32,
@@ -125,14 +121,7 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
             "starting or restarting video stream"
         );
 
-        let init = DecoderInit::new(
-            self.vk.clone(),
-            attachment_id,
-            stream_seq,
-            codec,
-            width,
-            height,
-        )?;
+        let init = DecoderInit::new(self.vk.clone(), stream_seq, codec, width, height)?;
 
         use StreamState::*;
         let state = std::mem::replace(&mut self.state, Empty);
@@ -145,59 +134,47 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
         Ok(())
     }
 
-    pub fn recv_chunk(&mut self, chunk: protocol::VideoChunk) -> anyhow::Result<()> {
+    pub fn recv_packet(&mut self, buf: Undecoded) -> anyhow::Result<()> {
         use StreamState::*;
 
-        trace!(
-            stream_seq = chunk.stream_seq,
-            seq = chunk.seq,
-            chunk = chunk.chunk,
-            num_chunks = chunk.num_chunks,
-            len = chunk.data.len(),
-            "received video chunk",
-        );
-
-        STATS.frame_chunk_received(chunk.stream_seq, chunk.seq, chunk.data.len());
-        self.ring.recv_chunk(chunk)?;
+        let stream_seq = buf.stream_seq();
+        let seq = buf.seq();
+        let len = buf.len();
+        trace!(stream_seq, seq, len, "received video packet",);
 
         // Feed the existing stream.
         if let Streaming(ref mut dec) | Restarting(ref mut dec, _) = self.state {
-            for pkt in self.ring.drain_completed(dec.stream_seq) {
-                let len = bytes::Buf::remaining(&pkt);
+            if dec.stream_seq == stream_seq {
                 trace!(
-                    stream_seq = dec.stream_seq,
-                    seq = pkt.seq,
-                    pts = pkt.pts,
+                    stream_seq,
+                    seq,
+                    pts = buf.pts(),
                     len,
                     "received full video packet",
                 );
 
-                STATS.full_frame_received(dec.stream_seq, pkt.seq, len);
-                dec.send_packet(pkt)?;
+                STATS.full_frame_received(stream_seq, seq, len);
+                dec.send_packet(buf)?;
+                return Ok(());
             }
         }
 
         // Feed the new stream, if there is one.
         let new_stream_ready = match self.state {
-            Empty | Streaming(_) => false,
-            Initializing(ref mut init) | Restarting(_, ref mut init) => {
-                let mut success = false;
-                for pkt in self.ring.drain_completed(init.stream_seq) {
-                    trace!(
-                        stream_seq = init.stream_seq,
-                        seq = pkt.seq,
-                        len = bytes::Buf::remaining(&pkt),
-                        "received full video packet for initializing stream",
-                    );
+            Initializing(ref mut init) | Restarting(_, ref mut init)
+                if init.stream_seq == stream_seq =>
+            {
+                trace!(
+                    stream_seq,
+                    seq,
+                    len,
+                    "received full video packet for initializing stream",
+                );
 
-                    if init.send_packet(pkt)? {
-                        success = true;
-                        break;
-                    }
-                }
-
-                success
+                // Returns true if the stream is ready.
+                init.send_packet(buf)?
             }
+            _ => false,
         };
 
         if new_stream_ready {
@@ -209,13 +186,9 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
                 Streaming(_) | Empty => unreachable!(),
             };
 
-            self.proxy
-                .send_event(VideoStreamEvent::VideoStreamReady(texture, params).into())
-                .ok();
-
-            if dec.stream_seq > 0 {
-                self.ring.discard(dec.stream_seq - 1);
-            }
+            let _ = self
+                .proxy
+                .send_event(VideoStreamEvent::VideoStreamReady(texture, params).into());
 
             self.state = Streaming(dec);
             trace!(state = ?self.state, "video stream updated")
@@ -278,7 +251,6 @@ struct CPUDecoder {
 /// to start decoding and recieves a single frame. It also handles timing out
 /// if it never receives any metadata in the (otherwise valid) video stream.
 struct DecoderInit {
-    attachment_id: u64,
     stream_seq: u64,
     width: u32,
     height: u32,
@@ -292,7 +264,6 @@ struct DecoderInit {
 impl DecoderInit {
     fn new(
         vk: Arc<VkContext>,
-        attachment_id: u64,
         stream_seq: u64,
         codec: protocol::VideoCodec,
         width: u32,
@@ -351,7 +322,6 @@ impl DecoderInit {
         let packet = ffmpeg::Packet::empty();
 
         Ok(Self {
-            attachment_id,
             stream_seq,
             width,
             height,
@@ -363,15 +333,14 @@ impl DecoderInit {
         })
     }
 
-    /// Feed a packet into the decoder. Returns true if the paramaters of the
+    /// Feed a packet into the decoder. Returns true if the parameters of the
     /// stream have been recovered and it's safe to call into_decoder. Returns
     /// an error only on timeout.
     fn send_packet(&mut self, buf: Undecoded) -> anyhow::Result<bool> {
         let info = FrameMetadata {
-            attachment_id: self.attachment_id,
             stream_seq: self.stream_seq,
-            seq: buf.seq,
-            pts: buf.pts,
+            seq: buf.seq(),
+            pts: buf.pts(),
         };
 
         if self.started.elapsed() > DECODER_INIT_TIMEOUT {
@@ -590,7 +559,6 @@ impl DecoderInit {
 
         // Spawn another thread that receives packets on one channel and sends
         // completed pictures on another.
-        let attachment_id = self.attachment_id;
         let stream_seq = self.stream_seq;
         let mut decoder = self.decoder;
         let mut packet = self.packet;
@@ -609,10 +577,9 @@ impl DecoderInit {
                     let _guard = span.enter();
 
                     let info = FrameMetadata {
-                        attachment_id,
                         stream_seq,
-                        seq: buf.seq,
-                        pts: buf.pts,
+                        seq: buf.seq(),
+                        pts: buf.pts(),
                     };
 
                     copy_packet(&mut packet, buf)?;
@@ -972,9 +939,6 @@ fn receive_frame(
 
 #[instrument(skip_all)]
 fn copy_packet(pkt: &mut ffmpeg::Packet, buf: Undecoded) -> anyhow::Result<()> {
-    use bytes::Buf;
-    use std::io::Read;
-
     // It's necessary to reset the packet metadata for each NAL.
     unsafe {
         use ffmpeg::packet::Mut;
@@ -982,21 +946,19 @@ fn copy_packet(pkt: &mut ffmpeg::Packet, buf: Undecoded) -> anyhow::Result<()> {
     }
 
     // Copy into data.
-    match pkt.size().cmp(&buf.remaining()) {
+    let packet_len = buf.len();
+    match pkt.size().cmp(&packet_len) {
         std::cmp::Ordering::Less => {
-            pkt.grow(buf.remaining() - pkt.size());
+            pkt.grow(packet_len - pkt.size());
         }
         std::cmp::Ordering::Greater => {
-            // This is infuriatingly inconsistent.
-            pkt.shrink(buf.remaining());
+            // Takes the new total, not the amount to shrink.
+            pkt.shrink(packet_len);
         }
         std::cmp::Ordering::Equal => {}
     };
 
-    buf.reader()
-        .read_exact(pkt.data_mut().unwrap())
-        .context("copying into packet buffer")?;
-
+    buf.copy_to_slice(pkt.data_mut().unwrap());
     Ok(())
 }
 
