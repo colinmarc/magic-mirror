@@ -1,0 +1,17 @@
+[package]
+name = "mm-client-common"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+name = "mm_client_common"
+
+
+[dependencies]
+mm-protocol = { path = "../mm-protocol" }
+uniffi = "0.27"
+thiserror = "1.0.58"
+
+[build-dependencies]
+uniffi = { version = "0.27", features = ["build"] }
