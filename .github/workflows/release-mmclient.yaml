@@ -14,9 +14,10 @@ jobs:
           targets: x86_64-unknown-linux-gnu
 
       - name: install deps
-        run: sudo apt install \
-          nasm cmake protobuf-compiler libxkbcommon-dev libwayland-dev \
-          ffmpeg libavutil-dev libavformat-dev libavdevice-dev libavfilter-dev
+        run: |
+          sudo apt install \
+            nasm cmake protobuf-compiler libxkbcommon-dev libwayland-dev libasound2-dev \
+            ffmpeg libavutil-dev libavformat-dev libavdevice-dev libavfilter-dev
 
       - uses: actions/checkout@v4
       - uses: swatinem/rust-cache@v2
@@ -48,7 +49,9 @@ jobs:
           targets: aarch64-apple-darwin
 
       - name: install deps
-        run: brew install ffmpeg@6
+        run: |
+          brew install ffmpeg@6 protobuf
+          brew link ffmpeg@6
 
       - uses: actions/checkout@v4
       - uses: swatinem/rust-cache@v2
@@ -65,7 +68,7 @@ jobs:
           cp -r mm-client/target/aarch64-apple-darwin/release/mmclient README.md \
             "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
           cp LICENSES/MIT.txt "${RUNNER_TEMP}/${GITHUB_REF_NAME}/LICENSE.txt"
-          tar -C "${RUNNER_TEMP}" --numeric-owner -cvzf "${GITHUB_REF_NAME}-darwin-arm64.tar.gz" "$GITHUB_REF_NAME"
+          gtar -C "${RUNNER_TEMP}" --numeric-owner -cvzf "${GITHUB_REF_NAME}-darwin-arm64.tar.gz" "$GITHUB_REF_NAME"
       - name: upload tarball
         uses: actions/upload-artifact@v4
         with:
