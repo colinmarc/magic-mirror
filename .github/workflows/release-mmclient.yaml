@@ -38,6 +38,7 @@ jobs:
       - name: upload tarball
         uses: actions/upload-artifact@v4
         with:
+          name: mmclient-linux
           path: mmclient-*.tar.gz
 
   create_tarball_macos:
@@ -72,6 +73,7 @@ jobs:
       - name: upload tarball
         uses: actions/upload-artifact@v4
         with:
+          name: mmclient-mac
           path: mmclient-*.tar.gz
 
   create_release:
@@ -92,6 +94,8 @@ jobs:
 
       - name: download artifacts
         uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
       - name: create release
         uses: softprops/action-gh-release@v2
         with:
