@@ -235,6 +235,7 @@ message Error {
     ERROR_PROTOCOL_UNEXPECTED_MESSAGE = 21;
     ERROR_PROTOCOL_INCORRECT_STREAM = 22;
     ERROR_PROTOCOL_UKNOWN_MESSAGE_TYPE = 23;
+    ERROR_TIMEOUT = 24;
     // Used to indicate that the server refuses to launch a session.
     ERROR_SESSION_LAUNCH_FAILED = 30;
     ERROR_SESSION_LAUNCH_REFUSED = 31;

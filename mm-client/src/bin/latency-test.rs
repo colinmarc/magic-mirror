@@ -4,15 +4,23 @@
 
 use std::{sync::Arc, time};
 
-use anyhow::bail;
+use anyhow::{bail, Context as _};
 use ash::vk;
 use clap::Parser;
-use mm_client::{conn::*, video::*, vulkan::*};
-use mm_protocol as protocol;
+use pollster::FutureExt as _;
 use tracing::{debug, error, warn};
 use winit::event_loop::EventLoop;
 
+use mm_client::{
+    delegate::{AttachmentEvent, AttachmentProxy},
+    video::*,
+    vulkan::*,
+};
+use mm_client_common as client;
+use mm_protocol as protocol;
+
 const APP_DIMENSION: u32 = 256;
+const DEFAULT_TIMEOUT: time::Duration = time::Duration::from_secs(1);
 
 #[derive(Debug, Parser)]
 #[command(name = "mmclient")]
@@ -33,12 +41,9 @@ struct Cli {
 }
 
 pub enum AppEvent {
-    StreamMessage(u64, protocol::MessageType),
-    Datagram(protocol::MessageType),
-    StreamClosed(u64),
-    ConnectionClosed,
     VideoStreamReady(Arc<VkImage>, VideoStreamParams),
     VideoFrameAvailable,
+    AttachmentEvent(AttachmentEvent),
 }
 
 impl std::fmt::Debug for AppEvent {
@@ -46,26 +51,16 @@ impl std::fmt::Debug for AppEvent {
         use AppEvent::*;
 
         match self {
-            StreamMessage(sid, msg) => write!(f, "StreamMessage({sid}, {msg:?})"),
-            Datagram(msg) => write!(f, "Datagram({msg:?})"),
-            StreamClosed(sid) => write!(f, "StreamClosed({sid})"),
-            ConnectionClosed => write!(f, "ConnectionClosed"),
             VideoStreamReady(_, params) => write!(f, "VideoStreamReady({params:?})"),
             VideoFrameAvailable => write!(f, "VideoFrameAvailable"),
+            AttachmentEvent(ev) => std::fmt::Debug::fmt(ev, f),
         }
     }
 }
 
-impl From<ConnEvent> for AppEvent {
-    fn from(event: ConnEvent) -> Self {
-        use ConnEvent::*;
-
-        match event {
-            StreamMessage(sid, msg) => AppEvent::StreamMessage(sid, msg),
-            Datagram(msg) => AppEvent::Datagram(msg),
-            StreamClosed(sid) => AppEvent::StreamClosed(sid),
-            ConnectionClosed => AppEvent::ConnectionClosed,
-        }
+impl From<AttachmentEvent> for AppEvent {
+    fn from(event: AttachmentEvent) -> Self {
+        Self::AttachmentEvent(event)
     }
 }
 
@@ -80,17 +75,19 @@ impl From<VideoStreamEvent> for AppEvent {
     }
 }
 
+struct App {
+    client: client::Client,
+    args: Cli,
+    proxy: winit::event_loop::EventLoopProxy<AppEvent>,
+    win: Option<LatencyTest>,
+}
+
 struct LatencyTest {
+    attachment: client::Attachment,
+    session_id: u64,
     stream: VideoStream<AppEvent>,
-    attachment_id: Option<u64>,
-    stream_seq: Option<u64>,
     video_texture: Option<Arc<VkImage>>,
 
-    codec: protocol::VideoCodec,
-
-    conn: BoundConn,
-    attachment_sid: u64,
-    last_keepalive: time::Instant,
     frames_recvd: usize,
 
     copy_cb: vk::CommandBuffer,
@@ -109,150 +106,69 @@ struct LatencyTest {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = Cli::parse();
+    init_logging()?;
 
-    if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
-        tracing_subscriber::fmt().with_env_filter(env_filter).init();
-    } else {
-        tracing_subscriber::fmt().init();
-    }
+    let args = Cli::parse();
 
     // Invisible window.
     let event_loop: EventLoop<AppEvent> = EventLoop::with_user_event().build()?;
-    let attr = winit::window::Window::default_attributes().with_visible(false);
-
-    #[allow(deprecated)]
-    let window = Arc::new(event_loop.create_window(attr)?);
-    let vk = Arc::new(VkContext::new(window.clone(), cfg!(debug_assertions))?);
-
-    let codec = match args.codec.as_deref() {
-        Some("h264") => protocol::VideoCodec::H264,
-        Some("h265") | None => protocol::VideoCodec::H265,
-        Some("av1") => protocol::VideoCodec::Av1,
-        Some(v) => bail!("invalid codec: {:?}", v),
-    };
-
-    let resolution = protocol::Size {
-        width: APP_DIMENSION,
-        height: APP_DIMENSION,
-    };
-
-    let framerate = args.framerate.unwrap_or(60);
-
-    // Create session, attach
-    let mut conn = Conn::new(&args.host)?;
-    let sess = match conn.blocking_request(
-        protocol::LaunchSession {
-            application_name: "latency-test".to_string(),
-            display_params: Some(protocol::VirtualDisplayParameters {
-                resolution: Some(resolution),
-                framerate_hz: framerate,
-                ..Default::default()
-            }),
-            ..Default::default()
-        },
-        time::Duration::from_secs(1),
-    )? {
-        protocol::MessageType::SessionLaunched(protocol::SessionLaunched { id, .. }) => id,
-        msg => bail!("unexpected response: {}", msg),
-    };
-
-    let attachment_sid = conn.send(
-        protocol::Attach {
-            session_id: sess,
-            attachment_type: protocol::AttachmentType::Operator.into(),
-            client_name: "latency-test".to_string(),
-            video_codec: codec.into(),
-            video_profile: protocol::VideoProfile::Hd.into(),
-            streaming_resolution: Some(resolution),
-            ..Default::default()
-        },
-        None,
-        false,
-    )?;
-
     let proxy = event_loop.create_proxy();
-    let conn = conn.bind_event_loop(proxy.clone());
 
-    // Just big enough for the Y plane.
-    let copy_buffer = create_host_buffer(
-        &vk.device,
-        vk.device_info.host_visible_mem_type_index,
-        vk::BufferUsageFlags::TRANSFER_DST,
-        (APP_DIMENSION * APP_DIMENSION) as usize,
-    )?;
+    let client = client::Client::new(&args.host, "latency-test")
+        .block_on()
+        .context("failed to connect")?;
 
-    let copy_cb = create_command_buffer(&vk.device, vk.present_queue.command_pool)?;
-    let copy_fence = create_fence(&vk.device, false)?;
-
-    let mut app = LatencyTest {
-        conn,
-        attachment_id: None,
-        attachment_sid,
-
-        codec,
-
-        stream: VideoStream::new(vk.clone(), proxy.clone()),
-        stream_seq: None,
-        video_texture: None,
-        frames_recvd: 0,
-        last_keepalive: time::Instant::now(),
-
-        copy_cb,
-        copy_fence,
-        copy_buffer,
-
-        next_block: 0,
-        block_started: time::Instant::now(),
-        num_tests: args.samples.unwrap_or(256),
-        histogram: histo::Histogram::with_buckets(10),
-
-        first_frame_recvd: None,
-        total_video_bytes: 0,
-
-        vk: vk.clone(),
+    let mut app = App {
+        client,
+        args,
+        proxy,
+        win: None,
     };
 
     event_loop.run_app(&mut app)?;
 
-    drop(app.stream);
-    unsafe {
-        vk.device
-            .free_command_buffers(vk.present_queue.command_pool, &[app.copy_cb]);
-        vk.device.destroy_fence(app.copy_fence, None);
-        destroy_host_buffer(&vk.device, &app.copy_buffer);
-    }
+    if let Some(win) = app.win.take() {
+        drop(win.stream);
+        unsafe {
+            win.vk
+                .device
+                .free_command_buffers(win.vk.present_queue.command_pool, &[win.copy_cb]);
+            win.vk.device.destroy_fence(win.copy_fence, None);
+            destroy_host_buffer(&win.vk.device, &win.copy_buffer);
+        }
 
-    debug!("killing session...");
-    app.conn
-        .send(protocol::Detach {}, Some(attachment_sid), true)?;
+        println!("{}", win.histogram);
 
-    app.conn
-        .send(protocol::EndSession { session_id: sess }, None, true)?;
-
-    // Give the server a chance to clean up.
-    std::thread::sleep(time::Duration::from_millis(1000));
-
-    debug!("disconnecting...");
-    app.conn.close()?;
-
-    println!("{}", app.histogram);
-
-    if let Some(first_frame_recvd) = app.first_frame_recvd {
-        println!(
-            "transfer rate: {:.2} mpbs ({:.2}kb per frame)",
-            app.total_video_bytes as f64 * 8.0
-                / 1_000_000.0
-                / first_frame_recvd.elapsed().as_secs_f64(),
-            app.total_video_bytes as f64 / 1_000.0 / app.frames_recvd as f64
-        );
+        if let Some(first_frame_recvd) = win.first_frame_recvd {
+            println!(
+                "transfer rate: {:.2} mpbs ({:.2}kb per frame)",
+                win.total_video_bytes as f64 * 8.0
+                    / 1_000_000.0
+                    / first_frame_recvd.elapsed().as_secs_f64(),
+                win.total_video_bytes as f64 / 1_000.0 / win.frames_recvd as f64
+            );
+        }
     }
 
     Ok(())
 }
 
-impl winit::application::ApplicationHandler<AppEvent> for LatencyTest {
-    fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {}
+impl winit::application::ApplicationHandler<AppEvent> for App {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        if self.win.is_some() {
+            return;
+        }
+
+        match start_test(&self.args, &self.client, event_loop, self.proxy.clone()) {
+            Ok(w) => {
+                self.win = Some(w);
+            }
+            Err(e) => {
+                error!("failed to start test: {:#}", e);
+                event_loop.exit();
+            }
+        }
+    }
 
     fn window_event(
         &mut self,
@@ -263,19 +179,22 @@ impl winit::application::ApplicationHandler<AppEvent> for LatencyTest {
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        if self.last_keepalive.elapsed() > time::Duration::from_secs(1) {
-            self.conn
-                .send(protocol::KeepAlive {}, Some(self.attachment_sid), false)
-                .unwrap();
-            self.last_keepalive = time::Instant::now();
-        } else if self.block_started.elapsed() > time::Duration::from_secs(3) {
+        let Some(win) = &self.win else {
+            return;
+        };
+
+        if win.block_started.elapsed() > time::Duration::from_secs(3) {
             error!("timed out waiting for block");
             event_loop.exit();
         }
     }
 
     fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: AppEvent) {
-        match self.event(event) {
+        let Some(win) = &mut self.win else {
+            return;
+        };
+
+        match win.event(event) {
             Ok(true) => (),
             Ok(false) => event_loop.exit(),
             Err(e) => {
@@ -284,58 +203,45 @@ impl winit::application::ApplicationHandler<AppEvent> for LatencyTest {
             }
         }
     }
+
+    fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        let Some(win) = &self.win else {
+            return;
+        };
+
+        let _ = win.attachment.detach().block_on();
+        let _ = self
+            .client
+            .end_session(win.session_id, DEFAULT_TIMEOUT)
+            .block_on();
+    }
 }
 
 impl LatencyTest {
     fn event(&mut self, event: AppEvent) -> anyhow::Result<bool> {
         match event {
-            AppEvent::StreamMessage(_, protocol::MessageType::VideoChunk(chunk))
-            | AppEvent::Datagram(protocol::MessageType::VideoChunk(chunk)) => {
+            AppEvent::AttachmentEvent(AttachmentEvent::VideoStreamStart(stream_seq, params)) => {
+                assert_eq!(params.width, APP_DIMENSION);
+                assert_eq!(params.height, APP_DIMENSION);
+
+                self.stream
+                    .reset(stream_seq, APP_DIMENSION, APP_DIMENSION, params.codec)?;
+            }
+            AppEvent::AttachmentEvent(AttachmentEvent::VideoPacket(packet)) => {
                 if self.first_frame_recvd.is_none() {
                     self.first_frame_recvd = Some(time::Instant::now());
                 }
 
-                if self.stream_seq.is_none() && self.attachment_id.is_some() {
-                    self.stream_seq = Some(chunk.stream_seq);
-                    self.stream.reset(
-                        self.attachment_id.unwrap(),
-                        chunk.stream_seq,
-                        APP_DIMENSION,
-                        APP_DIMENSION,
-                        self.codec,
-                    )?;
-                }
-
-                self.total_video_bytes += chunk.data.len();
-                self.stream.recv_chunk(chunk)?;
+                self.total_video_bytes += packet.len();
+                self.stream.recv_packet(packet)?;
             }
-            AppEvent::StreamMessage(_, protocol::MessageType::AudioChunk(_))
-            | AppEvent::Datagram(protocol::MessageType::AudioChunk(_)) => (),
-            AppEvent::StreamMessage(sid, msg) if sid == self.attachment_sid => match msg {
-                protocol::MessageType::Attached(protocol::Attached {
-                    session_id,
-                    attachment_id,
-                    ..
-                }) => {
-                    if self.attachment_id.is_some() {
-                        bail!("already attached to session");
-                    } else {
-                        self.attachment_id = Some(sid);
-                        debug!(attachment_id, session_id, "attached to session");
-                    }
-                }
-                protocol::MessageType::Error(protocol::Error {
-                    err_code,
-                    error_text,
-                    ..
-                }) => {
-                    bail!("server error: {}: {}", err_code, error_text);
-                }
-                msg => debug!("unexpected message: {}", msg),
-            },
+            AppEvent::AttachmentEvent(AttachmentEvent::AttachmentEnded) => {
+                bail!("server closed connection");
+            }
+            AppEvent::AttachmentEvent(_) => (),
             AppEvent::VideoStreamReady(tex, params) => {
-                assert_eq!(params.width, 256);
-                assert_eq!(params.height, 256);
+                assert_eq!(params.width, APP_DIMENSION);
+                assert_eq!(params.height, APP_DIMENSION);
 
                 self.video_texture = Some(tex);
             }
@@ -347,7 +253,7 @@ impl LatencyTest {
                         std::cmp::Ordering::Less => (),
                         std::cmp::Ordering::Equal => {
                             debug!("starting test...");
-                            self.send_space()?;
+                            self.send_space();
                             self.block_started = time::Instant::now();
                             self.next_block = 0;
                         }
@@ -360,36 +266,25 @@ impl LatencyTest {
                     }
                 }
             }
-            AppEvent::ConnectionClosed => bail!("server closed connection"),
-            ev => debug!("unxpected event: {:?}", ev),
         }
 
         Ok(true)
     }
 
-    fn send_space(&mut self) -> anyhow::Result<()> {
+    fn send_space(&mut self) {
         debug!("sending space");
-        self.conn.send(
-            protocol::KeyboardInput {
-                key: protocol::keyboard_input::Key::Space.into(),
-                state: protocol::keyboard_input::KeyState::Pressed.into(),
-                ..Default::default()
-            },
-            Some(self.attachment_sid),
-            false,
-        )?;
 
-        self.conn.send(
-            protocol::KeyboardInput {
-                key: protocol::keyboard_input::Key::Space.into(),
-                state: protocol::keyboard_input::KeyState::Released.into(),
-                ..Default::default()
-            },
-            Some(self.attachment_sid),
-            false,
-        )?;
+        self.attachment.keyboard_input(
+            client::input::Key::Space,
+            client::input::KeyState::Pressed,
+            0,
+        );
 
-        Ok(())
+        self.attachment.keyboard_input(
+            client::input::Key::Space,
+            client::input::KeyState::Released,
+            0,
+        );
     }
 
     fn check_frame(&mut self) -> anyhow::Result<()> {
@@ -414,7 +309,7 @@ impl LatencyTest {
 
             self.next_block += 1;
             self.block_started = time::Instant::now();
-            self.send_space()?;
+            self.send_space();
         } else if self.next_block > 0 {
             warn!("neither current or next block are highlighted");
         }
@@ -505,4 +400,107 @@ impl LatencyTest {
         device.wait_for_fences(&[self.copy_fence], true, u64::MAX)?;
         Ok(())
     }
+}
+
+fn start_test(
+    args: &Cli,
+    client: &client::Client,
+    event_loop: &winit::event_loop::ActiveEventLoop,
+    proxy: winit::event_loop::EventLoopProxy<AppEvent>,
+) -> anyhow::Result<LatencyTest> {
+    let attr = winit::window::Window::default_attributes().with_visible(false);
+
+    let window = Arc::new(event_loop.create_window(attr)?);
+    let vk = Arc::new(VkContext::new(window.clone(), cfg!(debug_assertions))?);
+
+    let codec = match args.codec.as_deref() {
+        Some("h264") => protocol::VideoCodec::H264,
+        Some("h265") | None => protocol::VideoCodec::H265,
+        Some("av1") => protocol::VideoCodec::Av1,
+        Some(v) => bail!("invalid codec: {:?}", v),
+    };
+
+    // Create session, attach
+    let sess = client
+        .launch_session(
+            "latency-test".to_string(),
+            client::display_params::DisplayParams {
+                width: APP_DIMENSION,
+                height: APP_DIMENSION,
+                framerate: args.framerate.unwrap_or(60),
+                ui_scale: client::pixel_scale::PixelScale::ONE,
+            },
+            vec![],
+            DEFAULT_TIMEOUT,
+        )
+        .block_on()
+        .context("failed to create session")?;
+
+    let config = client::AttachmentConfig {
+        width: APP_DIMENSION,
+        height: APP_DIMENSION,
+        video_codec: codec.into(),
+        video_profile: None,
+        quality_preset: Some(6),
+        audio_codec: None,
+        sample_rate: None,
+        channels: vec![],
+        video_stream_seq_offset: 0,
+        audio_stream_seq_offset: 0,
+    };
+
+    let delegate = Arc::new(AttachmentProxy::new(proxy.clone()));
+    let attachment = client
+        .attach_session(sess.id, config, delegate, DEFAULT_TIMEOUT)
+        .block_on()
+        .context("failed to attach")?;
+
+    // Just big enough for the Y plane.
+    let copy_buffer = create_host_buffer(
+        &vk.device,
+        vk.device_info.host_visible_mem_type_index,
+        vk::BufferUsageFlags::TRANSFER_DST,
+        (APP_DIMENSION * APP_DIMENSION) as usize,
+    )?;
+
+    let copy_cb = create_command_buffer(&vk.device, vk.present_queue.command_pool)?;
+    let copy_fence = create_fence(&vk.device, false)?;
+
+    Ok(LatencyTest {
+        attachment,
+        session_id: sess.id,
+
+        stream: VideoStream::new(vk.clone(), proxy.clone()),
+        video_texture: None,
+        frames_recvd: 0,
+
+        copy_cb,
+        copy_fence,
+        copy_buffer,
+
+        next_block: 0,
+        block_started: time::Instant::now(),
+        num_tests: args.samples.unwrap_or(256),
+        histogram: histo::Histogram::with_buckets(10),
+
+        first_frame_recvd: None,
+        total_video_bytes: 0,
+
+        vk: vk.clone(),
+    })
+}
+
+fn init_logging() -> anyhow::Result<()> {
+    if let Ok(env_filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    } else {
+        let filter = tracing_subscriber::EnvFilter::builder()
+            .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
+            .from_env()?
+            .add_directive("mm_client=info".parse()?)
+            .add_directive("mm_client_common=info".parse()?);
+        tracing_subscriber::fmt().with_env_filter(filter).init();
+    }
+
+    Ok(())
 }

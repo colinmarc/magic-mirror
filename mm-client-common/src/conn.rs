@@ -2,6 +2,14 @@
 //
 // SPDX-License-Identifier: MIT
 
+const DEFAULT_PORT: u16 = 9599;
+const MAX_QUIC_PACKET_SIZE: usize = 1350;
+
+const SOCKET: mio::Token = mio::Token(0);
+const WAKER: mio::Token = mio::Token(1);
+
+const CONNECT_TIMEOUT: time::Duration = time::Duration::from_secs(5);
+
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -9,181 +17,53 @@ use std::{
     time,
 };
 
-use anyhow::{anyhow, bail, Context};
-use crossbeam_channel as crossbeam;
+use futures::channel::oneshot;
+use tracing::{debug, error, trace, warn};
+
 use mm_protocol as protocol;
-use tracing::{debug, error, instrument, trace, warn};
 
-use crate::stats::STATS;
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ConnError {
+    #[error("invalid address: {0}")]
+    InvalidAddress(String),
+    #[error("unexpected OS error: {0}")]
+    Unknown(#[from] Arc<std::io::Error>),
+    #[error("QUIC error")]
+    QuicError(#[from] quiche::Error),
+    #[error("connection timeout")]
+    Timeout,
+    #[error("connection closed due to inactivity")]
+    Idle,
+    #[error("closed by peer (is_app={}, code={})", .0.is_app, .0.error_code)]
+    PeerError(quiche::ConnectionError),
+    #[error("recv or send queue is full")]
+    QueueFull,
+    #[error("protocol error")]
+    ProtocolError(#[from] protocol::ProtocolError),
+}
 
-const DEFAULT_PORT: u16 = 9599;
+// In order to let ConnError implement Clone, we need to wrap io::Error in Arc;
+// but then we lose From<io::Error>, which breaks the ? operator.
+impl From<std::io::Error> for ConnError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Unknown(Arc::new(e))
+    }
+}
 
 #[derive(Debug, Clone)]
-pub enum ConnEvent {
+pub(crate) enum ConnEvent {
     StreamMessage(u64, protocol::MessageType),
     Datagram(protocol::MessageType),
     StreamClosed(u64),
-    ConnectionClosed,
 }
 
-pub struct OutgoingMessage {
-    pub sid: u64,
-    pub msg: protocol::MessageType,
-    pub fin: bool,
+pub(crate) struct OutgoingMessage {
+    pub(crate) sid: u64,
+    pub(crate) msg: protocol::MessageType,
+    pub(crate) fin: bool,
 }
 
-pub struct Conn {
-    thread_handle: std::thread::JoinHandle<anyhow::Result<()>>,
-    waker: Arc<mio::Waker>,
-    pub incoming: crossbeam::Receiver<ConnEvent>,
-    pub outgoing: crossbeam::Sender<OutgoingMessage>,
-
-    next_stream_id: u64,
-}
-
-pub struct BoundConn {
-    inner: Conn,
-    _handle: std::thread::JoinHandle<()>,
-}
-
-impl Conn {
-    pub fn new(addr: &str) -> anyhow::Result<Self> {
-        let (outgoing_tx, outgoing_rx) = crossbeam::unbounded();
-        let (incoming_tx, incoming_rx) = crossbeam::unbounded();
-
-        let mut inner = InnerConn::new(addr, incoming_tx, outgoing_rx)?;
-        let waker = inner.waker();
-
-        // Start the connection thread.
-        let thread_handle = std::thread::Builder::new()
-            .name("quic conn".to_string())
-            .spawn(move || inner.run())?;
-
-        Ok(Self {
-            thread_handle,
-            waker,
-            incoming: incoming_rx,
-            outgoing: outgoing_tx,
-            next_stream_id: 0,
-        })
-    }
-
-    pub fn send(
-        &mut self,
-        msg: impl Into<protocol::MessageType>,
-        sid: Option<u64>,
-        fin: bool,
-    ) -> anyhow::Result<u64> {
-        let sid = match sid {
-            Some(v) => v,
-            None => {
-                let sid = self.next_stream_id;
-                self.next_stream_id += 4;
-                sid
-            }
-        };
-
-        match self.outgoing.send(OutgoingMessage {
-            sid,
-            msg: msg.into(),
-            fin,
-        }) {
-            Ok(()) => {}
-            Err(_) => {
-                bail!("connection closed");
-            }
-        }
-
-        self.waker.wake()?;
-        Ok(sid)
-    }
-
-    /// Sends a message on a new stream, then waits for a reply on the same
-    /// stream with a timeout. This is not suitable for concurrent use - it
-    /// expects to only receive the reply, and no other messages.
-    #[instrument(skip(self), level = "trace")]
-    pub fn blocking_request(
-        &mut self,
-        msg: impl Into<protocol::MessageType> + std::fmt::Debug,
-        timeout: time::Duration,
-    ) -> anyhow::Result<protocol::MessageType> {
-        let new_sid = self.send(msg.into(), None, true)?;
-
-        loop {
-            match self.incoming.recv_timeout(timeout) {
-                Ok(ConnEvent::StreamMessage(sid, msg)) if sid == new_sid => return Ok(msg),
-                Ok(ConnEvent::StreamMessage(_, m)) => {
-                    bail!("received unexpected {}", m);
-                }
-                Ok(ConnEvent::StreamClosed(sid)) if sid == new_sid => {
-                    bail!("stream closed by peer");
-                }
-                Err(e) => {
-                    if e.is_timeout() {
-                        bail!("timed out waiting for response");
-                    } else {
-                        return Err(e).context("connection closed");
-                    }
-                }
-                _ => continue,
-            }
-        }
-    }
-
-    /// Binds to a winit event loop, proxying incoming messages to the given
-    /// EventLoopProxy.
-    pub fn bind_event_loop<T>(self, proxy: winit::event_loop::EventLoopProxy<T>) -> BoundConn
-    where
-        T: From<ConnEvent> + Send,
-    {
-        let incoming = self.incoming.clone();
-        let handle = std::thread::spawn(move || {
-            while let Ok(msg) = incoming.recv() {
-                match proxy.send_event(msg.into()) {
-                    Ok(()) => {}
-                    Err(_) => {
-                        break;
-                    }
-                }
-            }
-
-            proxy.send_event(ConnEvent::ConnectionClosed.into()).ok();
-        });
-
-        BoundConn {
-            inner: self,
-            _handle: handle,
-        }
-    }
-
-    pub fn close(self) -> anyhow::Result<()> {
-        drop(self.outgoing);
-        self.waker.wake().ok();
-
-        match self.thread_handle.join() {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => Err(e),
-            Err(_) => Err(anyhow!("connection thread panicked")),
-        }
-    }
-}
-
-impl BoundConn {
-    pub fn send(
-        &mut self,
-        msg: impl Into<protocol::MessageType>,
-        sid: Option<u64>,
-        fin: bool,
-    ) -> anyhow::Result<u64> {
-        self.inner.send(msg, sid, fin)
-    }
-
-    pub fn close(self) -> anyhow::Result<()> {
-        self.inner.close()
-    }
-}
-
-struct InnerConn {
+pub(crate) struct Conn {
     scratch: bytes::BytesMut,
     socket: mio::net::UdpSocket,
     local_addr: SocketAddr,
@@ -193,30 +73,27 @@ struct InnerConn {
     partial_reads: HashMap<u64, bytes::BytesMut>,
     open_streams: HashSet<u64>,
     shutting_down: bool,
-    stats_timer: time::Instant,
 
-    incoming: crossbeam::Sender<ConnEvent>,
-    outgoing: crossbeam::Receiver<OutgoingMessage>,
+    incoming: flume::Sender<ConnEvent>,
+    outgoing: flume::Receiver<OutgoingMessage>,
+
+    ready: Option<oneshot::Sender<Result<(), ConnError>>>,
 }
 
-const MAX_QUIC_PACKET_SIZE: usize = 1350;
-
-const SOCKET: mio::Token = mio::Token(0);
-const WAKER: mio::Token = mio::Token(1);
-
-impl InnerConn {
+impl Conn {
     pub fn new(
         addr: &str,
-        incoming: crossbeam::Sender<ConnEvent>,
-        outgoing: crossbeam::Receiver<OutgoingMessage>,
-    ) -> anyhow::Result<Self> {
+        incoming: flume::Sender<ConnEvent>,
+        outgoing: flume::Receiver<OutgoingMessage>,
+        ready: oneshot::Sender<Result<(), ConnError>>,
+    ) -> Result<Self, ConnError> {
         let (hostname, server_addr) = resolve_server(addr)?;
         let bind_addr = match server_addr {
             std::net::SocketAddr::V4(_) => "0.0.0.0:0",
             std::net::SocketAddr::V6(_) => "[::]:0",
         };
 
-        let mut socket = mio::net::UdpSocket::bind(bind_addr.parse()?)?;
+        let mut socket = mio::net::UdpSocket::bind(bind_addr.parse().unwrap())?;
 
         let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION)?;
 
@@ -227,12 +104,12 @@ impl InnerConn {
 
         config.set_application_protos(&[b"mm00"])?;
 
-        config.set_max_idle_timeout(30_000);
+        config.set_max_idle_timeout(60_000);
         config.set_max_recv_udp_payload_size(MAX_QUIC_PACKET_SIZE);
         config.set_max_send_udp_payload_size(MAX_QUIC_PACKET_SIZE);
         config.set_initial_max_data(65536);
         config.set_initial_max_stream_data_bidi_local(65536);
-        config.set_initial_max_stream_data_bidi_remote(65536);
+        config.set_initial_max_stream_data_bidi_remote(6536);
         config.set_initial_max_streams_bidi(100);
         config.set_initial_max_stream_data_uni(65536);
         config.set_initial_max_streams_uni(100);
@@ -266,10 +143,11 @@ impl InnerConn {
             partial_reads: HashMap::new(),
             open_streams: HashSet::new(),
             shutting_down: false,
-            stats_timer: time::Instant::now(),
 
             incoming,
             outgoing,
+
+            ready: Some(ready),
         })
     }
 
@@ -277,38 +155,49 @@ impl InnerConn {
         self.waker.clone()
     }
 
-    pub fn run(&mut self) -> anyhow::Result<()> {
+    pub fn run(&mut self) -> Result<(), ConnError> {
         let mut events = mio::Events::with_capacity(1024);
+        let start = time::Instant::now();
 
         loop {
-            self.poll.poll(&mut events, self.conn.timeout())?;
+            self.poll.poll(
+                &mut events,
+                self.conn.timeout().or(Some(time::Duration::from_secs(1))),
+            )?;
 
             let now = time::Instant::now();
-            if let Some(timeout_instant) = self.conn.timeout_instant() {
-                if now >= timeout_instant {
-                    self.conn.on_timeout();
-                }
+            if self.conn.timeout_instant().is_some_and(|t| now >= t) {
+                self.conn.on_timeout();
             }
 
             if self.conn.is_closed() || self.conn.is_draining() {
                 if self.conn.is_timed_out() {
-                    bail!("connection timed out");
+                    return Err(ConnError::Idle);
                 } else if self.conn.is_dgram_recv_queue_full() {
-                    bail!("dgram recv queue full");
+                    return Err(ConnError::QueueFull);
                 } else if let Some(err) = self.conn.peer_error() {
-                    bail!("closed by peer: {:?}", err);
+                    return Err(ConnError::PeerError(err.clone()));
                 } else if !self.shutting_down {
-                    bail!("closing unexpectedly")
+                    panic!("connection closed unexpectedly");
                 } else {
                     return Ok(());
                 }
             }
 
-            if (now - self.stats_timer) > time::Duration::from_millis(200) {
-                self.stats_timer = now;
-                let stats = self.conn.path_stats().next().unwrap();
-                STATS.set_rtt(stats.rtt);
+            if self.ready.is_some() {
+                if self.conn.is_established() || self.conn.is_in_early_data() {
+                    trace!("connection ready");
+                    let _ = self.ready.take().unwrap().send(Ok(()));
+                } else if start.elapsed() > CONNECT_TIMEOUT {
+                    let _ = self.ready.take().unwrap().send(Err(ConnError::Timeout));
+                }
             }
+
+            // if (now - self.stats_timer) > time::Duration::from_millis(200) {
+            //     self.stats_timer = now;
+            //     let stats = self.conn.path_stats().next().unwrap();
+            //     STATS.set_rtt(stats.rtt);
+            // }
 
             // Read incoming UDP packets and handle them.
             loop {
@@ -341,10 +230,16 @@ impl InnerConn {
                     self.scratch.resize(protocol::MAX_MESSAGE_SIZE, 0);
                     match self.conn.dgram_recv(&mut self.scratch) {
                         Ok(len) => {
-                            let (msg, msg_len) = protocol::decode_message(&self.scratch)
-                                .context("error reading datagram from server")?;
-                            debug_assert_eq!(msg_len, len);
+                            let (msg, msg_len) = match protocol::decode_message(&self.scratch) {
+                                Ok(v) => v,
+                                Err(protocol::ProtocolError::InvalidMessageType(t, _)) => {
+                                    warn!(msg_type = t, "ignoring unknown message type");
+                                    continue;
+                                }
+                                Err(e) => return Err(e.into()),
+                            };
 
+                            debug_assert_eq!(msg_len, len);
                             trace!(%msg, len, "received datagram");
 
                             match self.incoming.send(ConnEvent::Datagram(msg)) {
@@ -368,11 +263,23 @@ impl InnerConn {
                 loop {
                     match self.outgoing.try_recv() {
                         Ok(OutgoingMessage { sid, msg, fin }) => {
+                            if matches!(
+                                self.conn.stream_capacity(sid),
+                                Err(quiche::Error::InvalidState)
+                                    | Err(quiche::Error::StreamStopped(_))
+                            ) {
+                                debug!(sid, %msg, "dropping outgoing message for finished stream");
+                                continue;
+                            }
+
                             self.open_streams.insert(sid);
                             self.send_message(sid, msg, fin)?;
                         }
-                        Err(crossbeam::TryRecvError::Empty) => break,
-                        Err(crossbeam::TryRecvError::Disconnected) => {
+                        Err(flume::TryRecvError::Empty) => {
+                            break;
+                        }
+                        Err(flume::TryRecvError::Disconnected) => {
+                            trace!("shutting down");
                             self.conn.close(true, 0x00, b"")?;
                             self.shutting_down = true;
                             break;
@@ -423,7 +330,7 @@ impl InnerConn {
         }
     }
 
-    fn pump_stream(&mut self, sid: u64) -> anyhow::Result<bool> {
+    fn pump_stream(&mut self, sid: u64) -> Result<bool, ConnError> {
         use bytes::Buf;
 
         self.scratch.truncate(0);
@@ -456,7 +363,7 @@ impl InnerConn {
             let (msg, len) = match protocol::decode_message(&buf) {
                 Ok(v) => v,
                 Err(protocol::ProtocolError::ShortBuffer(n)) => {
-                    trace!(sid, have = buf.len(), needed = n, "partial message");
+                    debug!("partial message on stream {}, need {} bytes", sid, n);
                     self.partial_reads.insert(sid, buf);
                     break;
                 }
@@ -493,14 +400,12 @@ impl InnerConn {
         sid: u64,
         msg: protocol::MessageType,
         fin: bool,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), ConnError> {
         self.scratch.resize(protocol::MAX_MESSAGE_SIZE, 0);
         let len = protocol::encode_message(&msg, &mut self.scratch)?;
 
-        trace!(sid, %msg, "sending message");
-        self.conn
-            .stream_send(sid, &self.scratch[..len], fin)
-            .context("quiche stream_send error")?;
+        trace!(sid, %msg, fin, "sending message");
+        self.conn.stream_send(sid, &self.scratch[..len], fin)?;
 
         Ok(())
     }
@@ -515,7 +420,7 @@ fn gen_scid() -> quiche::ConnectionId<'static> {
     quiche::ConnectionId::from_vec(scid)
 }
 
-fn resolve_server(hostport: &str) -> anyhow::Result<(String, SocketAddr)> {
+fn resolve_server(hostport: &str) -> Result<(String, SocketAddr), ConnError> {
     use std::net::ToSocketAddrs;
 
     let parts = hostport.splitn(2, ':').collect::<Vec<_>>();
@@ -525,17 +430,18 @@ fn resolve_server(hostport: &str) -> anyhow::Result<(String, SocketAddr)> {
             (host, DEFAULT_PORT)
         }
         [host, port] => {
-            let port: u16 = port.parse().context("invalid destination address")?;
-            (host, port)
+            if let Ok(port) = port.parse() {
+                (host, port)
+            } else {
+                return Err(ConnError::InvalidAddress(hostport.to_string()));
+            }
         }
-        _ => {
-            bail!("invalid destination address");
-        }
+        _ => return Err(ConnError::InvalidAddress(hostport.to_string())),
     };
 
     let addr = (host, port)
         .to_socket_addrs()
-        .context("invalid destination address")?
+        .map_err(|_| ConnError::InvalidAddress(hostport.to_string()))?
         .next()
         .unwrap();
 

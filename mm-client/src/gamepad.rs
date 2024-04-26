@@ -7,11 +7,8 @@ use std::{collections::HashMap, time};
 use anyhow::{anyhow, bail};
 use gilrs::{Event, EventType};
 
-use mm_protocol::{
-    gamepad::GamepadLayout,
-    gamepad_input::{GamepadButton, GamepadButtonState},
-    gamepad_motion::GamepadAxis,
-    Gamepad,
+use mm_client_common::input::{
+    Gamepad, GamepadAxis, GamepadButton, GamepadButtonState, GamepadLayout,
 };
 use tracing::{debug, error, trace};
 
@@ -107,7 +104,7 @@ impl RemoteGamepad {
 /// available gamepads.
 pub fn spawn_gamepad_monitor<T>(
     proxy: winit::event_loop::EventLoopProxy<T>,
-) -> anyhow::Result<Vec<(u64, GamepadLayout)>>
+) -> anyhow::Result<Vec<Gamepad>>
 where
     T: From<GamepadEvent> + Send,
 {
@@ -132,7 +129,10 @@ where
                 },
             );
 
-            initial.push((protocol_id, layout));
+            initial.push(Gamepad {
+                id: protocol_id,
+                layout,
+            });
         }
 
         if initial_tx.send(initial).is_err() {
@@ -178,7 +178,7 @@ where
                     .send_event(
                         GamepadEvent::Available(Gamepad {
                             id: protocol_id,
-                            layout: layout(pad).into(),
+                            layout: layout(pad),
                         })
                         .into(),
                     )

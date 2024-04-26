@@ -2,17 +2,16 @@
 //
 // SPDX-License-Identifier: MIT
 
-use bytes::Buf;
 use mm_protocol as protocol;
 use std::collections::VecDeque;
 
 use tracing::warn;
 
+use super::Packet;
+
 const RING_TARGET_SIZE: usize = 5;
 
-pub trait Chunk {
-    fn session_id(&self) -> u64;
-    fn attachment_id(&self) -> u64;
+pub(crate) trait Chunk {
     fn seq(&self) -> u64;
     fn stream_seq(&self) -> u64;
     fn chunk(&self) -> u32;
@@ -22,14 +21,6 @@ pub trait Chunk {
 }
 
 impl Chunk for protocol::VideoChunk {
-    fn session_id(&self) -> u64 {
-        self.session_id
-    }
-
-    fn attachment_id(&self) -> u64 {
-        self.attachment_id
-    }
-
     fn seq(&self) -> u64 {
         self.seq
     }
@@ -56,14 +47,6 @@ impl Chunk for protocol::VideoChunk {
 }
 
 impl Chunk for protocol::AudioChunk {
-    fn session_id(&self) -> u64 {
-        self.session_id
-    }
-
-    fn attachment_id(&self) -> u64 {
-        self.attachment_id
-    }
-
     fn seq(&self) -> u64 {
         self.seq
     }
@@ -90,50 +73,6 @@ impl Chunk for protocol::AudioChunk {
 }
 
 #[derive(Debug)]
-pub struct Packet {
-    pub pts: u64,
-    pub seq: u64,
-    data: VecDeque<bytes::Bytes>,
-    chunk_offset: usize,
-}
-
-impl Buf for Packet {
-    fn remaining(&self) -> usize {
-        self.data.iter().map(|c| c.len()).sum::<usize>() - self.chunk_offset
-    }
-
-    fn chunk(&self) -> &[u8] {
-        match self.data.front() {
-            Some(chunk) => &chunk[self.chunk_offset..],
-            None => &[],
-        }
-    }
-
-    fn advance(&mut self, mut count: usize) {
-        while count > 0 {
-            let current = self.data.front().unwrap();
-            let current_remaining = current.len() - self.chunk_offset;
-            if count >= current_remaining {
-                self.chunk_offset = 0;
-                self.data.pop_front();
-                count -= current_remaining;
-            } else {
-                self.chunk_offset += count;
-                return;
-            }
-        }
-    }
-
-    fn copy_to_bytes(&mut self, len: usize) -> bytes::Bytes {
-        if len == self.remaining() && self.data.len() == 1 {
-            self.data.pop_front().unwrap()
-        } else {
-            Buf::copy_to_bytes(self, len)
-        }
-    }
-}
-
-#[derive(Debug)]
 struct WipPacket {
     stream_seq: u64,
     seq: u64,
@@ -153,26 +92,34 @@ impl WipPacket {
         Packet {
             pts: self.pts,
             seq: self.seq,
+            stream_seq: self.stream_seq,
             data: data.into(),
-            chunk_offset: 0,
         }
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, thiserror::Error)]
+pub(crate) enum PacketRingError {
+    #[error("invalid chunk {0} of {1}")]
+    InvalidChunk(usize, usize),
+    #[error("duplicate chunk {0}")]
+    DuplicateChunk(usize),
+}
+
 #[derive(Default)]
-pub struct PacketRing {
+pub(crate) struct PacketRing {
     // Oldest frames at the front, newest at the back.
     ring: VecDeque<WipPacket>,
 }
 
 impl PacketRing {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             ring: VecDeque::new(),
         }
     }
 
-    pub fn recv_chunk(&mut self, incoming: impl Chunk) -> anyhow::Result<()> {
+    pub(crate) fn recv_chunk(&mut self, incoming: impl Chunk) -> Result<(), PacketRingError> {
         match self
             .ring
             .iter_mut()
@@ -182,18 +129,9 @@ impl PacketRing {
                 let chunk = incoming.chunk() as usize;
                 let num_chunks = incoming.num_chunks() as usize;
                 if num_chunks != wip.chunks.len() || chunk >= num_chunks {
-                    return Err(anyhow::anyhow!(
-                        "frame chunk data invalid: chunk {} of {} (expecting {})",
-                        chunk,
-                        num_chunks,
-                        wip.chunks.len(),
-                    ));
+                    return Err(PacketRingError::InvalidChunk(chunk, num_chunks));
                 } else if wip.chunks[chunk].is_some() {
-                    return Err(anyhow::anyhow!(
-                        "duplicate frame chunk: {}:{}",
-                        incoming.seq(),
-                        chunk
-                    ));
+                    return Err(PacketRingError::DuplicateChunk(chunk));
                 }
 
                 wip.chunks[chunk] = Some(incoming.data());
@@ -251,17 +189,20 @@ impl PacketRing {
     /// Removes packets matching the stream_seq for which all chunks are
     /// accounted for, and returns them as an iterator. Stops before the first
     /// incomplete packet that matches.
-    pub fn drain_completed(&mut self, stream_seq: u64) -> DrainCompleted {
+    ///
+    /// The iterator must be used to actually remove packets from the ring.
+    /// Dropping the iterator early will not drop the remaining packets.
+    pub(crate) fn drain_completed(&mut self, stream_seq: u64) -> DrainCompleted {
         DrainCompleted(self, stream_seq)
     }
 
     /// Removes all packets with the same stream_seq or lower.
-    pub fn discard(&mut self, stream_seq: u64) {
+    pub(crate) fn discard(&mut self, stream_seq: u64) {
         self.ring.retain(|wip| wip.stream_seq > stream_seq);
     }
 }
 
-pub struct DrainCompleted<'a>(&'a mut PacketRing, u64);
+pub(crate) struct DrainCompleted<'a>(&'a mut PacketRing, u64);
 
 impl<'a> Iterator for DrainCompleted<'a> {
     type Item = Packet;
@@ -282,9 +223,6 @@ impl<'a> Iterator for DrainCompleted<'a> {
 
 #[cfg(test)]
 mod tests {
-    use bytes::Buf;
-    use std::io::Read;
-
     use super::*;
 
     #[test]
@@ -297,10 +235,7 @@ mod tests {
 
             for (expected_seq, actual) in s.iter().zip(completed.into_iter()) {
                 assert_eq!(actual.seq, *expected_seq);
-
-                let mut buf = Vec::new();
-                assert_eq!(actual.reader().read_to_end(&mut buf).unwrap(), 10);
-                assert_eq!(&buf, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+                assert_eq!(&actual.data(), &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
             }
         };
 
@@ -356,10 +291,8 @@ mod tests {
         assert_eq!(1, completed.len());
         assert_eq!(completed[0].seq, 10);
 
-        let mut buf = Vec::new();
         let frame = completed.pop().unwrap();
-        assert_eq!(frame.reader().read_to_end(&mut buf).unwrap(), 10);
-        assert_eq!(&buf, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        assert_eq!(&frame.data(), &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 
     fn make_chunks(seq: u64, chunks: &[&[u8]]) -> Vec<protocol::VideoChunk> {
