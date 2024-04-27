@@ -68,8 +68,6 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    debug!(version, "starting up");
-
     let bug_report_dir = if args.bug_report {
         let dirname = std::env::temp_dir().join(format!("magic-mirror-{}", uuid::Uuid::new_v4()));
         std::fs::DirBuilder::new().mode(0o0755).create(&dirname)?;
@@ -80,6 +78,8 @@ fn main() -> Result<()> {
     };
 
     init_logging(bug_report_dir.as_ref())?;
+
+    debug!(version, "starting up");
     if let Some(ref dirname) = bug_report_dir {
         warn!("generating bug report files in: {:?}", &dirname);
     }
