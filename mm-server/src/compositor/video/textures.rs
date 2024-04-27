@@ -456,7 +456,7 @@ where
             });
         }
         SurfaceTexture::Imported { .. } => {
-            todo!()
+            debug!("ignoring dmabuf cursor");
         }
     }
 }
