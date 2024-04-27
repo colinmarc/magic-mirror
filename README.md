@@ -1,11 +1,17 @@
 
-## Magic Mirror
+<p align="center" style="font-size:0.9em">
+<i>server download:</i> <a href="https://github.com/colinmarc/magic-mirror/releases/download/mmserver-v0.1.0/mmserver-v0.1.0-linux-amd64.tar.gz">linux-amd64</a>
+<i>client download:</i> <a href="https://github.com/colinmarc/magic-mirror/releases/download/mmclient-v0.1.0/mmclient-v0.1.0-linux-amd64.tar.gz">linux-amd64</a> • <a href="https://github.com/colinmarc/magic-mirror/releases/download/mmclient-v0.1.0/mmclient-v0.1.0-macos-arm64.tar.gz">macos-arm64</a>
+</p>
 
-This is a game streaming or remote desktop tool for Linux, featuring:
+# Magic Mirror 🪞✨
 
- - Up to 4k streaming (support for 10-bit HDR in progress)
+This is a game streaming and remote desktop tool for Linux, featuring:
+
+ - 100% headless, offscreen, multitenant rendering - no dummy plug required
+ - Up to 4k streaming (with support for 10-bit HDR in progress)
+ - Very low latency (about 1 frame, plus network)
  - Local cursor rendering
- - Hardware encoding on discrete GPUs
  - Client support for macOS
 
 > [!WARNING]  
@@ -13,37 +19,54 @@ This is a game streaming or remote desktop tool for Linux, featuring:
 
 ### Quickstart
 
+Grab the latest release (link above), and run it on a server with a GPU:
+
 ```shell
-$ cd mm-server
-$ cargo build --bin mmserver --release
+$ cat > steam-bigpicture.toml <<EOF
 command = ["steam", "-gamepadui"]
 xwayland = true
 EOF
-$ target/release/mmserver --bind "<your local ip>:9599" -i steam-bigpicture.toml
+$ ./mmserver --bind "<your local ip>:9599" -i steam-bigpicture.toml
 ```
 
-And then on the client:
+You can replace steam with your app of choice, or even a full nested desktop environment like [Sway](https://swaywm.org/).
+
+And then on the client (after installing `ffmpeg`):
 
 ```shell
-$ cd mm-client
-$ cargo build --bin mmclient --release
-$ target/release/mmclient "<ip>:9599" steam-bigpicture --codec h265 --resolution 1080
+$ ./mmclient "<ip>:9599" steam-bigpicture --codec h265 --resolution 1080
 ```
 
-This will work over the local network or a private IP space like Tailscale. To serve over the public internet, TLS is required. See [mmserver.default.toml](mmserver.default.toml) for more detail on that and other configuration options.
+This will work over the local network, or a private IP space like Tailscale. To serve over the public internet, TLS is required. See [mmserver.default.toml](mmserver.default.toml) for more detail on that and other configuration options.
+
+For instructions on building the server and/or client yourself, see [BUILD.md](BUILD.md).
+
+
+### System Requirements
+
+The following is required to run the server:
+
+ - Linux 6.x (for Ubuntu, this means Mantic or Noble)
+ - (For AMD/Intel cards) Mesa 24.x or later
+ - (For NVIDIA cards) [Vulkan drivers](https://developer.nvidia.com/vulkan-driver) version 550 or later
+ - XWayland (for X11 apps)
+
+The following is required to run the client:
+
+ - Ffmpeg 6.x
 
 ### Encoder support
 
-Hardware encoding, based on Vulkan Video, is still a work in progress. You will need very, very new drivers. CPU-based encode is available as a fallback, but has a few more frames of latency.
+Hardware encoding, based on Vulkan Video, is needed to get the best performance and latency. CPU-based encode is available as a fallback, but it's much slower.
 
-To see if your GPU supports video encoding, see the following matrix for your vendor: [AMD](https://en.wikipedia.org/wiki/Unified_Video_Decoder#Format_support) | [NVIDIA](https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new)
+To see if your GPU supports video encoding, see the following matrix for your vendor: [AMD](https://en.wikipedia.org/wiki/Unified_Video_Decoder#Format_support) • [NVIDIA](https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new)
 
 Note that with the `ffmpeg` feature, linking against a system-installed `ffmpeg` is supported, which may allow you to use specific CPU-based codecs not considered in this table.
 
-| Codec | CPU | AMD | NVIDIA | Intel |
+| Codec | CPU | AMD | NVIDIA | Intel[^1] |
 | ----- | :-: | :-: | :----: | :---: |
 | H.264 |  ❌ |  ✔️  |   ✔️    |   ❔  |
 | H.265 |  ✔️  |  ✔️  |   ✔️    |   ❔  |
 |  AV1  |  ✔️  |  ❌ |   ❌   |   ❌  |
 
-I don't have an Intel card available to test, and it's difficult to find information online about driver/card support for hardware encode. Please let me know how it goes!
+[^1]: I don't have an Intel GPU available to test, and it's difficult to find information online about driver/card support for hardware encode. Please let me know how it goes!
