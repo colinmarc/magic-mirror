@@ -40,7 +40,7 @@ use mm_client::video;
 use mm_client::video::VideoStreamEvent;
 use mm_client::vulkan;
 
-const INIT_TIMEOUT: time::Duration = time::Duration::from_secs(10);
+const INIT_TIMEOUT: time::Duration = time::Duration::from_secs(30);
 const MAX_FRAME_TIME: time::Duration = time::Duration::from_nanos(1_000_000_000 / 24);
 const RESIZE_COOLDOWN: time::Duration = time::Duration::from_millis(500);
 
