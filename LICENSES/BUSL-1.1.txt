@@ -16,7 +16,7 @@ Additional Use Grant: You may make use of the Licensed Work, provided that
                       functionality of the Licensed Work, thereby utilizing
                       graphics processing hardware owned or operated by you.
 
-Change Date:          2028-03-01
+Change Date:          2028-05-01
 Change License:       MIT License
 
 For information about alternative licensing arrangements for the Software,
