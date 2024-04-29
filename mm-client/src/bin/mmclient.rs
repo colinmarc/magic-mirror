@@ -480,6 +480,34 @@ impl App {
         }
 
         match event {
+            AppEvent::StreamMessage(_, protocol::MessageType::VideoChunk(chunk))
+            | AppEvent::Datagram(protocol::MessageType::VideoChunk(chunk)) => {
+                self.last_frame_received = time::Instant::now();
+
+                // Detect stream restarts. In the case that we're
+                // reattaching, two unordered things have to happen: we have
+                // to get the new attachment ID, and we have to get a
+                // datagram with a new stream seq.
+                if let Some(attachment) = &self.attachment {
+                    if chunk.attachment_id == attachment.attachment_id
+                        && (self.video_stream_seq.is_none()
+                            || chunk.stream_seq > self.video_stream_seq.unwrap())
+                    {
+                        let protocol::Size { width, height } =
+                            attachment.streaming_resolution.clone().unwrap();
+                        self.video_stream_seq = Some(chunk.stream_seq);
+                        self.video_stream.reset(
+                            attachment.attachment_id,
+                            chunk.stream_seq,
+                            width,
+                            height,
+                            self.configured_codec,
+                        )?;
+                    }
+                }
+
+                self.video_stream.recv_chunk(chunk)?;
+            }
             AppEvent::ConnectionClosed => {
                 bail!("connection closed unexpectedly")
             }
@@ -585,33 +613,6 @@ impl App {
                 }
             }
             AppEvent::Datagram(msg) => match msg {
-                protocol::MessageType::VideoChunk(chunk) => {
-                    self.last_frame_received = time::Instant::now();
-
-                    // Detect stream restarts. In the case that we're
-                    // reattaching, two unordered things have to happen: we have
-                    // to get the new attachment ID, and we have to get a
-                    // datagram with a new stream seq.
-                    if let Some(attachment) = &self.attachment {
-                        if chunk.attachment_id == attachment.attachment_id
-                            && (self.video_stream_seq.is_none()
-                                || chunk.stream_seq > self.video_stream_seq.unwrap())
-                        {
-                            let protocol::Size { width, height } =
-                                attachment.streaming_resolution.clone().unwrap();
-                            self.video_stream_seq = Some(chunk.stream_seq);
-                            self.video_stream.reset(
-                                attachment.attachment_id,
-                                chunk.stream_seq,
-                                width,
-                                height,
-                                self.configured_codec,
-                            )?;
-                        }
-                    }
-
-                    self.video_stream.recv_chunk(chunk)?;
-                }
                 protocol::MessageType::AudioChunk(chunk) => {
                     // Detect stream restarts.
                     if let Some(attachment) = &self.attachment {
