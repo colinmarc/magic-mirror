@@ -508,6 +508,25 @@ impl App {
 
                 self.video_stream.recv_chunk(chunk)?;
             }
+            AppEvent::StreamMessage(_, protocol::MessageType::AudioChunk(chunk))
+            | AppEvent::Datagram(protocol::MessageType::AudioChunk(chunk)) => {
+                // Detect stream restarts.
+                if let Some(attachment) = &self.attachment {
+                    if chunk.attachment_id == attachment.attachment_id
+                        && (self.audio_stream_seq.is_none()
+                            || chunk.stream_seq > self.audio_stream_seq.unwrap())
+                    {
+                        self.audio_stream_seq = Some(chunk.stream_seq);
+                        self.audio_stream.reset(
+                            chunk.stream_seq,
+                            attachment.sample_rate_hz,
+                            attachment.channels.as_ref().unwrap().channels.len() as u32,
+                        )?;
+                    }
+                }
+
+                self.audio_stream.recv_chunk(chunk)?;
+            }
             AppEvent::ConnectionClosed => {
                 bail!("connection closed unexpectedly")
             }
