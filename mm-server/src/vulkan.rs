@@ -313,6 +313,12 @@ impl VkDeviceInfo {
 
 impl VkContext {
     pub fn new(enable_debug: bool) -> Result<Self> {
+        // Try to enable RADV's video support.
+        std::env::set_var(
+            "RADV_PERFTEST",
+            std::env::var("RADV_PERFTEST").unwrap_or("video_encode,video_decode".to_string()),
+        );
+
         let entry = unsafe { ash::Entry::load().context("failed to load vulkan libraries!") }?;
         debug!("creating vulkan instance");
 
