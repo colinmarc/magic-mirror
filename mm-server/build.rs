@@ -71,6 +71,7 @@ fn compile_shader<'a>(
     let mut compile_request = session.create_compile_request();
 
     compile_request
+        .add_search_path("../shader-common")
         .set_codegen_target(slang::CompileTarget::Spirv)
         .set_optimization_level(slang::OptimizationLevel::Maximal)
         .set_target_profile(session.find_profile("glsl_460"));

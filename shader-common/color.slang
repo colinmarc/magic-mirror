@@ -1,3 +1,7 @@
+// Copyright 2024 Colin Marc <hi@colinmarc.com>
+//
+// SPDX-License-Identifier: MIT
+
 module color;
 
 // A set of color primaries, defined in terms of a transformation to/from XYZ
@@ -207,13 +211,11 @@ public float3 encode_ycbcr(float3 color, YCbCrModel model, bool full_range)
     ycbcr.z += 0.5;
 
     if (!full_range)
-    {
         // This converts to "MPEG" or "Narrow" in the range [16, 235] and [16, 240].
         ycbcr = float3(
             (219.0 * ycbcr.x + 16.0) / 256.0,
             (224.0 * ycbcr.y + 16.0) / 256.0,
             (224.0 * ycbcr.z + 16.0) / 256.0);
-    }
 
     return clamp(ycbcr, 0.0, 1.0);
 }
