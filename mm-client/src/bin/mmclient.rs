@@ -96,9 +96,14 @@ struct Cli {
     /// resizes.
     #[arg(long, required = false, default_value = "auto")]
     resolution: Resolution,
+    /// Request 10-bit video output from the server. This will only work if
+    /// both your display and the application in question support rendering
+    /// HDR color.
+    #[arg(long, required = false)]
+    hdr: bool,
     /// The UI scale to communicate to the server. If not specified, this will
     /// be determined from the client-side window scale factor.
-    #[arg(long)]
+    #[arg(long, required = false)]
     ui_scale: Option<f64>,
     /// Video codec to use.
     #[arg(long, default_value = "h265")]
@@ -121,6 +126,7 @@ struct MainLoop {
 struct App {
     configured_resolution: Resolution,
     configured_codec: protocol::VideoCodec,
+    configured_profile: protocol::VideoProfile,
     configured_framerate: u32,
 
     window: Arc<winit::window::Window>,
@@ -621,7 +627,7 @@ impl App {
                                 session_id: self.session_id,
                                 streaming_resolution: self.remote_display_params.resolution.clone(),
                                 video_codec: self.configured_codec.into(),
-                                video_profile: protocol::VideoProfile::Hd.into(),
+                                video_profile: self.configured_profile.into(),
                                 ..Default::default()
                             },
                             None,
@@ -816,6 +822,12 @@ fn main() -> Result<()> {
         Some(v) => bail!("invalid codec: {:?}", v),
     };
 
+    let configured_profile = if args.hdr {
+        protocol::VideoProfile::Hdr10
+    } else {
+        protocol::VideoProfile::Hd
+    };
+
     // TODO: anyhow errors are garbage for end-users.
     debug!("establishing connection to {:}", &args.host);
     let mut conn = Conn::new(&args.host).context("failed to establish connection")?;
@@ -928,7 +940,7 @@ fn main() -> Result<()> {
         window.clone(),
         cfg!(debug_assertions),
     )?);
-    let renderer = Renderer::new(vk.clone(), window.clone())?;
+    let renderer = Renderer::new(vk.clone(), window.clone(), args.hdr)?;
 
     debug!("attaching session {:?}", session.session_id);
     let attachment_sid = conn.send(
@@ -938,7 +950,7 @@ fn main() -> Result<()> {
             session_id: session.session_id,
             streaming_resolution: Some(streaming_resolution),
             video_codec: configured_codec.into(),
-            video_profile: protocol::VideoProfile::Hd.into(),
+            video_profile: configured_profile.into(),
             ..Default::default()
         },
         None,
@@ -966,6 +978,7 @@ fn main() -> Result<()> {
         configured_codec,
         configured_framerate: args.framerate,
         configured_resolution: args.resolution,
+        configured_profile,
 
         window,
         _proxy: proxy.clone(),
