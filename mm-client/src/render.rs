@@ -23,16 +23,36 @@ use crate::vulkan::*;
 
 const FONT_SIZE: f32 = 8.0;
 
+// Matches the definition in render.slang.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u32)]
+enum TextureColorSpace {
+    Bt709 = 0,
+    Bt2020Pq = 1,
+}
+
+impl From<crate::video::ColorSpace> for TextureColorSpace {
+    fn from(cs: crate::video::ColorSpace) -> Self {
+        match cs {
+            crate::video::ColorSpace::Bt709 => TextureColorSpace::Bt709,
+            crate::video::ColorSpace::Bt2020Pq => TextureColorSpace::Bt2020Pq,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 struct PushConstants {
     aspect: glam::Vec2,
+    texture_color_space: TextureColorSpace,
+    output_color_space: vk::ColorSpaceKHR,
 }
 
 pub struct Renderer {
     width: u32,
     height: u32,
     scale_factor: f64,
+    hdr_mode: bool,
 
     imgui: imgui::Context,
     imgui_platform: imgui_winit_support::WinitPlatform,
@@ -43,10 +63,16 @@ pub struct Renderer {
     swapchain: Option<Swapchain>,
     swapchain_dirty: bool,
 
-    video_texture: Option<VideoTexture>,
+    new_video_texture: Option<(Arc<VkImage>, VideoStreamParams)>,
 
     vk: Arc<VkContext>,
     window: Arc<winit::window::Window>,
+}
+
+struct VideoTexture {
+    image: Arc<VkImage>,
+    view: vk::ImageView,
+    color_space: TextureColorSpace,
 }
 
 struct Swapchain {
@@ -57,11 +83,13 @@ struct Swapchain {
 
     sampler_conversion: vk::SamplerYcbcrConversion,
     sampler: vk::Sampler,
-    bound_video_texture: Option<(Arc<VkImage>, vk::ImageView)>,
+    bound_video_texture: Option<VideoTexture>,
+
     /// The normalized relationship between the output and the video texture,
     /// after scaling. For example, a 500x500 video texture in a 1000x500
     /// swapchain would have the aspect (2.0, 1.0), as would a 250x250 texture.
     aspect: (f64, f64),
+    surface_format: vk::SurfaceFormatKHR,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     pipeline_layout: vk::PipelineLayout,
@@ -85,13 +113,12 @@ struct SwapImage {
     view: vk::ImageView,
 }
 
-struct VideoTexture {
-    params: VideoStreamParams,
-    texture: Arc<VkImage>,
-}
-
 impl Renderer {
-    pub fn new(vk: Arc<VkContext>, window: Arc<winit::window::Window>) -> Result<Self> {
+    pub fn new(
+        vk: Arc<VkContext>,
+        window: Arc<winit::window::Window>,
+        hdr_mode: bool,
+    ) -> Result<Self> {
         let window_size = window.inner_size();
         let scale_factor = window.scale_factor();
 
@@ -112,6 +139,7 @@ impl Renderer {
             width: window_size.width,
             height: window_size.height,
             scale_factor,
+            hdr_mode,
             window,
             imgui,
             imgui_platform,
@@ -120,7 +148,7 @@ impl Renderer {
             imgui_time: time::Instant::now(),
             swapchain: None,
             swapchain_dirty: false,
-            video_texture: None,
+            new_video_texture: None,
             vk,
         };
 
@@ -134,8 +162,7 @@ impl Renderer {
         let start = time::Instant::now();
         let device = &self.vk.device;
 
-        let surface_format = select_surface_format(self.vk.clone())?;
-        trace!(?surface_format, "surface format");
+        let surface_format = select_surface_format(self.vk.clone(), self.hdr_mode)?;
 
         let surface_capabilities = self
             .vk
@@ -219,12 +246,16 @@ impl Renderer {
 
         // We need to create a sampler, even if we don't have a video stream yet
         // and don't know what the fields should be.
-        let video_params = match self.video_texture.as_ref() {
-            Some(tex) => tex.params,
-            None => VideoStreamParams::default(),
+        let (video_texture_format, video_params) = match self.new_video_texture.as_ref() {
+            Some((tex, params)) => (tex.format, *params),
+            None => (
+                vk::Format::G8_B8_R8_3PLANE_420_UNORM,
+                VideoStreamParams::default(),
+            ),
         };
 
-        let sampler_conversion = sampler_conversion(device, &video_params)?;
+        let sampler_conversion =
+            create_ycbcr_sampler_conversion(device, video_texture_format, &video_params)?;
 
         let sampler = {
             let mut conversion_info = vk::SamplerYcbcrConversionInfo::builder()
@@ -243,22 +274,26 @@ impl Renderer {
             unsafe { device.create_sampler(&create_info, None)? }
         };
 
-        let bound_video_texture = if let Some(tex) = self.video_texture.as_ref() {
+        let bound_video_texture = if let Some((tex, params)) = self.new_video_texture.as_ref() {
             let view = create_image_view(
                 &self.vk.device,
-                tex.texture.image,
-                tex.texture.format,
+                tex.image,
+                tex.format,
                 Some(sampler_conversion),
             )?;
 
             // Increment the reference count on the texture.
-            Some((tex.texture.clone(), view))
+            Some(VideoTexture {
+                image: tex.clone(),
+                view,
+                color_space: params.color_space.into(),
+            })
         } else {
             None
         };
 
-        let aspect = if let Some((tex, _)) = bound_video_texture.as_ref() {
-            calculate_aspect(self.width, self.height, tex.width, tex.height)
+        let aspect = if let Some(tex) = bound_video_texture.as_ref() {
+            calculate_aspect(self.width, self.height, tex.image.width, tex.image.height)
         } else {
             (1.0, 1.0)
         };
@@ -294,7 +329,7 @@ impl Renderer {
 
         let pipeline_layout = {
             let pc_ranges = [vk::PushConstantRange::builder()
-                .stage_flags(vk::ShaderStageFlags::VERTEX)
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
                 .size(std::mem::size_of::<PushConstants>() as u32)
                 .build()];
@@ -435,10 +470,10 @@ impl Renderer {
                     .unwrap();
 
                 // TODO: do the write in bind_video_texture?
-                if let Some((_, view)) = bound_video_texture.as_ref() {
+                if let Some(tex) = bound_video_texture.as_ref() {
                     let info = vk::DescriptorImageInfo::builder()
                         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .image_view(*view);
+                        .image_view(tex.view);
 
                     let image_info = &[info.build()];
                     let sampler_write = vk::WriteDescriptorSet::builder()
@@ -522,6 +557,7 @@ impl Renderer {
             sampler,
             bound_video_texture,
             aspect,
+            surface_format,
             pipeline_layout,
             pipeline,
 
@@ -592,7 +628,7 @@ impl Renderer {
         params: VideoStreamParams,
     ) -> Result<()> {
         // TODO: no need to recreate the sampler if the params match.
-        self.video_texture = Some(VideoTexture { params, texture });
+        self.new_video_texture = Some((texture, params));
         self.swapchain_dirty = true;
         Ok(())
     }
@@ -603,7 +639,7 @@ impl Renderer {
     // 1.0).
     pub fn get_texture_aspect(&self) -> Option<(f64, f64)> {
         if let Some(Swapchain {
-            bound_video_texture: Some((_, _)),
+            bound_video_texture: Some(_),
             aspect,
             ..
         }) = self.swapchain.as_ref()
@@ -738,21 +774,23 @@ impl Renderer {
             );
         }
 
-        if self.video_texture.is_none() || swapchain.aspect != (1.0, 1.0) {
+        if self.new_video_texture.is_none() || swapchain.aspect != (1.0, 1.0) {
             // TODO Draw the background
             // https://www.toptal.com/designers/subtlepatterns/prism/
         }
 
         // Draw the video texture.
-        if let Some((_texture, _)) = &swapchain.bound_video_texture {
+        if let Some(tex) = &swapchain.bound_video_texture {
             let pc = PushConstants {
                 aspect: glam::Vec2::new(swapchain.aspect.0 as f32, swapchain.aspect.1 as f32),
+                texture_color_space: tex.color_space,
+                output_color_space: swapchain.surface_format.color_space,
             };
 
             device.cmd_push_constants(
                 frame.render_cb,
                 swapchain.pipeline_layout,
-                vk::ShaderStageFlags::VERTEX,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
                 std::slice::from_raw_parts(
                     &pc as *const _ as *const u8,
@@ -899,8 +937,8 @@ impl Renderer {
         device.destroy_sampler(swapchain.sampler, None);
         device.destroy_sampler_ycbcr_conversion(swapchain.sampler_conversion, None);
 
-        if let Some((_img, view)) = swapchain.bound_video_texture.take() {
-            device.destroy_image_view(view, None);
+        if let Some(tex) = swapchain.bound_video_texture.take() {
+            device.destroy_image_view(tex.view, None);
             // We probably drop the last reference to the image here, which then
             // gets destroyed.
         }
@@ -912,8 +950,11 @@ impl Renderer {
     }
 }
 
-fn select_surface_format(vk: Arc<VkContext>) -> Result<vk::SurfaceFormatKHR, vk::Result> {
-    let surface_formats = unsafe {
+fn select_surface_format(
+    vk: Arc<VkContext>,
+    hdr_mode: bool,
+) -> Result<vk::SurfaceFormatKHR, vk::Result> {
+    let mut surface_formats = unsafe {
         vk.surface_loader
             .get_physical_device_surface_formats(vk.pdevice, vk.surface)?
     };
@@ -924,16 +965,36 @@ fn select_surface_format(vk: Arc<VkContext>) -> Result<vk::SurfaceFormatKHR, vk:
         vk::Format::B8G8R8A8_UNORM,
     ];
 
-    for preferred_format in &preferred_formats {
-        for surface_format in &surface_formats {
-            if surface_format.format == *preferred_format {
-                return Ok(*surface_format);
-            }
-        }
-    }
+    let preferred_color_spaces = if hdr_mode {
+        vec![
+            vk::ColorSpaceKHR::HDR10_ST2084_EXT,
+            vk::ColorSpaceKHR::EXTENDED_SRGB_LINEAR_EXT,
+            vk::ColorSpaceKHR::DISPLAY_P3_NONLINEAR_EXT,
+            vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        ]
+    } else {
+        vec![
+            vk::ColorSpaceKHR::BT709_NONLINEAR_EXT,
+            vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        ]
+    };
 
-    // Just pick the first format.
-    Ok(surface_formats[0])
+    surface_formats.sort_by_key(|sf| {
+        let color_space_score = preferred_color_spaces
+            .iter()
+            .position(|&cs| cs == sf.color_space)
+            .unwrap_or(preferred_color_spaces.len());
+        let format_score = preferred_formats
+            .iter()
+            .position(|&f| f == sf.format)
+            .unwrap_or(preferred_formats.len());
+        (color_space_score, format_score)
+    });
+
+    let surface_format = surface_formats[0];
+    debug!(?surface_format, "selected surface format");
+
+    Ok(surface_format)
 }
 
 impl Drop for Renderer {

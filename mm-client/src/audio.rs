@@ -146,6 +146,7 @@ where
 
                 if frames_remaining < frames_needed {
                     out.fill(Default::default());
+
                     trace!("audio buffer underrun");
                     return;
                 }

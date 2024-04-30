@@ -7,7 +7,7 @@ use std::{
     time,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, bail, Context};
 use ash::vk;
 use bytes::{Bytes, BytesMut};
 use ffmpeg_next as ffmpeg;
@@ -31,20 +31,25 @@ pub struct FrameMetadata {
     pub pts: u64,
 }
 
+#[derive(Debug, Clone)]
 struct YUVPicture {
-    y: Bytes,
-    u: Bytes,
-    v: Bytes,
+    planes: [Bytes; 3],
+    num_planes: usize,
     info: FrameMetadata,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ColorSpace {
+    Bt709,
+    Bt2020Pq,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VideoStreamParams {
     pub width: u32,
     pub height: u32,
-    pub pixel_format: ffmpeg::format::Pixel,
-    pub color_space: ffmpeg::color::Space,
-    pub color_range: ffmpeg::color::Range,
+    pub color_space: ColorSpace,
+    pub color_full_range: bool,
 }
 
 impl Default for VideoStreamParams {
@@ -52,9 +57,8 @@ impl Default for VideoStreamParams {
         Self {
             width: 0,
             height: 0,
-            pixel_format: ffmpeg::format::Pixel::YUV420P,
-            color_space: ffmpeg::color::Space::BT709,
-            color_range: ffmpeg::color::Range::MPEG,
+            color_space: ColorSpace::Bt709,
+            color_full_range: false,
         }
     }
 }
@@ -387,10 +391,29 @@ impl DecoderInit {
         match self.decoder.receive_frame(&mut frame) {
             Ok(()) => {
                 self.first_frame = match frame.format() {
-                    ffmpeg::format::Pixel::YUV420P => Some((frame, info)),
                     ffmpeg::format::Pixel::VIDEOTOOLBOX => {
+                        let sw_format = unsafe {
+                            let ctx_ref = (*self.decoder.as_ptr()).hw_frames_ctx;
+                            assert!(!ctx_ref.is_null());
+
+                            let mut transfer_fmt_list = std::ptr::null_mut();
+                            if ffmpeg_sys::av_hwframe_transfer_get_formats(
+                            ctx_ref,
+                            ffmpeg_sys::AVHWFrameTransferDirection::AV_HWFRAME_TRANSFER_DIRECTION_FROM,
+                            &mut transfer_fmt_list,
+                            0) < 0
+                                {
+                                    bail!("call to av_hwframe_transfer_get_formats failed");
+                                };
+
+                            let transfer_formats = read_format_list(transfer_fmt_list);
+                            assert!(!transfer_formats.is_empty());
+
+                            transfer_formats[0]
+                        };
+
                         let mut sw_frame = ffmpeg::frame::Video::new(
-                            ffmpeg::format::Pixel::YUV420P,
+                            sw_format,
                             self.decoder.width(),
                             self.decoder.height(),
                         );
@@ -409,7 +432,7 @@ impl DecoderInit {
                             Some((sw_frame, info))
                         }
                     }
-                    f => return Err(anyhow!("unexpected stream format: {:?}", f)),
+                    _ => Some((frame, info)),
                 };
 
                 Ok(true)
@@ -439,25 +462,31 @@ impl DecoderInit {
             None => return Err(anyhow!("no frames received yet")),
         };
 
-        // debug_assert_eq!(self.decoder.color_space(), ffmpeg::color::Space::BT709);
-
-        let output_format = first_frame.0.format();
-        assert_eq!(output_format, ffmpeg::format::Pixel::YUV420P);
-
         // If we're using VideoToolbox, create a "hardware" frame to use with
         // receive_frame.
+        let output_format = first_frame.0.format();
+
         let ((mut frame, info), mut hw_frame) = match decoder_format {
-            ffmpeg::format::Pixel::YUV420P => (first_frame, None),
             ffmpeg::format::Pixel::VIDEOTOOLBOX => {
                 let hw_frame =
                     ffmpeg::frame::Video::new(ffmpeg::format::Pixel::VIDEOTOOLBOX, width, height);
 
                 (first_frame, Some(hw_frame))
             }
-            _ => return Err(anyhow!("unexpected stream format: {:?}", decoder_format)),
+            _ => (first_frame, None),
         };
 
-        let texture_format = vk::Format::G8_B8_R8_3PLANE_420_UNORM;
+        // For 10-bit textures, we need to end up in on the GPU in P010LE,
+        // because that's better supported. To make the copy easier, we'll use
+        // swscale to convert to a matching intermediate format.
+        let (intermediate_format, texture_format) = match output_format {
+            ffmpeg::format::Pixel::YUV420P => (None, vk::Format::G8_B8_R8_3PLANE_420_UNORM),
+            ffmpeg::format::Pixel::YUV420P10 | ffmpeg::format::Pixel::YUV420P10LE => (
+                Some(ffmpeg::format::Pixel::P010LE),
+                vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16,
+            ),
+            _ => return Err(anyhow!("unexpected pixel format: {:?}", output_format)),
+        };
 
         debug_assert_eq!(frame.width(), width);
         debug_assert_eq!(frame.height(), height);
@@ -472,22 +501,26 @@ impl DecoderInit {
             ));
         }
 
-        let y_stride = frame.stride(0);
-        let u_stride = frame.stride(1);
-        let v_stride = frame.stride(2);
+        let mut intermediate_frame =
+            intermediate_format.map(|fmt| ffmpeg::frame::Video::new(fmt, width, height));
 
-        let y_len = y_stride * frame.plane_height(0) as usize;
-        let u_len = u_stride * frame.plane_height(1) as usize;
-        let v_len = v_stride * frame.plane_height(2) as usize;
+        // For the purposes of determining the size of and offsets into the
+        // staging buffer, we use the intermediate frame if it exists, otherwise
+        // the output frame.
+        let model_frame = intermediate_frame.as_ref().unwrap_or(&frame);
 
-        // This is vanishingly unlikely, and I have no idea how the pixels
-        // would be layed out in that case.
-        debug_assert_eq!(y_len % 4, 0);
+        // Precalculate the layout of the staging buffer.
+        let mut buffer_strides = [0; 3];
+        let mut buffer_offsets = [0; 3];
+        let mut buffer_size = 0;
+        for plane in 0..model_frame.planes() {
+            let stride = model_frame.stride(plane);
+            let len = stride * model_frame.plane_height(plane) as usize;
 
-        // Precalculate the offsets into the buffer for each plane.
-        let buffer_size = y_len + u_len + v_len;
-        let buffer_offsets = [0, y_len, y_len + u_len];
-        let buffer_strides = [y_stride, u_stride, v_stride];
+            buffer_strides[plane] = stride;
+            buffer_offsets[plane] = buffer_size;
+            buffer_size += len;
+        }
 
         let staging_buffer = create_host_buffer(
             &self.vk.device,
@@ -496,21 +529,32 @@ impl DecoderInit {
             buffer_size,
         )?;
 
-        let color_space = match self.decoder.color_space() {
-            ffmpeg::color::Space::BT709 => ffmpeg::color::Space::BT709,
-            ffmpeg::color::Space::BT2020NCL => ffmpeg::color::Space::BT2020NCL,
-            cs => {
-                warn!("unexpected color space: {:?}", cs);
-                ffmpeg::color::Space::BT709
+        let color_space = match (
+            self.decoder.color_space(),
+            self.decoder.color_transfer_characteristic(),
+        ) {
+            (ffmpeg::color::Space::BT709, ffmpeg::color::TransferCharacteristic::BT709) => {
+                ColorSpace::Bt709
             }
+            (ffmpeg::color::Space::BT2020NCL, ffmpeg::color::TransferCharacteristic::SMPTE2084) => {
+                ColorSpace::Bt2020Pq
+            }
+            (
+                ffmpeg::color::Space::Unspecified,
+                ffmpeg::color::TransferCharacteristic::Unspecified,
+            ) => {
+                warn!("video stream has unspecified color primaries or transfer function");
+                ColorSpace::Bt709
+            }
+            (cs, ctrc) => bail!("unexpected color description: {:?} / {:?}", cs, ctrc),
         };
 
-        let color_range = match self.decoder.color_range() {
-            ffmpeg::color::Range::MPEG => ffmpeg::color::Range::MPEG,
-            ffmpeg::color::Range::JPEG => ffmpeg::color::Range::JPEG,
+        let color_full_range = match self.decoder.color_range() {
+            ffmpeg::color::Range::MPEG => false,
+            ffmpeg::color::Range::JPEG => true,
             cr => {
                 warn!("unexpected color range: {:?}", cr);
-                ffmpeg::color::Range::MPEG
+                false
             }
         };
 
@@ -536,7 +580,12 @@ impl DecoderInit {
 
         // Send the frame we have from before.
         decoded_send
-            .send(copy_frame(&mut frame, &mut BytesMut::new(), info))
+            .send(copy_frame(
+                &mut frame,
+                intermediate_frame.as_mut(),
+                &mut BytesMut::new(),
+                info,
+            ))
             .unwrap();
 
         // Spawn another thread that receives packets on one channel and sends
@@ -580,11 +629,12 @@ impl DecoderInit {
                     loop {
                         match receive_frame(&mut decoder, &mut frame, hw_frame.as_mut()) {
                             Ok(()) => {
-                                let pic = copy_frame(&mut frame, &mut scratch, info);
-
-                                debug_assert_eq!(pic.y.len(), y_len);
-                                debug_assert_eq!(pic.u.len(), u_len);
-                                debug_assert_eq!(pic.v.len(), v_len);
+                                let pic = copy_frame(
+                                    &mut frame,
+                                    intermediate_frame.as_mut(),
+                                    &mut scratch,
+                                    info,
+                                );
 
                                 let span = trace_span!("send");
                                 let _guard = span.enter();
@@ -640,9 +690,8 @@ impl DecoderInit {
         let params = VideoStreamParams {
             width,
             height,
-            pixel_format: output_format,
             color_space,
-            color_range,
+            color_full_range,
         };
 
         Ok((dec, video_texture, params))
@@ -715,14 +764,15 @@ impl CPUDecoder {
         // Copy data into the staging buffer.
         self.yuv_buffer_offsets
             .iter()
-            .zip([pic.y, pic.u, pic.v])
+            .zip(pic.planes.iter())
+            .take(pic.num_planes)
             .for_each(|(offset, src)| {
                 let dst = std::slice::from_raw_parts_mut(
                     (self.staging_buffer.access as *mut u8).add(*offset),
                     src.len(),
                 );
 
-                dst.copy_from_slice(&src);
+                dst.copy_from_slice(src);
             });
 
         // Trace the upload, including loading timestamps for the previous upload.
@@ -793,6 +843,12 @@ impl CPUDecoder {
 
         // Upload from the staging buffer to the texture.
         {
+            let num_planes = match self.video_texture.format {
+                vk::Format::G8_B8_R8_3PLANE_420_UNORM => 3,
+                vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 => 2,
+                _ => unreachable!(),
+            };
+
             let regions = [
                 vk::ImageAspectFlags::PLANE_0,
                 vk::ImageAspectFlags::PLANE_1,
@@ -800,6 +856,7 @@ impl CPUDecoder {
             ]
             .into_iter()
             .enumerate()
+            .take(num_planes)
             .map(|(plane, plane_aspect_mask)| {
                 // Vulkan considers the image width/height to be 1/2 the size
                 // for the U and V planes.
@@ -809,10 +866,21 @@ impl CPUDecoder {
                     (self.texture_width / 2, self.texture_height / 2)
                 };
 
+                let texel_width = match self.video_texture.format {
+                    vk::Format::G8_B8_R8_3PLANE_420_UNORM => 1,
+                    vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 => {
+                        if plane == 0 {
+                            2
+                        } else {
+                            4
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+
                 vk::BufferImageCopy::builder()
                     .buffer_offset(self.yuv_buffer_offsets[plane] as u64)
-                    // This is actually in texels, but each plane uses 1bpp.
-                    .buffer_row_length(self.yuv_buffer_strides[plane] as u32)
+                    .buffer_row_length((self.yuv_buffer_strides[plane] / texel_width) as u32) // In texels.
                     .image_subresource(vk::ImageSubresourceLayers {
                         aspect_mask: plane_aspect_mask,
                         mip_level: 0,
@@ -935,58 +1003,93 @@ fn copy_packet(pkt: &mut ffmpeg::Packet, buf: Undecoded) -> anyhow::Result<()> {
 #[instrument(skip_all)]
 fn copy_frame(
     frame: &mut ffmpeg::frame::Video,
+    intermediate_frame: Option<&mut ffmpeg::frame::Video>,
     scratch: &mut BytesMut,
     info: FrameMetadata,
 ) -> YUVPicture {
+    let transfer_src = if let Some(intermediate) = intermediate_frame {
+        // TODO reuse
+        let mut ctx = ffmpeg::software::scaling::Context::get(
+            frame.format(),
+            frame.width(),
+            frame.height(),
+            intermediate.format(),
+            intermediate.width(),
+            intermediate.height(),
+            ffmpeg::software::scaling::Flags::empty(),
+        )
+        .expect("failed to create sws ctx");
+
+        ctx.run(frame, intermediate).expect("failed to convert");
+
+        intermediate
+    } else {
+        frame
+    };
+
+    let mut pic = YUVPicture {
+        planes: [Bytes::new(), Bytes::new(), Bytes::new()],
+        num_planes: transfer_src.planes(),
+        info,
+    };
+
     scratch.truncate(0);
+    for plane in 0..transfer_src.planes() {
+        scratch.extend_from_slice(transfer_src.data(plane));
+        pic.planes[plane] = scratch.split().freeze();
+    }
 
-    scratch.extend_from_slice(frame.data(0));
-    let y = scratch.split().freeze();
-
-    scratch.extend_from_slice(frame.data(1));
-    let u = scratch.split().freeze();
-
-    scratch.extend_from_slice(frame.data(2));
-    let v = scratch.split().freeze();
-
-    YUVPicture { y, u, v, info }
+    pic
 }
 
 #[no_mangle]
 unsafe extern "C" fn get_hw_format_videotoolbox(
     ctx: *mut ffmpeg_sys::AVCodecContext,
-    mut formats: *const ffmpeg_sys::AVPixelFormat,
+    list: *const ffmpeg_sys::AVPixelFormat,
 ) -> ffmpeg_sys::AVPixelFormat {
     use ffmpeg_sys::AVPixelFormat::*;
 
-    while *formats != AV_PIX_FMT_NONE {
-        if *formats == AV_PIX_FMT_VIDEOTOOLBOX {
-            let frames_ctx_ref = ffmpeg_sys::av_hwframe_ctx_alloc((*ctx).hw_device_ctx);
-            if frames_ctx_ref.is_null() {
-                error!("call to av_hwframe_ctx_alloc failed");
-                break;
-            }
+    let sw_pix_fmt = (*ctx).sw_pix_fmt;
+    let formats = read_format_list(list);
 
-            let frames_ctx = (*frames_ctx_ref).data as *mut ffmpeg_sys::AVHWFramesContext;
-            (*frames_ctx).width = (*ctx).width;
-            (*frames_ctx).height = (*ctx).height;
-            (*frames_ctx).format = AV_PIX_FMT_VIDEOTOOLBOX;
-            (*frames_ctx).sw_format = AV_PIX_FMT_YUV420P;
-
-            let res = ffmpeg_sys::av_hwframe_ctx_init(frames_ctx_ref);
-            if res < 0 {
-                error!("call to av_hwframe_ctx_init failed");
-                break;
-            }
-
-            debug!("using VideoToolbox hardware encoder");
-            (*ctx).hw_frames_ctx = frames_ctx_ref;
-            return *formats;
+    if formats.contains(&ffmpeg::format::Pixel::VIDEOTOOLBOX) {
+        let frames_ctx_ref = ffmpeg_sys::av_hwframe_ctx_alloc((*ctx).hw_device_ctx);
+        if frames_ctx_ref.is_null() {
+            error!("call to av_hwframe_ctx_alloc failed");
+            return sw_pix_fmt;
         }
 
-        formats = formats.add(1);
+        debug!(?formats, sw_pix_fmt = ?sw_pix_fmt, "get_hw_format_videotoolbox");
+
+        let frames_ctx = (*frames_ctx_ref).data as *mut ffmpeg_sys::AVHWFramesContext;
+        (*frames_ctx).width = (*ctx).width;
+        (*frames_ctx).height = (*ctx).height;
+        (*frames_ctx).format = AV_PIX_FMT_VIDEOTOOLBOX;
+        (*frames_ctx).sw_format = AV_PIX_FMT_YUV420P;
+
+        let res = ffmpeg_sys::av_hwframe_ctx_init(frames_ctx_ref);
+        if res < 0 {
+            error!("call to av_hwframe_ctx_init failed");
+            return sw_pix_fmt;
+        }
+
+        debug!("using VideoToolbox hardware encoder");
+        (*ctx).hw_frames_ctx = frames_ctx_ref;
+        return AV_PIX_FMT_VIDEOTOOLBOX;
     }
 
-    warn!("VideoToolbox setup failed, falling back to CPU decoder");
-    AV_PIX_FMT_YUV420P
+    warn!("unable to determine ffmpeg hw format");
+    sw_pix_fmt
+}
+
+unsafe fn read_format_list(
+    mut ptr: *const ffmpeg_sys::AVPixelFormat,
+) -> Vec<ffmpeg::format::Pixel> {
+    let mut formats = Vec::new();
+    while !ptr.is_null() && *ptr != ffmpeg_sys::AVPixelFormat::AV_PIX_FMT_NONE {
+        formats.push((*ptr).into());
+        ptr = ptr.add(1);
+    }
+
+    formats
 }
