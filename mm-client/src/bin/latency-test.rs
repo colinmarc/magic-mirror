@@ -260,12 +260,15 @@ impl winit::application::ApplicationHandler<AppEvent> for LatencyTest {
     ) {
     }
 
-    fn about_to_wait(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         if self.last_keepalive.elapsed() > time::Duration::from_secs(1) {
             self.conn
                 .send(protocol::KeepAlive {}, Some(self.attachment_sid), false)
                 .unwrap();
             self.last_keepalive = time::Instant::now();
+        } else if self.block_started.elapsed() > time::Duration::from_secs(3) {
+            error!("timed out waiting for block");
+            event_loop.exit();
         }
     }
 
@@ -284,6 +287,28 @@ impl winit::application::ApplicationHandler<AppEvent> for LatencyTest {
 impl LatencyTest {
     fn event(&mut self, event: AppEvent) -> anyhow::Result<bool> {
         match event {
+            AppEvent::StreamMessage(_, protocol::MessageType::VideoChunk(chunk))
+            | AppEvent::Datagram(protocol::MessageType::VideoChunk(chunk)) => {
+                if self.first_frame_recvd.is_none() {
+                    self.first_frame_recvd = Some(time::Instant::now());
+                }
+
+                if self.stream_seq.is_none() && self.attachment_id.is_some() {
+                    self.stream_seq = Some(chunk.stream_seq);
+                    self.stream.reset(
+                        self.attachment_id.unwrap(),
+                        chunk.stream_seq,
+                        APP_DIMENSION,
+                        APP_DIMENSION,
+                        self.codec,
+                    )?;
+                }
+
+                self.total_video_bytes += chunk.data.len();
+                self.stream.recv_chunk(chunk)?;
+            }
+            AppEvent::StreamMessage(_, protocol::MessageType::AudioChunk(_))
+            | AppEvent::Datagram(protocol::MessageType::AudioChunk(_)) => (),
             AppEvent::StreamMessage(sid, msg) if sid == self.attachment_sid => match msg {
                 protocol::MessageType::Attached(protocol::Attached {
                     session_id,
@@ -306,26 +331,6 @@ impl LatencyTest {
                 }
                 msg => debug!("unexpected message: {}", msg),
             },
-            AppEvent::Datagram(protocol::MessageType::VideoChunk(chunk)) => {
-                if self.first_frame_recvd.is_none() {
-                    self.first_frame_recvd = Some(time::Instant::now());
-                }
-
-                if self.stream_seq.is_none() && self.attachment_id.is_some() {
-                    self.stream_seq = Some(chunk.stream_seq);
-                    self.stream.reset(
-                        self.attachment_id.unwrap(),
-                        chunk.stream_seq,
-                        APP_DIMENSION,
-                        APP_DIMENSION,
-                        self.codec,
-                    )?;
-                }
-
-                self.total_video_bytes += chunk.data.len();
-                self.stream.recv_chunk(chunk)?;
-            }
-            AppEvent::Datagram(protocol::MessageType::AudioChunk(_)) => (),
             AppEvent::VideoStreamReady(tex, params) => {
                 assert_eq!(params.width, 256);
                 assert_eq!(params.height, 256);
