@@ -139,9 +139,9 @@ pub fn decode_message(buf: &[u8]) -> Result<(MessageType, usize), ProtocolError>
         (msg_type, off, prefix_off + remaining)
     };
 
-    if msg_type == 0 || total_len == 0 || total_len > MAX_MESSAGE_SIZE {
+    if msg_type == 0 || total_len == 0 || total_len > MAX_MESSAGE_SIZE || data_off > total_len {
         return Err(ProtocolError::InvalidMessage);
-    } else if total_len > buf.len() {
+    } else if data_off > buf.len() || total_len > buf.len() {
         return Err(ProtocolError::ShortBuffer(total_len));
     }
 

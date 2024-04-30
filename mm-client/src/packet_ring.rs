@@ -204,7 +204,7 @@ impl PacketRing {
                     stream_seq: incoming.stream_seq(),
                     seq: incoming.seq(),
                     pts: incoming.pts(),
-                    chunks: vec![None; incoming.num_chunks() as usize],
+                    chunks: vec![None; incoming.num_chunks().max(1) as usize],
                 };
 
                 wip.chunks[incoming.chunk() as usize] = Some(incoming.data());

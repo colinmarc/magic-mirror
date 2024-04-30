@@ -456,7 +456,7 @@ impl InnerConn {
             let (msg, len) = match protocol::decode_message(&buf) {
                 Ok(v) => v,
                 Err(protocol::ProtocolError::ShortBuffer(n)) => {
-                    debug!("partial message on stream {}, need {} bytes", sid, n);
+                    debug!(sid, have = buf.len(), needed = n, "partial message");
                     self.partial_reads.insert(sid, buf);
                     break;
                 }
