@@ -233,10 +233,10 @@ pub struct VideoEncodeQueueExt {
 
 #[allow(dead_code)]
 impl VideoEncodeQueueExt {
-    pub fn new(instance: &ash::Instance, device: &ash::Device) -> Self {
+    pub fn new(entry: &ash::Entry, instance: &ash::Instance, device: &ash::Device) -> Self {
         let handle = device.handle();
         let fp = vk::KhrVideoEncodeQueueFn::load(|name| unsafe {
-            std::mem::transmute(instance.get_device_proc_addr(handle, name.as_ptr()))
+            std::mem::transmute(entry.get_instance_proc_addr(instance.handle(), name.as_ptr()))
         });
 
         Self { handle, fp }

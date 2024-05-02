@@ -545,7 +545,7 @@ impl VkContext {
 
         let video_apis = if device_info.encode_family.is_some() {
             let video_queue = VideoQueueExt::new(&entry, &instance, &device);
-            let video_encode_queue = VideoEncodeQueueExt::new(&instance, &device);
+            let video_encode_queue = VideoEncodeQueueExt::new(&entry, &instance, &device);
 
             Some((video_queue, video_encode_queue))
         } else {
