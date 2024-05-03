@@ -271,7 +271,7 @@ impl Compositor {
 
         // Bind the xwayland sockets.
         let xwayland = if state.app_config.xwayland {
-            Some(XWaylandLoop::new(dh.clone())?)
+            Some(XWaylandLoop::new(dh.clone(), bug_report_dir.as_deref())?)
         } else {
             None
         };

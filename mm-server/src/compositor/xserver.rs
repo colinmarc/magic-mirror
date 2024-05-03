@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{process::Stdio, time};
+use std::{path::Path, process::Stdio, time};
 
 use anyhow::Context;
 use smithay::{
@@ -22,21 +22,28 @@ pub(super) struct XWaylandLoop {
 }
 
 impl XWaylandLoop {
-    pub fn new(dh: wayland_server::DisplayHandle) -> anyhow::Result<Self> {
+    pub fn new<P>(
+        dh: wayland_server::DisplayHandle,
+        bug_report_dir: Option<P>,
+    ) -> anyhow::Result<Self>
+    where
+        P: AsRef<Path>,
+    {
         let event_loop: calloop::EventLoop<'_, State> =
             calloop::EventLoop::try_new().context("failed to create xwm event loop")?;
 
+        let (stdout, stderr) = if let Some(bug_report_dir) = bug_report_dir {
+            let stdout = std::fs::File::create(bug_report_dir.as_ref().join("xwayland.log"))?;
+            let stderr = stdout.try_clone()?;
+            (stdout.into(), stderr.into())
+        } else {
+            (Stdio::null(), Stdio::null())
+        };
+
         let envs = std::iter::empty::<(String, String)>();
-        let (xwayland, client) = smithay::xwayland::XWayland::spawn(
-            &dh,
-            None,
-            envs,
-            true,
-            Stdio::null(),
-            Stdio::null(),
-            |_| {},
-        )
-        .context("failed to launch Xwayland")?;
+        let (xwayland, client) =
+            smithay::xwayland::XWayland::spawn(&dh, None, envs, true, stdout, stderr, |_| {})
+                .context("failed to launch Xwayland")?;
 
         let x11_display = xwayland.display_number();
 
@@ -53,8 +60,7 @@ impl XWaylandLoop {
 
                     state.xwm = Some(xwm)
                 }
-            })
-            .unwrap();
+            })?;
 
         Ok(Self {
             x11_display,
