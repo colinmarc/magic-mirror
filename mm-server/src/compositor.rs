@@ -351,6 +351,16 @@ impl Compositor {
             None
         };
 
+        // Use `glxinfo` and `eglinfo` to generate more debbuging help.
+        if let Some(bug_report_dir) = self.bug_report_dir.as_ref() {
+            let p = bug_report_dir.to_owned();
+            let wayland_socket = self.socket_name.clone();
+            let x11_socket = self.xwayland.as_ref().map(|xwm| xwm.x11_display);
+            std::thread::spawn(move || {
+                save_glxinfo_eglinfo(&p, &wayland_socket, x11_socket);
+            });
+        }
+
         let mut ready = Some(ready);
         let start = time::Instant::now();
 
@@ -1065,6 +1075,54 @@ fn signal_child(pid: i32, sig: nix::sys::signal::Signal) -> anyhow::Result<()> {
     nix::sys::signal::killpg(pid, Some(sig))?;
 
     Ok(())
+}
+
+fn save_glxinfo_eglinfo(
+    bug_report_dir: impl AsRef<Path>,
+    socket_name: &OsStr,
+    x11_display: Option<u32>,
+) {
+    lazy_static! {
+        static ref RE_GLXINFO_DEVICE: regex::Regex =
+            regex::Regex::new(r"(?m)[ \t]+Device: (.*)$").unwrap();
+    }
+
+    use std::process::Command;
+    if let Some(x11_display) = x11_display {
+        match Command::new("glxinfo")
+            .env_clear()
+            .env("DISPLAY", format!(":{}", x11_display))
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        {
+            Ok(output) => {
+                if let Some(res) = RE_GLXINFO_DEVICE.captures(&output) {
+                    trace!("GLX device string: {:?}", res.get(1).unwrap().as_str());
+                } else {
+                    trace!("no GLX device string found!");
+                }
+
+                let _ = std::fs::write(bug_report_dir.as_ref().join("glxinfo.log"), output);
+            }
+            Err(e) => {
+                debug!("failed to run glxinfo: {:#}", e);
+            }
+        }
+    }
+
+    match Command::new("eglinfo")
+        .env_clear()
+        .env("WAYLAND_DISPLAY", socket_name)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+    {
+        Ok(output) => {
+            let _ = std::fs::write(bug_report_dir.as_ref().join("eglinfo.log"), output);
+        }
+        Err(e) => {
+            debug!("failed to run eglinfo: {:#}", e)
+        }
+    }
 }
 
 fn gen_socket_name() -> OsString {
