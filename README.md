@@ -23,7 +23,7 @@ Grab the latest release (link above), and run it on a server with a GPU:
 
 ```shell
 $ cat > steam-bigpicture.toml <<EOF
-command = ["steam", "-gamepadui"]
+command = ["steam", "-steamos", "-gamepadui"]
 xwayland = true
 EOF
 $ ./mmserver --bind "<your local ip>:9599" -i steam-bigpicture.toml
@@ -47,7 +47,7 @@ For instructions on building the server and/or client yourself, see [BUILD.md](B
 The following is required to run the server:
 
  - Linux 6.x (for Ubuntu, this means Mantic or Noble)
- - (For AMD/Intel cards) Mesa 24.x or later
+ - (For AMD/Intel cards) Mesa 24.1.x or later (not yet released, so use `mesa-git` on arch or build from source)
  - (For NVIDIA cards) [Vulkan drivers](https://developer.nvidia.com/vulkan-driver) version 550 or later
  - XWayland (for X11 apps)
 
