@@ -16,6 +16,7 @@ use ash::vk::native::{
 use bytes::Bytes;
 use tracing::trace;
 
+use crate::color::VideoProfile;
 use crate::compositor::{AttachedClients, VideoStreamParams};
 use crate::vulkan::*;
 
@@ -76,11 +77,14 @@ impl H265Encoder {
         let h265_profile_info =
             vk::VideoEncodeH265ProfileInfoEXT::default().std_profile_idc(profile_idc);
 
-        let mut profile = H265EncodeProfile::new(
-            super::default_profile(vk::VideoCodecOperationFlagsKHR::ENCODE_H265_EXT),
-            super::default_encode_usage(),
-            h265_profile_info,
-        );
+        let op = vk::VideoCodecOperationFlagsKHR::ENCODE_H265_EXT;
+        let (profile, profile_idc) = match params.profile {
+            VideoProfile::Hd => (super::default_profile(op), 1),
+            VideoProfile::Hdr10 => (super::default_hdr10_profile(op), 2),
+        };
+
+        let mut profile =
+            H265EncodeProfile::new(profile, super::default_encode_usage(), h265_profile_info);
 
         let mut caps = H265EncodeCapabilities::default();
 
@@ -198,19 +202,23 @@ impl H265Encoder {
 
         trace!("crop right: {}, bottom: {}", crop_right, crop_bottom);
 
+        let (colour_primaries, transfer_characteristics, matrix_coeffs) = match params.profile {
+            VideoProfile::Hd => (1, 1, 1),
+            VideoProfile::Hdr10 => (9, 16, 9),
+        };
+
         let mut vui = StdVideoH265SequenceParameterSetVui {
-            // BT.709.
-            colour_primaries: 1,
-            transfer_characteristics: 1,
-            matrix_coeffs: 1,
+            colour_primaries,
+            transfer_characteristics,
+            matrix_coeffs,
             // Unspecified.
             video_format: 5,
             ..unsafe { std::mem::zeroed() }
         };
 
         vui.flags.set_video_signal_type_present_flag(1);
-        vui.flags.set_video_full_range_flag(0); // Narrow range.
         vui.flags.set_colour_description_present_flag(1);
+        vui.flags.set_video_full_range_flag(0); // Narrow range.
 
         let ptl = StdVideoH265ProfileTierLevel {
             general_profile_idc: profile_idc,
@@ -245,13 +253,18 @@ impl H265Encoder {
 
         let max_transform_hierarchy_depth = (max_ctb.ilog2() - min_tbs.ilog2()) as u8;
 
+        let bit_depth = match params.profile {
+            VideoProfile::Hd => 8,
+            VideoProfile::Hdr10 => 10,
+        };
+
         let mut sps = StdVideoH265SequenceParameterSet {
             chroma_format_idc: StdVideoH265ChromaFormatIdc_STD_VIDEO_H265_CHROMA_FORMAT_IDC_420,
             pic_width_in_luma_samples: aligned_width,
             pic_height_in_luma_samples: aligned_height,
             sps_max_sub_layers_minus1: layers_minus_1,
-            bit_depth_luma_minus8: 0,   // TODO HDR
-            bit_depth_chroma_minus8: 0, // TODO HDR
+            bit_depth_luma_minus8: bit_depth - 8,
+            bit_depth_chroma_minus8: bit_depth - 8,
             log2_max_pic_order_cnt_lsb_minus4: 4,
             log2_min_luma_coding_block_size_minus3: (min_cb.ilog2() - 3) as u8,
             log2_diff_max_min_luma_coding_block_size: (max_cb.ilog2() - min_cb.ilog2()) as u8,

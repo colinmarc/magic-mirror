@@ -21,9 +21,10 @@ use ash::{
     vk,
 };
 use cstr::cstr;
-use ffmpeg_next as ffmpeg;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use tracing::{debug, error, info, warn};
+
+use crate::video::ColorSpace;
 
 pub struct VkDebugContext {
     debug: DebugUtils,
@@ -957,34 +958,24 @@ pub fn load_shader(device: &ash::Device, bytes: &[u8]) -> anyhow::Result<vk::Sha
     Ok(shader)
 }
 
-pub fn sampler_conversion(
+pub fn create_ycbcr_sampler_conversion(
     device: &ash::Device,
+    format: vk::Format,
     params: &crate::video::VideoStreamParams,
 ) -> anyhow::Result<vk::SamplerYcbcrConversion> {
     let ycbcr_model = match params.color_space {
-        ffmpeg::color::Space::BT709 => vk::SamplerYcbcrModelConversion::YCBCR_709,
-        ffmpeg::color::Space::BT2020NCL => vk::SamplerYcbcrModelConversion::YCBCR_2020,
-        _ => return Err(anyhow!("unsupported color space: {:?}", params.color_space)),
+        ColorSpace::Bt709 => vk::SamplerYcbcrModelConversion::YCBCR_709,
+        ColorSpace::Bt2020Pq => vk::SamplerYcbcrModelConversion::YCBCR_2020,
     };
 
-    let ycbcr_range = match params.color_range {
-        ffmpeg::color::Range::MPEG => vk::SamplerYcbcrRange::ITU_NARROW,
-        ffmpeg::color::Range::JPEG => vk::SamplerYcbcrRange::ITU_FULL,
-        _ => return Err(anyhow!("unsupported color range: {:?}", params.color_range)),
-    };
-
-    let texture_format = match params.pixel_format {
-        ffmpeg::format::Pixel::YUV420P => vk::Format::G8_B8_R8_3PLANE_420_UNORM,
-        _ => {
-            return Err(anyhow!(
-                "unsupported pixel format: {:?}",
-                params.pixel_format
-            ))
-        }
+    let ycbcr_range = if params.color_full_range {
+        vk::SamplerYcbcrRange::ITU_FULL
+    } else {
+        vk::SamplerYcbcrRange::ITU_NARROW
     };
 
     let create_info = vk::SamplerYcbcrConversionCreateInfo::builder()
-        .format(texture_format)
+        .format(format)
         .ycbcr_model(ycbcr_model)
         .ycbcr_range(ycbcr_range)
         .chroma_filter(vk::Filter::LINEAR)

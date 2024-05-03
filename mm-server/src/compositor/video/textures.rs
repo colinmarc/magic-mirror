@@ -18,7 +18,7 @@ use smithay::{
 };
 use tracing::{debug, error, trace, warn};
 
-use crate::vulkan::*;
+use crate::{color::ColorSpace, vulkan::*};
 
 use super::dmabuf::import_dma_texture;
 
@@ -87,6 +87,7 @@ pub enum SurfaceTexture {
         buffer: wl_buffer::WlBuffer,
         image: Rc<VkImage>,
         semaphore: vk::Semaphore,
+        color_space: ColorSpace,
     },
 }
 
@@ -247,6 +248,7 @@ impl TextureManager {
         surface: &wl_surface::WlSurface,
         buffer: &wl_buffer::WlBuffer,
         dmabuf: dmabuf::Dmabuf,
+        color_space: ColorSpace,
     ) -> anyhow::Result<()> {
         let DmabufCacheEntry {
             image, semaphore, ..
@@ -262,6 +264,7 @@ impl TextureManager {
                 semaphore,
                 buffer: buffer.clone(),
                 image,
+                color_space,
             },
         );
 
