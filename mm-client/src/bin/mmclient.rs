@@ -580,23 +580,22 @@ impl App {
                     hotspot_x,
                     hotspot_y,
                 }) => {
-                    let cursor: anyhow::Result<winit::window::Cursor> = if !image.is_empty() {
-                        load_cursor_image(&image, hotspot_x, hotspot_y)
-                            .map(|src| event_loop.create_custom_cursor(src).into())
-                    } else {
-                        icon.try_into()
-                            .map(cursor_icon_from_proto)
-                            .map_err(anyhow::Error::new)
-                            .map(Into::into)
-                    };
-
-                    match cursor {
-                        Ok(cursor) => {
+                    if !image.is_empty() {
+                        if let Ok(cursor) = load_cursor_image(&image, hotspot_x, hotspot_y)
+                            .map(|src| event_loop.create_custom_cursor(src))
+                        {
                             self.window.set_cursor(cursor);
+                            self.window.set_cursor_visible(true);
+                        } else {
+                            error!(image_len = image.len(), "custom cursor image update failed");
                         }
-                        Err(err) => {
-                            debug!(?err, ?icon, image_len = image.len(), "cursor update failed");
-                        }
+                    } else if icon.try_into() == Ok(protocol::update_cursor::CursorIcon::None) {
+                        self.window.set_cursor_visible(false);
+                    } else if let Ok(icon) = icon.try_into().map(cursor_icon_from_proto) {
+                        self.window.set_cursor(icon);
+                        self.window.set_cursor_visible(true);
+                    } else {
+                        error!(icon, "cursor shape update failed");
                     }
                 }
                 protocol::MessageType::Error(e) => {
