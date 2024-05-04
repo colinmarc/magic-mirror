@@ -471,6 +471,7 @@ impl Compositor {
 
                         // Check that we haven't timed out waiting for the client.
                         if ready.is_some() && start.elapsed() > ACCEPT_TIMEOUT {
+                            signal_child(child.id() as i32, nix::sys::signal::SIGKILL)?;
                             bail!("timed out waiting for client");
                         }
 
