@@ -7,6 +7,8 @@ mod input;
 mod x11;
 mod xdg_shell;
 
+pub mod drm;
+
 use super::{ClientState, State};
 use smithay::{
     reexports::wayland_server::{self, protocol::wl_surface, Resource},

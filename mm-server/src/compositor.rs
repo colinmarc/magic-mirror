@@ -122,6 +122,7 @@ pub struct State {
     compositor_state: smithay::wayland::compositor::CompositorState,
     dmabuf_state: smithay::wayland::dmabuf::DmabufState,
     _dmabuf_global: smithay::wayland::dmabuf::DmabufGlobal,
+    drm_state: handlers::drm::DrmState,
     // output_manager_state: smithay::wayland::output::OutputManagerState,
     xdg_shell_state: smithay::wayland::shell::xdg::XdgShellState,
     shm_state: smithay::wayland::shm::ShmState,
@@ -196,6 +197,9 @@ impl Compositor {
         let dmabuf_global =
             dmabuf_state.create_global_with_default_feedback::<State>(&dh, &default_feedback);
 
+        // Only for XWayland compatibility.
+        let drm_state = handlers::drm::DrmState::new(&dh, vk.clone())?;
+
         let xwayland_shell_state =
             smithay::wayland::xwayland_shell::XWaylandShellState::new::<State>(&dh);
 
@@ -237,6 +241,7 @@ impl Compositor {
             compositor_state,
             dmabuf_state,
             _dmabuf_global: dmabuf_global,
+            drm_state,
             // output_manager_state,
             xdg_shell_state,
             shm_state,
