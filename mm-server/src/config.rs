@@ -226,10 +226,10 @@ impl Config {
                     .unwrap(),
             };
 
-            trace!("parsed app {}: {:#?}", name, res);
-
             this.apps.insert(name, res);
         }
+
+        trace!("using config: {:#?}", this);
 
         Ok(this)
     }
