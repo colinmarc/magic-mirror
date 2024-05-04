@@ -4,13 +4,13 @@ Parameters
 ----------
 
 Licensor:             Colin Marc <hi@colinmarc.com>
-Licensed Work:        Magic Mirror 0.0.1
+Licensed Work:        Magic Mirror
 
 Additional Use Grant: You may make use of the Licensed Work, provided that
                       you may not use the Licensed Work for a Game Streaming
                       or Remote Desktop service.
 
-                      A "Game Streaming or Remote Desktop Service” is a
+                      A "Game Streaming or Remote Desktop service” is a
                       commercial offering that allows third parties (other than
                       your employees and contractors) to access the
                       functionality of the Licensed Work, thereby utilizing
