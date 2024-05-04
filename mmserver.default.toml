@@ -49,14 +49,6 @@ worker_threads = 8
 # to specify no limit.
 max_connections = 4
 
-# Whether to enable the use of QUIC datagrams (RFC 9221) to transmit audio and video
-# packets. Datagrams offer lower latency but decreased robustness in the face of
-# packet loss, so this option can be used to decrease latency if you're on a
-# local network where you know there won't be any loss.
-#
-# This option will likely default to true in a future release.
-enable_datagrams = false
-
 # *** Configured Applications *** 
 #
 # Each application you want to stream must be configured in advance. An example

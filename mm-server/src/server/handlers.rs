@@ -259,8 +259,6 @@ fn attach(
         }
     };
 
-    let use_datagrams = state.lock().unwrap().cfg.server.enable_datagrams;
-
     let (handle, display_params, bug_report_dir) = {
         let mut state = state.lock().unwrap();
 
@@ -363,7 +361,6 @@ fn attach(
     // Five varints at max 5 bytes, plus a header, works out to around 32
     // bytes. Double for safety.
     let dgram_chunk_size = max_dgram_len - 64;
-    let stream_chunk_size = protocol::MAX_MESSAGE_SIZE - 64;
 
     loop {
         select! {
@@ -545,13 +542,7 @@ fn attach(
 
                         // TODO FEC
 
-                        let chunk_size = if use_datagrams {
-                            dgram_chunk_size
-                        } else {
-                            stream_chunk_size
-                        };
-
-                        for (chunk, num_chunks, data) in iter_chunks(frame, chunk_size) {
+                        for (chunk, num_chunks, data) in iter_chunks(frame, dgram_chunk_size) {
                             let msg = protocol::VideoChunk {
                                 session_id,
                                 attachment_id: handle.attachment_id,
@@ -564,11 +555,7 @@ fn attach(
                                 timestamp: ts,
                             };
 
-                            if use_datagrams {
-                                outgoing_dgrams.send(msg.into()).ok();
-                            } else {
-                                outgoing.send(msg.into()).ok();
-                            }
+                            outgoing_dgrams.send(msg.into()).ok();
                         }
                     }
                     Ok(CompositorEvent::AudioFrame{ stream_seq, seq, ts, frame }) => {
@@ -580,13 +567,7 @@ fn attach(
                             last_audio_frame_recv = time::Instant::now();
 
 
-                            let chunk_size = if use_datagrams {
-                                dgram_chunk_size
-                            } else {
-                                stream_chunk_size
-                            };
-
-                            for (chunk, num_chunks, data) in iter_chunks(frame, chunk_size) {
+                            for (chunk, num_chunks, data) in iter_chunks(frame, dgram_chunk_size) {
                                 let msg = protocol::AudioChunk {
                                     session_id,
                                     attachment_id: handle.attachment_id,
@@ -599,14 +580,8 @@ fn attach(
                                     timestamp: ts,
                                 };
 
-                                if use_datagrams {
-                                    outgoing_dgrams.send(msg.into()).ok();
-                                } else {
-                                    outgoing.send(msg.into()).ok();
-                                }
+                                outgoing_dgrams.send(msg.into()).ok();
                             }
-
-
                     }
                     Ok(CompositorEvent::CursorUpdate{ image, icon, hotspot_x, hotspot_y }) => {
                         use protocol::update_cursor::CursorIcon;
