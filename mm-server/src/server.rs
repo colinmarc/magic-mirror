@@ -564,6 +564,9 @@ impl Server {
         client
             .partial_reads
             .retain(|sid, _| !client.conn.stream_finished(*sid));
+        client
+            .partial_writes
+            .retain(|sid, _| !client.conn.stream_finished(*sid));
 
         Ok(())
     }
