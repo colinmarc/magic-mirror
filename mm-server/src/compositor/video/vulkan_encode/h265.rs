@@ -14,12 +14,13 @@ use ash::vk::native::{
     StdVideoH265ShortTermRefPicSet, StdVideoH265VideoParameterSet,
 };
 use bytes::Bytes;
-use tracing::trace;
+use tracing::{debug, trace};
 
 use crate::compositor::{AttachedClients, VideoStreamParams};
 use crate::vulkan::*;
 
 use super::gop_structure::HierarchicalP;
+use super::rate_control::RateControlMode;
 
 vk_chain! {
     pub struct H265EncodeProfile<'a> {
@@ -53,7 +54,7 @@ struct H265Metadata {
 pub struct H265Encoder {
     inner: super::EncoderInner,
     profile: H265EncodeProfile,
-    rc_mode: vk::VideoEncodeRateControlModeFlagsKHR,
+    rc_mode: super::rate_control::RateControlMode,
 
     structure: HierarchicalP,
     pic_metadata: Vec<H265Metadata>, // Indexed by layer.
@@ -69,6 +70,7 @@ impl H265Encoder {
         attached_clients: AttachedClients,
         stream_seq: u64,
         params: VideoStreamParams,
+        framerate: u32,
     ) -> anyhow::Result<Self> {
         let (video_loader, encode_loader) = vk.video_apis.as_ref().unwrap();
 
@@ -119,10 +121,9 @@ impl H265Encoder {
         //     quality_props.h265_props
         // );
 
-        let mut rc_mode = vk::VideoEncodeRateControlModeFlagsKHR::DISABLED;
-        if !caps.encode_caps.rate_control_modes.contains(rc_mode) {
-            rc_mode = vk::VideoEncodeRateControlModeFlagsKHR::DEFAULT;
-        }
+        let rc_mode =
+            super::rate_control::select_rc_mode(params.width, params.height, &caps.encode_caps);
+        debug!(?rc_mode, "selected rate control mode");
 
         // let mut layers = std::cmp::min(4, caps.h265_caps.max_sub_layer_count);
         let structure = super::default_structure(
@@ -272,6 +273,22 @@ impl H265Encoder {
         sps.flags.set_sps_temporal_id_nesting_flag(1);
         sps.flags.set_sps_sub_layer_ordering_info_present_flag(1);
 
+        if caps
+            .h265_caps
+            .std_syntax_flags
+            .contains(vk::VideoEncodeH265StdFlagsEXT::SAMPLE_ADAPTIVE_OFFSET_ENABLED_FLAG_SET)
+        {
+            sps.flags.set_sample_adaptive_offset_enabled_flag(1);
+        }
+
+        if caps
+            .h265_caps
+            .std_syntax_flags
+            .contains(vk::VideoEncodeH265StdFlagsEXT::TRANSFORM_SKIP_ENABLED_FLAG_SET)
+        {
+            sps.flags.set_transform_skip_context_enabled_flag(1);
+        }
+
         let pps = StdVideoH265PictureParameterSet {
             ..unsafe { std::mem::zeroed() }
         };
@@ -296,6 +313,7 @@ impl H265Encoder {
             stream_seq,
             params.width,
             params.height,
+            framerate,
             structure.required_dpb_size(),
             profile.as_mut(),
             caps.video_caps,
@@ -363,6 +381,39 @@ impl H265Encoder {
             vk::VideoEncodeH265RateControlFlagsEXT::REFERENCE_PATTERN_FLAT
         };
 
+        let mut h265_rc_layers = Vec::new();
+        let mut rc_layers = Vec::new();
+
+        if let RateControlMode::Vbr(settings) = self.rc_mode {
+            h265_rc_layers.push(
+                vk::VideoEncodeH265RateControlLayerInfoEXT::default()
+                    .use_min_qp(true)
+                    .use_max_qp(true)
+                    .min_qp(vk::VideoEncodeH265QpEXT {
+                        qp_i: settings.min_qp as i32,
+                        qp_p: settings.min_qp as i32,
+                        qp_b: settings.min_qp as i32,
+                    })
+                    .max_qp(vk::VideoEncodeH265QpEXT {
+                        qp_i: settings.max_qp as i32,
+                        qp_p: settings.max_qp as i32,
+                        qp_b: settings.max_qp as i32,
+                    }),
+            );
+
+            rc_layers = h265_rc_layers
+                .iter_mut()
+                .map(|h265_layer| {
+                    vk::VideoEncodeRateControlLayerInfoKHR::default()
+                        .max_bitrate(settings.peak_bitrate)
+                        .average_bitrate(settings.average_bitrate)
+                        .frame_rate_numerator(self.inner.framerate)
+                        .frame_rate_denominator(1)
+                        .push_next(h265_layer)
+                })
+                .collect::<Vec<_>>();
+        }
+
         let mut h265_rc_info = vk::VideoEncodeH265RateControlInfoEXT::default()
             .gop_frame_count(self.structure.gop_size)
             .idr_period(self.structure.gop_size)
@@ -370,8 +421,15 @@ impl H265Encoder {
             .sub_layer_count(self.structure.layers)
             .flags(vk::VideoEncodeH265RateControlFlagsEXT::REGULAR_GOP | pattern);
 
-        let mut rc_info =
-            vk::VideoEncodeRateControlInfoKHR::default().rate_control_mode(self.rc_mode);
+        let vbv_size = match self.rc_mode {
+            RateControlMode::Vbr(settings) => settings.vbv_size_ms,
+            _ => 0,
+        };
+
+        let mut rc_info = vk::VideoEncodeRateControlInfoKHR::default()
+            .rate_control_mode(self.rc_mode.as_vk_flags())
+            .virtual_buffer_size_in_ms(vbv_size)
+            .layers(&rc_layers);
 
         // Doesn't have a push_next method, because we're supposed to call it on
         // the parent struct.
@@ -400,13 +458,11 @@ impl H265Encoder {
 
         let slice_segment_info = [vk::VideoEncodeH265NaluSliceSegmentInfoEXT::default()
             .std_slice_segment_header(&std_slice_header)
-            .constant_qp(
-                if self.rc_mode == vk::VideoEncodeRateControlModeFlagsKHR::DISABLED {
-                    25
-                } else {
-                    0
-                },
-            )];
+            .constant_qp(if let RateControlMode::ConstantQp(qp) = self.rc_mode {
+                qp as i32
+            } else {
+                0
+            })];
 
         let mut ref_lists_info = vk::native::StdVideoEncodeH265ReferenceListsInfo {
             RefPicList0: [u8::MAX; 15],

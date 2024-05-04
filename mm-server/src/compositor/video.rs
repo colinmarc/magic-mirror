@@ -62,7 +62,13 @@ impl Encoder {
         };
 
         if use_vulkan {
-            match VulkanEncoder::new(vk.clone(), attachments.clone(), stream_seq, params) {
+            match VulkanEncoder::new(
+                vk.clone(),
+                attachments.clone(),
+                stream_seq,
+                params,
+                framerate,
+            ) {
                 Ok(enc) => return Ok(Self::Vulkan(enc)),
                 Err(e) => {
                     error!("error creating vulkan encoder: {:#}", e);

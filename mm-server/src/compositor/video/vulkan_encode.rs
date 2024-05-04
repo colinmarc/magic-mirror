@@ -24,6 +24,7 @@ use super::{begin_cb, timeline_signal, timeline_wait};
 
 mod dpb;
 mod gop_structure;
+mod rate_control;
 
 mod h264;
 use h264::H264Encoder;
@@ -42,6 +43,7 @@ impl VulkanEncoder {
         attached_clients: AttachedClients,
         stream_seq: u64,
         params: VideoStreamParams,
+        framerate: u32,
     ) -> anyhow::Result<Self> {
         match params.codec {
             VideoCodec::H264 => Ok(Self::H264(H264Encoder::new(
@@ -49,12 +51,14 @@ impl VulkanEncoder {
                 attached_clients,
                 stream_seq,
                 params,
+                framerate,
             )?)),
             VideoCodec::H265 => Ok(Self::H265(H265Encoder::new(
                 vk,
                 attached_clients,
                 stream_seq,
                 params,
+                framerate,
             )?)),
             _ => bail!("unsupported codec"),
         }
@@ -102,6 +106,7 @@ struct EncoderInner {
 
     width: u32,
     height: u32,
+    framerate: u32,
     input_format: vk::Format,
 
     vk: Arc<VkContext>,
@@ -114,6 +119,7 @@ impl EncoderInner {
         stream_seq: u64,
         width: u32,
         height: u32,
+        framerate: u32,
         required_dpb_size: usize,
         profile: &mut vk::VideoProfileInfoKHR,
         capabilities: vk::VideoCapabilitiesKHR,
@@ -261,6 +267,7 @@ impl EncoderInner {
 
             width,
             height,
+            framerate,
             input_format,
 
             vk,
@@ -1022,6 +1029,8 @@ fn default_structure(
     } else {
         DEFAULT_GOP_SIZE
     };
+
+    let gop_size = DEFAULT_GOP_SIZE;
 
     let mut structure = HierarchicalP::new(layers as u32, gop_size);
     while structure.required_dpb_size() as u32 > max_dpb_slots {
