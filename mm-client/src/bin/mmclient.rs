@@ -239,7 +239,10 @@ impl App {
 
         match event {
             WindowEvent::RedrawRequested => {
-                self.video_stream.prepare_frame()?;
+                if let Some(metadata) = self.video_stream.prepare_frame()? {
+                    self.audio_stream.sync(metadata.pts);
+                }
+
                 self.video_stream.mark_frame_rendered();
 
                 if !self.minimized && self.video_stream.is_ready() {
@@ -655,7 +658,7 @@ impl App {
                 self.renderer.bind_video_texture(texture, params)?;
             }
             AppEvent::VideoFrameAvailable => {
-                if self.video_stream.prepare_frame()? {
+                if self.video_stream.prepare_frame()?.is_some() {
                     self.window.request_redraw();
                 }
             }

@@ -220,12 +220,12 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
         Ok(())
     }
 
-    pub fn prepare_frame(&mut self) -> anyhow::Result<bool> {
+    pub fn prepare_frame(&mut self) -> anyhow::Result<Option<FrameMetadata>> {
         match self.state {
             StreamState::Streaming(ref mut dec) | StreamState::Restarting(ref mut dec, _) => {
                 dec.prepare_frame()
             }
-            StreamState::Empty | StreamState::Initializing(_) => Ok(false),
+            StreamState::Empty | StreamState::Initializing(_) => Ok(None),
         }
     }
 
@@ -666,7 +666,7 @@ impl CPUDecoder {
         }
     }
 
-    pub fn prepare_frame(&mut self) -> anyhow::Result<bool> {
+    pub fn prepare_frame(&mut self) -> anyhow::Result<Option<FrameMetadata>> {
         // If multiple frames are ready, only grab the last one.
         let mut iterator = self.decoded_recv.try_iter().peekable();
         while let Some(pic) = iterator.next() {
@@ -694,11 +694,11 @@ impl CPUDecoder {
                     STATS.frame_discarded(old.stream_seq, old.seq);
                 }
 
-                return Ok(true);
+                return Ok(Some(pic_info));
             }
         }
 
-        Ok(false)
+        Ok(None)
     }
 
     pub fn mark_frame_rendered(&mut self) {

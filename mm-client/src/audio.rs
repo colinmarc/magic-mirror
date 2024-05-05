@@ -248,7 +248,6 @@ pub struct AudioStream {
 
     stream: Option<cpal::Stream>,
     inner: Option<Box<dyn StreamWrapper>>,
-    sync_point: Option<(u64, time::Instant)>,
 
     stream_waiting: bool,
 
@@ -269,7 +268,6 @@ impl AudioStream {
             device,
 
             stream: None,
-            sync_point: None,
             inner: None,
             stream_waiting: true,
             packet_count: 0,
@@ -309,7 +307,6 @@ impl AudioStream {
         self.stream_seq = stream_seq;
         self.stream = Some(stream);
         self.inner = Some(inner);
-        self.sync_point = None;
         self.stream_waiting = true;
         self.packet_count = 0;
 

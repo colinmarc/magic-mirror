@@ -338,7 +338,7 @@ impl LatencyTest {
                 self.video_texture = Some(tex);
             }
             AppEvent::VideoFrameAvailable => {
-                if self.stream.prepare_frame()? {
+                if self.stream.prepare_frame()?.is_some() {
                     self.frames_recvd += 1;
 
                     match self.frames_recvd.cmp(&100) {
