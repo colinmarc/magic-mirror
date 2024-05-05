@@ -1,3 +1,11 @@
+## [mmclient-v0.1.2] - 2024-05-05
+
+### Bugfixes
+
+- Actually sync video and audio (4822bda39b4a5f07ed74e4fd76d5b080ea1c2078)
+- Tune verbosity of conn message (e9f0d18da517e1c7f1ab34d9c154b8ba70573f2e)
+- Fix typo in conn init (d8dd70b25952e1d1155bf8e6930d2304ca51c79e)
+
 ## [mmserver-v0.2.0] - 2024-05-05
 
 ### New Features
@@ -19,7 +27,7 @@
 - Log entire config (b588f198d13122869936b52c0690e980586a7f88)
 - Garbage-collect partial writes (a095994de28ec31bd49a54c2d757493f41fc0c06)
 
-## [mmclient-v0.1.1] - 2024-05-05
+## [mmclient-v0.1.2] - 2024-05-05
 
 ### Bugfixes
 
