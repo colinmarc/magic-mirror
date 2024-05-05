@@ -41,7 +41,11 @@ jobs:
       - name: generate release notes
         run: |-
           echo "# Server version ${GITHUB_REF_NAME/mmserver-v/}" >> release-notes.txt
-          git cliff -c .github/workflows/cliff.toml --include-path "mm-server/**/*" | tail -n +2 >> release-notes.txt
+          git cliff -c .github/workflows/cliff.toml \
+            --include-path "mm-server/**/*" \
+            --tag-pattern "server" \
+            --current --latest | tail -n +2 | tee -a "$RUNNER_TEMP/release-notes.txt"
+
 
       - name: create release
         uses: softprops/action-gh-release@v2

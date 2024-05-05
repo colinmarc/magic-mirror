@@ -89,8 +89,12 @@ jobs:
         run: cargo install git-cliff
       - name: generate release notes
         run: |-
-          echo "# Client version ${GITHUB_REF_NAME/mmclient-v/}" >> release-notes.txt
-          git cliff -c .github/workflows/cliff.toml --include-path "mm-client/**/*" | tail -n +2 >> release-notes.txt
+          echo "# Client version ${GITHUB_REF_NAME/mmclient-v/}" | tee -a release-notes.txt
+          git cliff -c .github/workflows/cliff.toml \
+            --include-path "mm-client/**/*" \
+            --tag-pattern "client" \
+            --current --latest | tail -n +2 | tee -a "$RUNNER_TEMP/release-notes.txt"
+
 
       - name: download artifacts
         uses: actions/download-artifact@v4
