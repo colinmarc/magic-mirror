@@ -23,13 +23,6 @@ jobs:
       - uses: swatinem/rust-cache@v2
       - run: cargo install git-cliff@^2.2 cargo-edit@^0.12
 
-      # If there's an existing PR, it has the next tag on it, which messes with
-      # git-cliff.
-      - name: delete temporary tag
-        continue-on-error: true
-        run: |
-          git tag -l --contains $(git rev-parse origin/auto-bump-${{ matrix.component }}) | xargs git tag -d
-
       - name: determine version
         run: |
           echo "COMPONENT=${{ matrix.component }}" | tee -a "$GITHUB_ENV"
@@ -85,9 +78,3 @@ jobs:
           title: ":robot: bump mm${{ matrix.component }} to ${{ env.BUMPED_VERSION }}"
           commit-message: "chore: bump mm${{ matrix.component }} to ${{ env.BUMPED_VERSION }}"
           body-path: "${{ runner.temp }}/pr-body.txt"
-
-      - name: tag branch commit
-        if: ${{ steps.cpr.outputs.pull-request-head-sha }}
-        run: |
-          git tag --force "$BUMPED_VERSION" ${{ steps.cpr.outputs.pull-request-head-sha }}
-          git push origin tag "$BUMPED_VERSION" --force
