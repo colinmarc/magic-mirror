@@ -50,8 +50,8 @@ pub fn select_rc_mode(
             vbv_size_ms: 5000,
             average_bitrate: (BASELINE_AVG_BITRATE * scale).round() as u64,
             peak_bitrate: (BASELINE_PEAK_BITRATE * scale).round() as u64,
-            max_qp: 25,
-            min_qp: 35,
+            min_qp: 25,
+            max_qp: 35,
         })
     } else if caps
         .rate_control_modes
