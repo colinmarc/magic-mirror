@@ -6,29 +6,35 @@ on:
 name: Tests
 jobs:
   tests:
-    name: Server Tests
+    name: Tests
     runs-on: ubuntu-latest
     steps:
       - uses: dtolnay/rust-toolchain@stable
       - name: install deps
         run: |
           sudo apt install \
-            nasm cmake protobuf-compiler libxkbcommon-dev
+            nasm cmake protobuf-compiler libxkbcommon-dev libwayland-dev libasound2-dev \
+            ffmpeg libavutil-dev libavformat-dev libavdevice-dev libavfilter-dev
 
       - uses: actions/checkout@v4
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: |
             mm-server
+            mm-client
             mm-protocol
 
       - name: server tests
         run: (cd mm-server && cargo test)
       - name: protocol tests
         run: (cd mm-protocol && cargo test)
+      - name: client tests
+        run: (cd mm-client && cargo test)
       - name: server cargo clippy
         run: (cd mm-server && cargo clippy)
       - name: protocol cargo clippy
         run: (cd mm-protocol && cargo clippy)
+      - name: client cargo clippy
+        run: (cd mm-client && cargo clippy)
 
 
