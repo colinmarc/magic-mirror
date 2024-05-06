@@ -1030,8 +1030,6 @@ fn default_structure(
         DEFAULT_GOP_SIZE
     };
 
-    let gop_size = DEFAULT_GOP_SIZE;
-
     let mut structure = HierarchicalP::new(layers as u32, gop_size);
     while structure.required_dpb_size() as u32 > max_dpb_slots {
         layers -= 1;
