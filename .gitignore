@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
-Cargo.lock
 target
 .vscode
 .reuse
 *.log
+mm-protocol/Cargo.lock
