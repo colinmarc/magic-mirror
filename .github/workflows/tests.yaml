@@ -16,6 +16,15 @@ jobs:
             nasm cmake protobuf-compiler libxkbcommon-dev libwayland-dev libasound2-dev \
             ffmpeg libavutil-dev libavformat-dev libavdevice-dev libavfilter-dev
 
+      - name: install slang
+        run: |
+          mkdir $RUNNER_TEMP/slang
+          slang_url=$( curl -s https://api.github.com/repos/shader-slang/slang/releases/latest |\
+            jq -r '.assets[] | .browser_download_url' | grep linux-x86_64.tar.gz )
+          (cd $RUNNER_TEMP/slang && curl -o - -fsSL "$slang_url" | tar zxv)
+          echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$(dirname $(find $RUNNER_TEMP/slang -name libslang.*))" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
       - uses: swatinem/rust-cache@v2
         with:
