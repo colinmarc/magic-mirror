@@ -419,6 +419,9 @@ fn attach(
                             protocol::MessageType::PointerMotion(ev) => {
                                 handle.control.send(ControlMessage::PointerMotion(ev.x, ev.y)).ok();
                             }
+                            protocol::MessageType::RelativePointerMotion(ev) => {
+                                handle.control.send(ControlMessage::RelativePointerMotion(ev.x, ev.y)).ok();
+                            }
                             protocol::MessageType::PointerEntered(_) => {
                                 handle.control.send(ControlMessage::PointerEntered).ok();
                             }
@@ -593,6 +596,19 @@ fn attach(
                             hotspot_x,
                             hotspot_y,
                         };
+
+                        outgoing.send(msg.into()).ok();
+                    }
+                    Ok(CompositorEvent::PointerLocked(x, y)) => {
+                        let msg = protocol::LockPointer {
+                            x,
+                            y,
+                        };
+
+                        outgoing.send(msg.into()).ok();
+                    }
+                    Ok(CompositorEvent::PointerReleased) => {
+                        let msg = protocol::ReleasePointer {};
 
                         outgoing.send(msg.into()).ok();
                     }

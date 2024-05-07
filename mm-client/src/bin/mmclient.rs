@@ -166,6 +166,27 @@ struct App {
 impl winit::application::ApplicationHandler<AppEvent> for MainLoop {
     fn resumed(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {}
 
+    fn device_event(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        if let winit::event::DeviceEvent::MouseMotion { delta: (x, y) } = event {
+            if let Some(app) = &mut self.app {
+                if app.attachment.is_some() {
+                    if let Some((x, y)) = app.motion_vector_to_session_space(x, y) {
+                        let _ = app.conn.send(
+                            protocol::RelativePointerMotion { x, y },
+                            Some(app.attachment_sid),
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     fn window_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
@@ -437,27 +458,11 @@ impl App {
                 phase: TouchPhase::Moved,
                 ..
             } => {
-                if let Some(aspect) = self.renderer.get_texture_aspect() {
-                    // Map vector to [0, 1]. (It can also be negative.)
-                    let (x, y) = (
-                        (vector.x / self.window_width as f64),
-                        (vector.y / self.window_height as f64),
-                    );
-
-                    // Stretch the space to account for letterboxing. For
-                    // example, if the video texture only takes up one third
-                    // of the screen vertically, and we scroll up one third
-                    // of the window height, the resulting vector should be [0,
-                    // -1.0].
-                    let x = x * aspect.0;
-                    let y = y * aspect.1;
-
-                    // Map to the remote virtual display.
-                    let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
+                if let Some((x, y)) = self.motion_vector_to_session_space(vector.x, vector.y) {
                     let msg = protocol::PointerScroll {
                         scroll_type: protocol::pointer_scroll::ScrollType::Continuous.into(),
-                        x: x * remote_size.width as f64,
-                        y: y * remote_size.height as f64,
+                        x,
+                        y,
                     };
 
                     self.conn.send(msg, Some(self.attachment_sid), false)?;
@@ -604,6 +609,37 @@ impl App {
                     } else {
                         error!(icon, "cursor shape update failed");
                     }
+                }
+                protocol::MessageType::LockPointer(protocol::LockPointer { x, y }) => {
+                    self.window
+                        .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
+                    if let Some(aspect) = self.renderer.get_texture_aspect() {
+                        let (width, height) = self
+                            .remote_display_params
+                            .resolution
+                            .as_ref()
+                            .map(|p| (p.width, p.height))
+                            .unwrap();
+
+                        // Map vector to [-0.5, 0.5].
+                        let x = (x / width as f64) - 0.5;
+                        let y = (y / height as f64) - 0.5;
+
+                        // Squish the space to account for letterboxing.
+                        let x = x / aspect.0;
+                        let y = y / aspect.1;
+
+                        // Map to the screen size.
+                        let x = (x + 0.5) * self.window_width as f64;
+                        let y = (y + 0.5) * self.window_height as f64;
+
+                        let pos: winit::dpi::PhysicalPosition<f64> = (x, y).into();
+                        self.window.set_cursor_position(pos)?;
+                    }
+                }
+                protocol::MessageType::ReleasePointer(_) => {
+                    self.window
+                        .set_cursor_grab(winit::window::CursorGrabMode::None)?;
                 }
                 protocol::MessageType::Error(e) => {
                     error!("server error: {:#}", server_error(e));
@@ -797,6 +833,29 @@ impl App {
         }
 
         Ok(())
+    }
+
+    fn motion_vector_to_session_space(&self, x: f64, y: f64) -> Option<(f64, f64)> {
+        if let Some(aspect) = self.renderer.get_texture_aspect() {
+            // Map vector to [0, 1]. (It can also be negative.)
+            let x = x / self.window_width as f64;
+            let y = y / self.window_height as f64;
+
+            // Stretch the space to account for letterboxing. For
+            // example, if the video texture only takes up one third
+            // of the screen vertically, and we scroll up one third
+            // of the window height, the resulting vector should be [0,
+            // -1.0].
+            let x = x * aspect.0;
+            let y = y * aspect.1;
+
+            // Map to the remote virtual display.
+            let remote_size = self.remote_display_params.resolution.as_ref().unwrap();
+
+            Some((x * remote_size.width as f64, y * remote_size.height as f64))
+        } else {
+            None
+        }
     }
 }
 

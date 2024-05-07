@@ -634,6 +634,21 @@ message AudioChunk {
 // Input messages are used by the client to indicate user interaction, whether
 // it be via a keyboard, mouse, controller, or some other input. Input is
 // always scoped to an attachment and sent on the attachment stream.
+//
+// ### Relative vs absolute cursor motion
+// 
+// Clients are responsible for sending both absolute and relative pointer motion
+// events. The two event types are unrelated and do not compound; the former
+// represents the visible location of the cursor, while the latter represents
+// raw motion vectors from the device.
+//
+// Absolute motion is indicated by `063 - Pointer Motion` messages, while
+// relative motion is indicated by `069 - Relative Pointer Motion` messages.
+//
+// Absolute motion events are always necessary. Clients may choose to send
+// relative motion events only when the cursor is locked by a `067 - Lock
+// Pointer` event, until the cursor is released by a corresponding `068 -
+// Release Pointer` event.
 
 // ### 060 - Keyboard Input
 //
@@ -829,6 +844,7 @@ message PointerMotion {
   double y = 2; // Required.
 }
 
+
 // ### 064 - Pointer Input
 //
 // This message, which must be sent by the client on the same stream as the
@@ -945,4 +961,37 @@ message UpdateCursor {
   // Relates to the image, if set.
   uint32 hotspot_x = 3;
   uint32 hotspot_y = 4;
+}
+
+// ### 067 - Lock Pointer
+//
+// This message, which must be sent by the server on the same stream as the
+// original `030 - Attach` message, indicates that the pointer should be locked
+// to the given location.
+//
+// The coordinates should be in the space defined by the `resolution` parameter
+// of the `VirtualDisplayParams` set on the session.
+message LockPointer {
+  double x = 1;
+  double y = 2;
+}
+
+// ### 068 - Release Pointer
+//
+// This message, which must be sent by the server on the same stream as the
+// original `030 - Attach` message, indicates the pointer should be no longer
+// be locked.
+message ReleasePointer {
+}
+
+// ### 069 - Relative Pointer Motion
+//
+// This message, which must be sent by the client on the same stream as the
+// original `030 - Attach` message, indicates that the Pointer has moved.
+//
+// The vector should be in the space defined by the `resolution` parameter of
+// the `VirtualDisplayParams` set on the session.
+message RelativePointerMotion {
+  double x = 1; // Required.
+  double y = 2; // Required.
 }

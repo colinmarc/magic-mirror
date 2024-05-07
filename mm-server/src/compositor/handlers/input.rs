@@ -2,6 +2,10 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+use smithay::{
+    input::pointer::PointerHandle, reexports::wayland_server::protocol::wl_surface,
+    wayland::pointer_constraints,
+};
 use tracing::debug;
 
 use crate::compositor::window;
@@ -34,5 +38,21 @@ impl smithay::input::SeatHandler for State {
     }
 }
 
+impl pointer_constraints::PointerConstraintsHandler for State {
+    fn new_constraint(&mut self, surface: &wl_surface::WlSurface, pointer: &PointerHandle<Self>) {
+        pointer_constraints::with_pointer_constraint(surface, pointer, |constraint| {
+            if let Some(constraint) = constraint {
+                if let pointer_constraints::PointerConstraint::Locked(_) = *constraint {
+                    if self.window_under_cursor().as_ref().map(|w| &w.surface) == Some(surface) {
+                        constraint.activate();
+                    }
+                }
+            }
+        });
+    }
+}
+
 smithay::delegate_seat!(State);
 smithay::delegate_text_input_manager!(State);
+smithay::delegate_relative_pointer!(State);
+smithay::delegate_pointer_constraints!(State);

@@ -10,7 +10,7 @@ use smithay::{
         wayland_server::{protocol::wl_surface, Resource},
     },
     utils::IsAlive,
-    wayland::{seat::WaylandFocus, shell::xdg},
+    wayland::{pointer_constraints, seat::WaylandFocus, shell::xdg},
     xwayland,
 };
 use tracing::trace;
@@ -51,6 +51,15 @@ impl Window {
     ) {
         if let SurfaceType::X11Popup(_, bounds) = &mut self.ty {
             *bounds = new_bounds.to_physical(TODO_X11_SCALE)
+        }
+    }
+
+    pub fn scale_override(&self) -> Option<PixelScale> {
+        match self.ty {
+            SurfaceType::X11Window(_) | SurfaceType::X11Popup(..) => {
+                Some(PixelScale(TODO_X11_SCALE as u32, 1))
+            }
+            _ => None,
         }
     }
 
@@ -693,6 +702,18 @@ impl State {
             text_input.set_focus(Some(top_window.surface.clone()));
             text_input.enter();
 
+            pointer_constraints::with_pointer_constraint(
+                &top_window.surface,
+                &self.pointer_handle,
+                |constraint| {
+                    if let Some(constraint) = constraint {
+                        if let pointer_constraints::PointerConstraint::Locked(_) = *constraint {
+                            constraint.activate();
+                        }
+                    }
+                },
+            );
+
             let kb = self.seat.get_keyboard().unwrap();
             kb.set_focus(
                 self,
@@ -702,6 +723,15 @@ impl State {
         }
 
         Ok(())
+    }
+
+    pub fn window_under_cursor(&self) -> Option<Window> {
+        let scale: smithay::output::Scale = self.ui_scale.into();
+        let location = self
+            .pointer_handle
+            .current_location()
+            .to_physical(scale.fractional_scale());
+        self.window_at(location)
     }
 
     pub fn window_at(
@@ -721,7 +751,7 @@ impl State {
         None
     }
 
-    // Returns an iterator over windows with any visible content, from bottom to top.
+    /// Returns an iterator over windows with any visible content, from bottom to top.
     pub fn visible_windows(&self) -> impl Iterator<Item = &Window> {
         let first_visible_idx = self
             .window_stack

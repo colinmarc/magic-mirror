@@ -25,7 +25,7 @@ use lazy_static::*;
 use pathsearch::find_executable_in_path;
 use smithay::{
     reexports::wayland_server::{self, protocol::wl_surface, Resource},
-    wayland::{compositor, xwayland_shell},
+    wayland::{compositor, pointer_constraints, xwayland_shell},
     xwayland,
 };
 use tracing::{debug, info, trace, trace_span, warn};
@@ -128,6 +128,8 @@ pub struct State {
     shm_state: smithay::wayland::shm::ShmState,
     seat_state: smithay::input::SeatState<Self>,
     _text_input_state: smithay::wayland::text_input::TextInputManagerState,
+    _rel_pointer_manager: smithay::wayland::relative_pointer::RelativePointerManagerState,
+    _pointer_constraints_state: smithay::wayland::pointer_constraints::PointerConstraintsState,
     seat: smithay::input::Seat<Self>,
     keyboard_handle: smithay::input::keyboard::KeyboardHandle<Self>,
     pointer_handle: smithay::input::pointer::PointerHandle<Self>,
@@ -135,6 +137,8 @@ pub struct State {
     new_cursor_status: Option<smithay::input::pointer::CursorImageStatus>,
     cursor_surface: Option<wl_surface::WlSurface>,
     cursor_dirty: bool,
+
+    cursor_locked: bool,
 
     xwayland_shell_state: xwayland_shell::XWaylandShellState,
     xwm: Option<xwayland::xwm::X11Wm>,
@@ -186,6 +190,11 @@ impl Compositor {
         let mut seat_state = smithay::input::SeatState::new();
         let text_input_state: smithay::wayland::text_input::TextInputManagerState =
             smithay::wayland::text_input::TextInputManagerState::new::<State>(&dh);
+
+        let rel_pointer_manager =
+            smithay::wayland::relative_pointer::RelativePointerManagerState::new::<State>(&dh);
+        let pointer_constraints_state =
+            smithay::wayland::pointer_constraints::PointerConstraintsState::new::<State>(&dh);
 
         let mut seat = seat_state.new_wl_seat(&dh, "virtual");
         let keyboard_handle = seat.add_keyboard(Default::default(), 200, 200).unwrap();
@@ -247,6 +256,8 @@ impl Compositor {
             shm_state,
             seat_state,
             _text_input_state: text_input_state,
+            _rel_pointer_manager: rel_pointer_manager,
+            _pointer_constraints_state: pointer_constraints_state,
             seat,
             keyboard_handle,
             pointer_handle,
@@ -254,6 +265,8 @@ impl Compositor {
             new_cursor_status: None,
             cursor_surface: None,
             cursor_dirty: false,
+
+            cursor_locked: false,
 
             xwayland_shell_state,
             xwm: None,
@@ -533,17 +546,12 @@ impl Compositor {
                         if self.state.cursor_dirty && self.state.cursor_surface.is_some() {
                             let surf = self.state.cursor_surface.as_ref().unwrap();
 
-                            let scale = match self.state.visible_windows().next() {
-                                Some(Window {
-                                    ty: window::SurfaceType::X11Window(_),
-                                    ..
-                                })
-                                | Some(Window {
-                                    ty: window::SurfaceType::X11Popup(_, _),
-                                    ..
-                                }) => PixelScale(window::TODO_X11_SCALE as u32, 1),
-                                _ => self.state.ui_scale,
-                            };
+                            let scale = self
+                                .state
+                                .visible_windows()
+                                .next()
+                                .and_then(|w| w.scale_override())
+                                .unwrap_or(self.state.ui_scale);
 
                             if let Some(tex) = self.state.texture_manager.get_mut(surf) {
                                 let attachments = self.attachments.clone();
@@ -587,6 +595,42 @@ impl Compositor {
                                     }
                                 });
                             }
+                        }
+
+                        // Check if the cursor was locked or unlocked.
+                        let cursor_locked = self
+                            .state
+                            .window_under_cursor()
+                            .map(|w| {
+                                use pointer_constraints::*;
+                                with_pointer_constraint(
+                                    &w.surface,
+                                    &self.state.pointer_handle,
+                                    |constraint| {
+                                        if let Some(PointerConstraint::Locked(_)) =
+                                            constraint.as_deref()
+                                        {
+                                            constraint.unwrap().is_active()
+                                        } else {
+                                            false
+                                        }
+                                    },
+                                )
+                            })
+                            .unwrap_or_default();
+
+                        let cursor_loc = self.state.pointer_handle.current_location();
+                        if !self.state.cursor_locked && cursor_locked {
+                            // Lock cursor.
+                            let scale: smithay::output::Scale = self.state.ui_scale.into();
+                            let (x, y) = cursor_loc.to_physical(scale.fractional_scale()).into();
+                            self.attachments
+                                .dispatch(CompositorEvent::PointerLocked(x, y));
+                            self.state.cursor_locked = true;
+                        } else if self.state.cursor_locked && !cursor_locked {
+                            // Release cursor.
+                            self.attachments.dispatch(CompositorEvent::PointerReleased);
+                            self.state.cursor_locked = false;
                         }
 
                         self.render().context("render failed")?;
@@ -689,9 +733,12 @@ impl Compositor {
                                 handle.frame(&mut self.state);
                             }
                             Ok(ControlMessage::PointerMotion(x, y)) => {
+                                if self.state.cursor_locked {
+                                    continue;
+                                }
+
                                 let location: smithay::utils::Point<f64, smithay::utils::Physical> =
                                     (x, y).into();
-                                let scale: smithay::output::Scale = self.state.ui_scale.into();
 
                                 let handle = self.state.pointer_handle.clone();
                                 let (focus, location) = if let Some(window) =
@@ -706,27 +753,23 @@ impl Compositor {
                                     // relative coords for us, but that's
                                     // different for X surfaces (with a scale of
                                     // one) and normal surfaces.
-                                    match window.ty {
-                                        window::SurfaceType::X11Window(_)
-                                        | window::SurfaceType::X11Popup(..) => (
-                                            Some((
-                                                window,
-                                                window_origin.to_logical(window::TODO_X11_SCALE),
-                                            )),
-                                            location.to_logical(window::TODO_X11_SCALE as f64),
-                                        ),
-                                        _ => (
-                                            Some((
-                                                window,
-                                                window_origin
-                                                    .to_f64()
-                                                    .to_logical(scale.fractional_scale())
-                                                    .to_i32_round(),
-                                            )),
-                                            location.to_logical(scale.fractional_scale()),
-                                        ),
-                                    }
+                                    let scale: smithay::output::Scale = window
+                                        .scale_override()
+                                        .unwrap_or(self.state.ui_scale)
+                                        .into();
+
+                                    (
+                                        Some((
+                                            window,
+                                            window_origin
+                                                .to_f64()
+                                                .to_logical(scale.fractional_scale())
+                                                .to_i32_round(),
+                                        )),
+                                        location.to_logical(scale.fractional_scale()),
+                                    )
                                 } else {
+                                    let scale: smithay::output::Scale = self.state.ui_scale.into();
                                     (None, location.to_logical(scale.fractional_scale()))
                                 };
 
@@ -740,6 +783,40 @@ impl Compositor {
                                     },
                                 );
                                 handle.frame(&mut self.state);
+                            }
+                            Ok(ControlMessage::RelativePointerMotion(x, y)) => {
+                                if !self.state.cursor_locked {
+                                    continue;
+                                }
+
+                                let handle = self.state.pointer_handle.clone();
+                                if let Some(window) = self.state.window_under_cursor() {
+                                    let scale: smithay::output::Scale = window
+                                        .scale_override()
+                                        .unwrap_or(self.state.ui_scale)
+                                        .into();
+
+                                    // This gets ignored.
+                                    let origin = (0, 0).into();
+
+                                    let delta: smithay::utils::Point<
+                                        f64,
+                                        smithay::utils::Physical,
+                                    > = (x, y).into();
+                                    let delta = delta.to_logical(scale.fractional_scale());
+
+                                    handle.relative_motion(
+                                        &mut self.state,
+                                        Some((window, origin)),
+                                        &smithay::input::pointer::RelativeMotionEvent {
+                                            delta,
+                                            delta_unaccel: delta,
+                                            utime: EPOCH.elapsed().as_micros() as u64,
+                                        },
+                                    );
+
+                                    handle.frame(&mut self.state);
+                                }
                             }
                             Ok(ControlMessage::PointerInput {
                                 button_code, state, ..

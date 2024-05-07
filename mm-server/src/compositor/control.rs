@@ -50,6 +50,7 @@ pub enum ControlMessage {
     PointerEntered,
     PointerLeft,
     PointerMotion(f64, f64),
+    RelativePointerMotion(f64, f64),
     PointerInput {
         x: f64,
         y: f64,
@@ -86,5 +87,7 @@ pub enum CompositorEvent {
         hotspot_x: u32,
         hotspot_y: u32,
     },
+    PointerLocked(f64, f64),
+    PointerReleased,
     Shutdown,
 }
