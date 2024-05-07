@@ -71,11 +71,11 @@ pub fn select_rc_mode(
             (BASELINE_PEAK_BITRATE_MBPS[preset as usize] * MBPS * scale).round() as u64;
 
         RateControlMode::Vbr(VbrSettings {
-            vbv_size_ms: 5000,
+            vbv_size_ms: 2500,
             average_bitrate,
             peak_bitrate,
             min_qp: 17,
-            max_qp: 32,
+            max_qp: target_qp,
         })
     } else if caps
         .rate_control_modes
