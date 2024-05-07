@@ -152,6 +152,7 @@ struct App {
     next_frame: time::Instant,
     resize_cooldown: Option<time::Instant>,
     last_frame_received: time::Instant,
+    last_sync: time::Instant,
 
     cursor_modifiers: ModifiersState,
     cursor_pos: Option<(f64, f64)>,
@@ -240,7 +241,10 @@ impl App {
         match event {
             WindowEvent::RedrawRequested => {
                 if let Some(metadata) = self.video_stream.prepare_frame()? {
-                    self.audio_stream.sync(metadata.pts);
+                    if self.last_sync.elapsed() > time::Duration::from_secs(1) {
+                        self.audio_stream.sync(metadata.pts);
+                        self.last_sync = time::Instant::now();
+                    }
                 }
 
                 self.video_stream.mark_frame_rendered();
@@ -996,6 +1000,7 @@ fn main() -> Result<()> {
         next_frame: now + MAX_FRAME_TIME,
         resize_cooldown: None,
         last_frame_received: now,
+        last_sync: now,
 
         cursor_modifiers: ModifiersState::default(),
         cursor_pos: None,
