@@ -405,24 +405,23 @@ impl H265Encoder {
                     }),
             );
 
-            rc_layers = h265_rc_layers
-                .iter_mut()
-                .map(|h265_layer| {
+            for h265_layer in h265_rc_layers.iter_mut() {
+                rc_layers.push(
                     vk::VideoEncodeRateControlLayerInfoKHR::default()
                         .max_bitrate(settings.peak_bitrate)
                         .average_bitrate(settings.average_bitrate)
                         .frame_rate_numerator(self.inner.framerate)
                         .frame_rate_denominator(1)
-                        .push_next(h265_layer)
-                })
-                .collect::<Vec<_>>();
+                        .push_next(h265_layer),
+                );
+            }
         }
 
         let mut h265_rc_info = vk::VideoEncodeH265RateControlInfoEXT::default()
             .gop_frame_count(self.structure.gop_size)
             .idr_period(self.structure.gop_size)
             .consecutive_b_frame_count(0)
-            .sub_layer_count(self.structure.layers)
+            .sub_layer_count(1)
             .flags(vk::VideoEncodeH265RateControlFlagsEXT::REGULAR_GOP | pattern);
 
         let vbv_size = match self.rc_mode {
@@ -432,8 +431,11 @@ impl H265Encoder {
 
         let mut rc_info = vk::VideoEncodeRateControlInfoKHR::default()
             .rate_control_mode(self.rc_mode.as_vk_flags())
-            .virtual_buffer_size_in_ms(vbv_size)
-            .layers(&rc_layers);
+            .virtual_buffer_size_in_ms(vbv_size);
+
+        if !rc_layers.is_empty() {
+            rc_info = rc_info.layers(&rc_layers);
+        }
 
         // Doesn't have a push_next method, because we're supposed to call it on
         // the parent struct.

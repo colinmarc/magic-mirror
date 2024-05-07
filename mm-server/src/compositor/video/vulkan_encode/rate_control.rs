@@ -77,11 +77,8 @@ pub fn select_rc_mode(
             min_qp: 17,
             max_qp: target_qp,
         })
-    } else if caps
-        .rate_control_modes
-        .contains(vk::VideoEncodeRateControlModeFlagsKHR::DISABLED)
-    {
-        // Fall back to CRF with a high bitrate.
+    } else if supports_crf    {
+        // Fall back to CRF with a high QP.
         RateControlMode::ConstantQp(target_qp)
     } else {
         warn!("no rate control modes available, using driver defaults!");
