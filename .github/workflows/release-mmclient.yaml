@@ -16,8 +16,13 @@ jobs:
       - name: install deps
         run: |
           sudo apt install \
-            nasm cmake protobuf-compiler libxkbcommon-dev libwayland-dev libasound2-dev \
-            ffmpeg libavutil-dev libavformat-dev libavdevice-dev libavfilter-dev
+            nasm cmake protobuf-compiler libxkbcommon-dev libwayland-dev libasound2-dev
+
+      - name: install ffmpeg
+        run: |
+          sudo add-apt-repository --yes ppa:savoury1/ffmpeg
+          sudo apt update
+          sudo apt install ffmpeg libavutil-dev libavformat-dev libavdevice-dev libavfilter-dev
 
       - name: install slang
         run: |
