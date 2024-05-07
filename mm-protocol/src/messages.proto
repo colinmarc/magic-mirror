@@ -286,6 +286,16 @@ message Error {
 // scale UI elements or make other user-experience improvements subject to UI
 // scale.
 //
+// ### Quality preset
+//
+// Clients can use the `quality_preset` field of the `030 - Attach` message to
+// tune the quality of the stream, which is inversely related to the bandwidth
+// usage. The value ranges from 1 to 10, with 1 indicating that the client
+// wishes the server to optimize for the the lowest possible bandwidth usage,
+// and 10 indicating that the client wishes the server to optimize for the
+// highest possible quality. How these values are interpreted is determined by
+// the server.
+//
 // ### Concurrent attachments
 //
 // Servers may support multiple concurrent attachments from different clients,
@@ -448,6 +458,7 @@ message Attach {
 
   VideoCodec video_codec = 10;
   Size streaming_resolution = 11;
+  uint32 quality_preset = 13; // Must be in the range 1-10.
 
   AudioCodec audio_codec = 15;
   AudioChannels channels = 16;
@@ -468,6 +479,7 @@ message Attached {
 
   VideoCodec video_codec = 10;    // Required.
   Size streaming_resolution = 11; // Required.
+  uint32 quality_preset = 13;     // Required.
 
   AudioCodec audio_codec = 15; // Required.
   AudioChannels channels = 16; // Required.

@@ -86,7 +86,7 @@ pub fn new_hevc(
         .enable_fps_in_vps(true)
         .pred_structure(svt::hevc::PredictionStructure::LowDelayP)
         .rate_control_mode(svt::hevc::RateControlMode::ConstantQp)
-        .qp(17)
+        .qp(40 - (2 * params.preset))
         .intra_refresh_type(svt::hevc::IntraRefreshType::Closed(300))
         .thread_count(1)
         .create_encoder(params.width, params.height, svt::SubsamplingFormat::Yuv420)?;
@@ -109,7 +109,9 @@ pub fn new_av1(
         .enable_screen_content_mode(true)
         .enable_fast_decode(true)
         .pred_structure(svt::av1::PredictionStructure::LowDelay)
-        .rate_control_mode(svt::av1::RateControlMode::ConstantRateFactor(17))
+        .rate_control_mode(svt::av1::RateControlMode::ConstantRateFactor(
+            40 - (2 * params.preset),
+        ))
         .intra_refresh_type(svt::av1::IntraRefreshType::Closed)
         .create_encoder(params.width, params.height, svt::SubsamplingFormat::Yuv420)?;
 

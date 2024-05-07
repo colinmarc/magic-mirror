@@ -121,8 +121,12 @@ impl H265Encoder {
         //     quality_props.h265_props
         // );
 
-        let rc_mode =
-            super::rate_control::select_rc_mode(params.width, params.height, &caps.encode_caps);
+        let rc_mode = super::rate_control::select_rc_mode(
+            params.width,
+            params.height,
+            params.preset,
+            &caps.encode_caps,
+        );
         debug!(?rc_mode, "selected rate control mode");
 
         // let mut layers = std::cmp::min(4, caps.h265_caps.max_sub_layer_count);

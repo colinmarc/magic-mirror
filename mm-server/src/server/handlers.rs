@@ -303,6 +303,8 @@ fn attach(
         attachment_id = handle.attachment_id
     );
 
+    debug!(?video_params, ?audio_params, "attaching with params");
+
     let _guard = span.enter();
 
     let handle = scopeguard::guard(handle, |h| {
@@ -323,6 +325,8 @@ fn attach(
             width: video_params.width,
             height: video_params.height,
         }),
+
+        quality_preset: video_params.preset,
 
         audio_codec: audio_codec.into(),
         sample_rate_hz: audio_params.sample_rate,

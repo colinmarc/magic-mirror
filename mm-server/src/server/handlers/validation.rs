@@ -45,6 +45,7 @@ pub fn validate_attachment(
 ) -> Result<(VideoStreamParams, AudioStreamParams)> {
     let (width, height) = validate_resolution(params.streaming_resolution)?;
     let video_codec = validate_video_codec(params.video_codec)?;
+    let preset = validate_preset(params.quality_preset)?;
 
     let sample_rate = validate_sample_rate(params.sample_rate_hz)?;
     let channels = validate_channels(params.channels)?;
@@ -55,6 +56,7 @@ pub fn validate_attachment(
             width,
             height,
             codec: video_codec,
+            preset,
         },
         AudioStreamParams {
             sample_rate,
@@ -104,6 +106,13 @@ pub fn validate_video_codec(codec: i32) -> Result<VideoCodec> {
     }
 }
 
+pub fn validate_preset(preset: u32) -> Result<u32> {
+    match preset {
+        0 => Ok(6), // Default to 6
+        v if v <= 10 => Ok(v - 1),
+        _ => Err(ValidationError::Invalid("invalid preset".into())),
+    }
+}
 pub fn validate_framerate(framerate: u32) -> Result<u32> {
     match framerate {
         60 | 30 => Ok(framerate),

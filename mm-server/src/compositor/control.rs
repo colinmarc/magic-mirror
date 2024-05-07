@@ -22,6 +22,7 @@ pub struct VideoStreamParams {
     pub width: u32,
     pub height: u32,
     pub codec: VideoCodec,
+    pub preset: u32,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

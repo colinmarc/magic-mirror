@@ -106,8 +106,11 @@ struct Cli {
     /// Framerate to render at on the server side.
     #[arg(long, default_value = "30")]
     framerate: u32,
-    /// Open in fullscreen mode.
+    #[arg(short, long, default_value = "6")]
+    /// The quality preset to use, from 0-9.
+    preset: u32,
     #[arg(long)]
+    /// Open in fullscreen mode.
     fullscreen: bool,
     /// Enable the overlay, which shows various stats.
     #[arg(long)]
@@ -122,6 +125,7 @@ struct App {
     configured_resolution: Resolution,
     configured_codec: protocol::VideoCodec,
     configured_framerate: u32,
+    configured_preset: u32,
 
     window: Arc<winit::window::Window>,
     _proxy: EventLoopProxy<AppEvent>,
@@ -663,6 +667,7 @@ impl App {
                                 session_id: self.session_id,
                                 streaming_resolution: self.remote_display_params.resolution.clone(),
                                 video_codec: self.configured_codec.into(),
+                                quality_preset: self.configured_preset,
                                 ..Default::default()
                             },
                             None,
@@ -1002,6 +1007,7 @@ fn main() -> Result<()> {
             session_id: session.session_id,
             streaming_resolution: Some(streaming_resolution),
             video_codec: configured_codec.into(),
+            quality_preset: args.preset + 1,
             ..Default::default()
         },
         None,
@@ -1029,6 +1035,7 @@ fn main() -> Result<()> {
         configured_codec,
         configured_framerate: args.framerate,
         configured_resolution: args.resolution,
+        configured_preset: args.preset + 1,
 
         window,
         _proxy: proxy.clone(),

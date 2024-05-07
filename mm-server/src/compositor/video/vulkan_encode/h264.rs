@@ -120,8 +120,12 @@ impl H264Encoder {
         //     quality_props.h264_props
         // );
 
-        let rc_mode =
-            super::rate_control::select_rc_mode(params.width, params.height, &caps.encode_caps);
+        let rc_mode = super::rate_control::select_rc_mode(
+            params.width,
+            params.height,
+            params.preset,
+            &caps.encode_caps,
+        );
         debug!(?rc_mode, "selected rate control mode");
 
         let structure = super::default_structure(

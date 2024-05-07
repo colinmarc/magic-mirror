@@ -106,7 +106,7 @@ pub fn new_encoder(
     encoder.set_time_base(timebase);
     encoder.set_frame_rate(Some((framerate as i32, 1)));
     encoder.set_gop(120);
-    encoder.set_quality(25);
+    encoder.set_quality(40 - (2 * params.preset) as usize);
 
     // This just tags the output - it doesn't actually perform any
     // conversion.
