@@ -7,7 +7,7 @@ name: Release mmclient
 jobs:
   create_tarball_linux:
     name: Build mmclient (linux)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -97,7 +97,7 @@ jobs:
   create_release:
     name: Create release
     needs: [create_tarball_linux, create_tarball_macos]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
