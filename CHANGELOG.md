@@ -1,3 +1,14 @@
+## [mmclient-v0.2.0] - 2024-05-08
+
+### New Features
+
+- Cursor locking and relative motion (e11dfec7e42802a528ac8c8b4629044e6d6b1c3f)
+- Add --preset, for setting quality/bandwidth usage dynamically (6c590efaab02e31aae8413b683e8f8d228256b3b)
+
+### Bugfixes
+
+- Don't sync every frame (5a7f1cfe11e6684e11bd618e2f1adf4d043640f5)
+
 ## [mmserver-v0.3.0] - 2024-05-08
 
 ### New Features
@@ -13,7 +24,7 @@
 - Prevent a segfault on nvidia (8b331b5de98a50dd3c59671a2dbfe37b966b95b9)
 - Re-send cursor status when reattaching (eba4a368c33a5bcd1cdf27a8b791f31ff466bb29)
 
-## [mmclient-v0.1.2] - 2024-05-05
+## [mmclient-v0.2.0] - 2024-05-05
 
 ### Bugfixes
 
@@ -42,7 +53,7 @@
 - Log entire config (b588f198d13122869936b52c0690e980586a7f88)
 - Garbage-collect partial writes (a095994de28ec31bd49a54c2d757493f41fc0c06)
 
-## [mmclient-v0.1.2] - 2024-05-05
+## [mmclient-v0.2.0] - 2024-05-05
 
 ### Bugfixes
 
