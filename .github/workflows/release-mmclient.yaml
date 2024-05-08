@@ -116,7 +116,7 @@ jobs:
           git cliff -c .github/workflows/cliff.toml \
             --include-path "mm-client/**/*" \
             --tag-pattern "client" \
-            --current --latest | tail -n +2 | tee -a release-notes.txt
+            --tag "$GITHUB_REF_NAME" --latest | tail -n +2 | tee -a release-notes.txt
 
 
       - name: download artifacts
