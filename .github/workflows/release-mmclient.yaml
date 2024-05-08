@@ -66,12 +66,14 @@ jobs:
       - name: install slang
         run: |
           mkdir $RUNNER_TEMP/slang
-          slang_url=$( curl -s https://api.github.com/repos/shader-slang/slang/releases/latest |\
-            jq -r '.assets[] | .browser_download_url' | grep macos-aarch64.zip )
+          slang_url=$( gh api https://api.github.com/repos/shader-slang/slang/releases/latest |\
+            jq -r ".assets[] | .browser_download_url" | grep macos-aarch64.zip )
           curl -o "$RUNNER_TEMP/slang.zip" -fsSL "$slang_url"
           (cd "$RUNNER_TEMP/slang" && unzip "$RUNNER_TEMP/slang.zip")
           echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
           echo "DYLD_LIBRARY_PATH=$(dirname $(find $RUNNER_TEMP/slang -name libslang.*))" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/checkout@v4
       - uses: swatinem/rust-cache@v2
