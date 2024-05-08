@@ -135,6 +135,7 @@ pub struct State {
     pointer_handle: smithay::input::pointer::PointerHandle<Self>,
 
     new_cursor_status: Option<smithay::input::pointer::CursorImageStatus>,
+    cursor_status: smithay::input::pointer::CursorImageStatus,
     cursor_surface: Option<wl_surface::WlSurface>,
     cursor_dirty: bool,
 
@@ -241,6 +242,9 @@ impl Compositor {
 
         let audio_pipeline = audio::EncodePipeline::new(attachments.clone(), &xdg_runtime_dir)?;
 
+        let cursor_status =
+            smithay::input::pointer::CursorImageStatus::Named(cursor_icon::CursorIcon::Default);
+
         let state = State {
             app_config,
             display_params,
@@ -263,6 +267,7 @@ impl Compositor {
             pointer_handle,
 
             new_cursor_status: None,
+            cursor_status,
             cursor_surface: None,
             cursor_dirty: false,
 
@@ -527,9 +532,9 @@ impl Compositor {
                                         hotspot_y: 0,
                                     });
                                 }
-                                smithay::input::pointer::CursorImageStatus::Surface(surf) => {
+                                smithay::input::pointer::CursorImageStatus::Surface(ref surf) => {
                                     match self.state.cursor_surface.replace(surf.clone()) {
-                                        Some(old) if old != surf => {
+                                        Some(ref old) if old != surf => {
                                             // From the spec: "when the use as a
                                             // cursor ends, the wl_surface is
                                             // unmapped".
@@ -541,60 +546,13 @@ impl Compositor {
                                     self.state.cursor_dirty = true;
                                 }
                             }
+
+                            // Cache the status, so we can send it if the client reattaches.
+                            self.state.cursor_status = status;
                         }
 
                         if self.state.cursor_dirty && self.state.cursor_surface.is_some() {
-                            let surf = self.state.cursor_surface.as_ref().unwrap();
-
-                            let scale = self
-                                .state
-                                .visible_windows()
-                                .next()
-                                .and_then(|w| w.scale_override())
-                                .unwrap_or(self.state.ui_scale);
-
-                            if let Some(tex) = self.state.texture_manager.get_mut(surf) {
-                                let attachments = self.attachments.clone();
-
-                                let hotspot = compositor::with_states(surf, |states| {
-                                    states
-                                        .data_map
-                                        .get::<std::sync::Mutex<
-                                            smithay::input::pointer::CursorImageAttributes,
-                                        >>()
-                                        .unwrap()
-                                        .lock()
-                                        .unwrap()
-                                        .hotspot
-                                });
-
-                                let scale: smithay::output::Scale = scale.into();
-                                let hotspot = hotspot
-                                    .to_f64()
-                                    .to_physical(scale.fractional_scale())
-                                    .to_i32_round();
-
-                                video::texture_to_png(tex, move |image| {
-                                    attachments.dispatch(CompositorEvent::CursorUpdate {
-                                        image: Some(bytes::Bytes::copy_from_slice(image)),
-                                        icon: Some(cursor_icon::CursorIcon::Default),
-                                        hotspot_x: hotspot.x,
-                                        hotspot_y: hotspot.y,
-                                    });
-                                });
-
-                                self.state.cursor_dirty = false;
-                                compositor::with_states(surf, |states| {
-                                    let mut attrs = states
-                                        .cached_state
-                                        .current::<smithay::wayland::compositor::SurfaceAttributes>(
-                                    );
-
-                                    for callback in attrs.frame_callbacks.drain(..) {
-                                        callback.done(EPOCH.elapsed().as_millis() as u32);
-                                    }
-                                });
-                            }
+                            self.render_cursor()?;
                         }
 
                         // Check if the cursor was locked or unlocked.
@@ -662,12 +620,50 @@ impl Compositor {
                                 self.state.audio_pipeline.restart_stream(audio_params)?;
 
                                 self.state.activate_top_window()?;
+
+                                // Send the current cursor state.
+                                match self.state.cursor_status {
+                                    smithay::input::pointer::CursorImageStatus::Hidden => {
+                                        self.attachments.dispatch(CompositorEvent::CursorUpdate {
+                                            image: None,
+                                            icon: None,
+                                            hotspot_x: 0,
+                                            hotspot_y: 0,
+                                        });
+                                    }
+                                    smithay::input::pointer::CursorImageStatus::Named(icon) => {
+                                        if icon != cursor_icon::CursorIcon::Default {
+                                            self.attachments.dispatch(
+                                                CompositorEvent::CursorUpdate {
+                                                    image: None,
+                                                    icon: Some(icon),
+                                                    hotspot_x: 0,
+                                                    hotspot_y: 0,
+                                                },
+                                            );
+                                        }
+                                    }
+                                    smithay::input::pointer::CursorImageStatus::Surface(_) => {
+                                        self.render_cursor()?;
+                                    }
+                                }
+
+                                if self.state.cursor_locked {
+                                    let cursor_loc = self.state.pointer_handle.current_location();
+                                    let scale: smithay::output::Scale = self.state.ui_scale.into();
+                                    let (x, y) =
+                                        cursor_loc.to_physical(scale.fractional_scale()).into();
+
+                                    self.attachments
+                                        .dispatch(CompositorEvent::PointerLocked(x, y));
+                                }
                             }
                             Ok(ControlMessage::Detach(id)) => {
                                 self.attachments.remove_client(id);
                                 if self.attachments.is_empty() {
                                     self.state.audio_pipeline.stop_stream();
                                     self.state.video_pipeline = None;
+                                    self.state.cursor_locked = false;
                                     self.state.suspend_all_windows()?;
                                 }
                             }
@@ -972,6 +968,58 @@ impl Compositor {
         Ok(())
     }
 
+    fn render_cursor(&mut self) -> anyhow::Result<()> {
+        let surf = self.state.cursor_surface.as_ref().unwrap();
+
+        let scale = self
+            .state
+            .visible_windows()
+            .next()
+            .and_then(|w| w.scale_override())
+            .unwrap_or(self.state.ui_scale);
+
+        if let Some(tex) = self.state.texture_manager.get_mut(surf) {
+            let attachments = self.attachments.clone();
+            let hotspot = compositor::with_states(surf, |states| {
+                states
+                    .data_map
+                    .get::<std::sync::Mutex<smithay::input::pointer::CursorImageAttributes>>()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .hotspot
+            });
+
+            let scale: smithay::output::Scale = scale.into();
+            let hotspot = hotspot
+                .to_f64()
+                .to_physical(scale.fractional_scale())
+                .to_i32_round();
+
+            video::texture_to_png(tex, move |image| {
+                attachments.dispatch(CompositorEvent::CursorUpdate {
+                    image: Some(bytes::Bytes::copy_from_slice(image)),
+                    icon: Some(cursor_icon::CursorIcon::Default),
+                    hotspot_x: hotspot.x,
+                    hotspot_y: hotspot.y,
+                });
+            });
+
+            self.state.cursor_dirty = false;
+            compositor::with_states(surf, |states| {
+                let mut attrs = states
+                    .cached_state
+                    .current::<smithay::wayland::compositor::SurfaceAttributes>();
+
+                for callback in attrs.frame_callbacks.drain(..) {
+                    callback.done(EPOCH.elapsed().as_millis() as u32);
+                }
+            });
+        }
+
+        Ok(())
+    }
+
     fn update_display_params(&mut self, params: DisplayParams) -> anyhow::Result<()> {
         let old = self.state.display_params;
 
@@ -1033,6 +1081,7 @@ impl Compositor {
                 self.attachments.remove_all();
                 self.state.audio_pipeline.stop_stream();
                 self.state.video_pipeline = None;
+                self.state.cursor_locked = false;
                 self.state.suspend_all_windows()?;
             } else {
                 // Reconfigure for the new scale.

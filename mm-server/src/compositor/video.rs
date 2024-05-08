@@ -379,7 +379,7 @@ impl EncodePipeline {
         if tex.is_none() {
             if !compositor::is_sync_subsurface(surface) {
                 error!(
-                    "trying to render surface @{} that hasn't be imported",
+                    "trying to render surface @{} that hasn't been imported",
                     surface.id().protocol_id()
                 );
             }
