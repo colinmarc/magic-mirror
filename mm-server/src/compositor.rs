@@ -399,10 +399,12 @@ impl Compositor {
                                 .handle()
                                 .insert_client(client_stream, Arc::new(ClientState::default()))?;
 
-                            debug!("client app connected");
-
                             self.num_clients += 1;
-                            debug!("{} clients connected", self.num_clients);
+
+                            debug!(
+                                num_clients = self.num_clients,
+                                "client application connected"
+                            );
 
                             // Notify the parent thread that we're ready.
                             if let Some(chan) = ready.take() {
@@ -490,13 +492,13 @@ impl Compositor {
                         // Check that we haven't timed out waiting for the client.
                         if ready.is_some() && start.elapsed() > ACCEPT_TIMEOUT {
                             signal_child(child.id() as i32, nix::sys::signal::SIGKILL)?;
-                            bail!("timed out waiting for client");
+                            bail!("timed out waiting for application");
                         }
 
                         // Check if we need to hard kill the client.
                         if let Some(shutting_down) = self.shutting_down {
                             if shutting_down.elapsed() > SHUTDOWN_TIMEOUT {
-                                warn!("graceful shutdown failed, killing client");
+                                warn!("graceful shutdown failed, killing application");
 
                                 signal_child(child.id() as i32, nix::sys::signal::SIGKILL)?;
                                 return Ok(());
