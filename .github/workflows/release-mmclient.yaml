@@ -18,7 +18,7 @@ jobs:
           sudo apt install \
             nasm cmake protobuf-compiler libxkbcommon-dev libwayland-dev libasound2-dev \
             ffmpeg libavutil-dev libavformat-dev libavdevice-dev libavfilter-dev \
-            fontconfig libfreetype-dev
+            libfontconfig-dev libfreetype-dev
 
       - name: install slang
         run: |
