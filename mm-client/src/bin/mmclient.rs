@@ -79,7 +79,7 @@ struct Cli {
     /// Print a list of matching sessions and exit.
     #[arg(short = 'L', long)]
     list: bool,
-    /// End a session (which must be specified by ID) and exit.
+    /// End a session (which may be specified by name or ID) and exit.
     #[arg(short = 'K', long)]
     kill: bool,
     /// Always resume an existing session, and error if none match.
@@ -1175,13 +1175,35 @@ fn cmd_list(args: &Cli, sessions: protocol::SessionList) -> Result<()> {
         return Ok(());
     }
 
+    dump_session_list(&sessions)?;
+    Ok(())
+}
+
+fn cmd_kill(args: &Cli, conn: &mut Conn, sessions: protocol::SessionList) -> Result<()> {
+    let sessions = find_sessions(sessions, args.app.as_ref().unwrap());
+    if sessions.is_empty() {
+        println!("No (matching) sessions found.");
+        return Ok(());
+    } else if sessions.len() > 1 {
+        bail!("Multiple sessions matched!");
+    }
+
+    let id = sessions[0].session_id;
+    debug!("killing session {:?}", id);
+    end_session(conn, id)
+}
+
+fn dump_session_list(sessions: &[protocol::session_list::Session]) -> anyhow::Result<()> {
     let now = time::SystemTime::now();
     let mut tw = tabwriter::TabWriter::new(std::io::stdout()).padding(4);
     writeln!(&mut tw, "Session ID\tApplication Name\tRuntime")?;
     writeln!(&mut tw, "----------\t----------------\t-------")?;
 
     for session in sessions {
-        let session_start = session.session_start.and_then(|s| s.try_into().ok());
+        let session_start = session
+            .session_start
+            .clone()
+            .and_then(|s| s.try_into().ok());
         let runtime = match session_start {
             Some(start) if start < now => {
                 // Round to seconds.
@@ -1200,24 +1222,6 @@ fn cmd_list(args: &Cli, sessions: protocol::SessionList) -> Result<()> {
 
     tw.flush()?;
     Ok(())
-}
-
-fn cmd_kill(args: &Cli, conn: &mut Conn, sessions: protocol::SessionList) -> Result<()> {
-    let target = args.app.as_ref().unwrap();
-    let id = match target.parse::<u64>() {
-        Ok(id) => id,
-        Err(_) => {
-            bail!("invalid session ID: {}", target);
-        }
-    };
-
-    match sessions.list.into_iter().find(|s| s.session_id == id) {
-        Some(s) => {
-            debug!("killing session {:?}", s.session_id);
-            end_session(conn, id)
-        }
-        None => Err(anyhow!("session not found: {}", id)),
-    }
 }
 
 fn list_sessions(conn: &mut Conn) -> Result<protocol::SessionList> {
