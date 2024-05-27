@@ -88,9 +88,9 @@ struct Cli {
     /// Always launch a new session, even if one exists that matches.
     #[arg(short, long)]
     launch: bool,
-    /// On exit, only detach, and do not end the session.
-    #[arg(short, long)]
-    detach: bool,
+    /// On exit, automatically kill the session.
+    #[arg(short = 'x', long)]
+    kill_on_exit: bool,
     /// The streaming resolution to use. If not specified, this will be tied to
     /// the client resolution, and automatically change when the client window
     /// resizes.
@@ -1047,7 +1047,7 @@ fn main() -> Result<()> {
 
         attachment_sid,
         last_keepalive: now,
-        end_session_on_exit: !args.detach,
+        end_session_on_exit: args.kill_on_exit,
 
         remote_display_params,
         attachment: None,
