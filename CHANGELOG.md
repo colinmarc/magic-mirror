@@ -1,3 +1,9 @@
+## [mmserver-v0.3.1] - 2024-06-14
+
+### Bugfixes
+
+- Improve compositor error messages with s/client/app (e5b24afe2ccd8ce77f74a5732a2e02f723256cda)
+
 ## [mmclient-v0.2.0] - 2024-05-08
 
 ### New Features
