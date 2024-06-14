@@ -1,3 +1,10 @@
+## [mmclient-v0.2.1] - 2024-06-14
+
+### Bugfixes
+
+- Make --detach the default (7ca5ee3ea03bcc19f754c1542675be360e3216af)
+- Take name or id for --kill (7a1f8c1483bd43c292e5ec8189535b0e59fc453c)
+
 ## [mmclient-v0.2.0] - 2024-05-08
 
 ### New Features
