@@ -916,7 +916,7 @@ pub struct VkHostBuffer {
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
     pub access: *mut c_void,
-    pub size: usize,
+    pub len: usize,
     vk: Arc<VkContext>,
 }
 
@@ -970,7 +970,7 @@ impl VkHostBuffer {
             buffer,
             memory,
             access,
-            size,
+            len: size,
             vk,
         })
     }
@@ -992,9 +992,14 @@ impl VkHostBuffer {
             buffer: buf,
             memory,
             access,
-            size: buffer_size,
+            len: buffer_size,
             vk,
         }
+    }
+
+    pub fn copy_from_slice(&mut self, src: &[u8]) {
+        let dst = unsafe { std::slice::from_raw_parts_mut(self.access as *mut u8, self.len) };
+        dst.copy_from_slice(src);
     }
 }
 

@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::path::PathBuf;
+use std::{ffi::CString, path::PathBuf};
+
+use xkbcommon::xkb;
 
 extern crate slang;
 
@@ -55,6 +57,20 @@ fn main() {
         slang::Stage::Compute,
         [("SEMIPLANAR", "1")],
     );
+
+    // We need a keymap for the compositor, but it shouldn't affect much, since we operate
+    // generally with physical keycodes and so do games. If this proves limiting, we could
+    // allow the configuration of other virtual keyboards.
+    let xkb_ctx = xkb::Context::new(0);
+    save_keymap(
+        &xkb_ctx,
+        out_dir.join("keymaps/iso_us.txt").to_str().unwrap(),
+        "",
+        "pc105",
+        "us",
+        "",
+        None,
+    );
 }
 
 fn compile_shader<'a>(
@@ -92,4 +108,33 @@ fn compile_shader<'a>(
         .expect("failed to write shader bytecode to file");
 
     println!("cargo::rerun-if-changed={}", in_path);
+}
+
+fn save_keymap(
+    ctx: &xkb::Context,
+    out_path: &str,
+    rules: &str,
+    model: &str,
+    layout: &str,
+    variant: &str,
+    options: Option<&str>,
+) {
+    std::fs::create_dir_all(PathBuf::from(out_path).parent().unwrap())
+        .expect("failed to create output directory");
+
+    let keymap = xkb::Keymap::new_from_names(
+        ctx,
+        rules,
+        model,
+        layout,
+        variant,
+        options.map(|s| s.to_string()),
+        xkb::KEYMAP_COMPILE_NO_FLAGS,
+    )
+    .expect("failed to create keymap");
+
+    let s = keymap.get_as_string(xkb::FORMAT_TEXT_V1);
+
+    std::fs::write(out_path, CString::new(s).unwrap().to_bytes_with_nul())
+        .expect("failed to write keymap bytes to file");
 }

@@ -9,26 +9,19 @@ use ash::vk;
 mod composite;
 mod convert;
 mod cpu_encode;
-mod dmabuf;
-mod textures;
 mod timebase;
 mod vulkan_encode;
 
+pub mod dmabuf;
+
 use cpu_encode::CpuEncoder;
 
-use smithay::{
-    reexports::wayland_server::{protocol::wl_surface, Resource},
-    wayland::compositor,
-};
 use tracing::{error, instrument, trace, warn};
 
 use crate::{codec::VideoCodec, vulkan::*};
 
-use super::{AttachedClients, DisplayParams, VideoStreamParams};
+use super::{buffers::Texture, stack::Position, AttachedClients, DisplayParams, VideoStreamParams};
 
-pub use dmabuf::dmabuf_feedback;
-use textures::*;
-pub use textures::{texture_to_png, TextureManager};
 use vulkan_encode::VulkanEncoder;
 
 pub struct VkPlaneView {
@@ -113,13 +106,12 @@ pub struct SwapFrame {
 
     staging_cb: vk::CommandBuffer,
     render_cb: vk::CommandBuffer,
+    use_staging: bool,
 
     timeline: vk::Semaphore,
     tp_staging_done: u64,
     tp_render_done: u64,
     tp_clear: u64,
-
-    shm_uploads_queued: bool,
 
     // For tracing.
     staging_ts_pool: VkTimestampQueryPool,
@@ -195,7 +187,7 @@ impl EncodePipeline {
     // }
 
     #[instrument(level = "trace", skip_all)]
-    pub unsafe fn begin(&mut self, textures: &TextureManager) -> anyhow::Result<()> {
+    pub unsafe fn begin(&mut self) -> anyhow::Result<()> {
         let device = &self.vk.device;
         let frame = &mut self.swap[self.swap_idx];
 
@@ -217,7 +209,6 @@ impl EncodePipeline {
 
         // Wait for the frame to no longer be in flight, and then establish new timeline points.
         timeline_wait(&self.vk.device, frame.timeline, frame.tp_clear)?;
-        frame.shm_uploads_queued = false;
         frame.tp_staging_done += 10;
         frame.tp_render_done = frame.tp_staging_done + 1;
         frame.tp_clear = frame.tp_render_done + 1;
@@ -233,116 +224,6 @@ impl EncodePipeline {
             frame.render_ts_pool.pool,
             0,
         );
-
-        let mut texture_semas = Vec::new();
-
-        // Upload any updated shm textures, and transition all surface textures to be readable.
-        for tex in textures.iter_surfaces() {
-            match tex {
-                SurfaceTexture::Uploaded {
-                    dirty,
-                    staging_buffer,
-                    image,
-                    ..
-                } => {
-                    if *dirty {
-                        frame.shm_uploads_queued = true;
-
-                        // Transfer the image to be writable. The upload happens
-                        // in the staging command buffer.
-                        insert_image_barrier(
-                            device,
-                            frame.staging_cb,
-                            image.image,
-                            None,
-                            vk::ImageLayout::UNDEFINED,
-                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                            vk::PipelineStageFlags2::NONE,
-                            vk::AccessFlags2::NONE,
-                            vk::PipelineStageFlags2::TRANSFER,
-                            vk::AccessFlags2::TRANSFER_WRITE,
-                        );
-
-                        // Upload from the staging buffer to the texture.
-                        cmd_upload_shm(device, frame.staging_cb, staging_buffer, image);
-                    }
-
-                    // Transition the image to be readable (in the second command buffer).
-                    insert_image_barrier(
-                        device,
-                        frame.render_cb,
-                        image.image,
-                        None,
-                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                        vk::PipelineStageFlags2::TRANSFER,
-                        vk::AccessFlags2::TRANSFER_WRITE,
-                        vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                        vk::AccessFlags2::SHADER_READ,
-                    );
-                }
-                SurfaceTexture::Imported {
-                    dmabuf,
-                    image,
-                    semaphore,
-                    ..
-                } => {
-                    // Grab a semaphore for explicit sync.
-                    dmabuf::import_dmabuf_fence_as_semaphore(
-                        self.vk.clone(),
-                        *semaphore,
-                        dmabuf.clone(),
-                    )?;
-
-                    texture_semas.push(semaphore);
-
-                    // Transition the image to be readable. A special queue,
-                    // EXTERNAL, is used in a queue transfer to indicate
-                    // acquiring the texture from the wayland client.
-                    insert_image_barrier(
-                        device,
-                        frame.render_cb,
-                        image.image,
-                        Some((vk::QUEUE_FAMILY_FOREIGN_EXT, self.vk.graphics_queue.family)),
-                        vk::ImageLayout::GENERAL,
-                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                        vk::PipelineStageFlags2::NONE,
-                        vk::AccessFlags2::NONE,
-                        vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                        vk::AccessFlags2::SHADER_READ,
-                    );
-
-                    // Release the image at the end.
-                    insert_image_barrier(
-                        device,
-                        frame.render_cb,
-                        image.image,
-                        Some((self.vk.graphics_queue.family, vk::QUEUE_FAMILY_FOREIGN_EXT)),
-                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                        vk::ImageLayout::GENERAL,
-                        vk::PipelineStageFlags2::ALL_GRAPHICS,
-                        vk::AccessFlags2::SHADER_READ,
-                        vk::PipelineStageFlags2::NONE,
-                        vk::AccessFlags2::NONE,
-                    );
-                }
-            }
-        }
-
-        if frame.shm_uploads_queued {
-            if let Some(ref ctx) = self.vk.graphics_queue.tracy_context {
-                frame.staging_span = Some(ctx.span(tracy_client::span_location!())?);
-            }
-
-            // Record the start timestamp.
-            frame.staging_ts_pool.cmd_reset(device, frame.staging_cb);
-            device.cmd_write_timestamp(
-                frame.staging_cb,
-                vk::PipelineStageFlags::TOP_OF_PIPE,
-                frame.staging_ts_pool.pool,
-                0,
-            );
-        }
 
         // Transition the blend image to be writable.
         insert_image_barrier(
@@ -365,48 +246,132 @@ impl EncodePipeline {
     }
 
     #[instrument(level = "trace", skip_all)]
+    /// Adds a surface to be drawn. Returns the timeline point when the texture
+    /// will no longer be in use. A return value of None indicates the texture
+    /// is already safe to reuse.
     pub unsafe fn composite_surface(
         &mut self,
-        textures: &mut TextureManager,
-        surface: &wl_surface::WlSurface,
-        dest: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
-    ) -> anyhow::Result<()> {
-        trace!(surface = surface.id().protocol_id(), "rendering surface");
-
+        texture: &Texture,
+        dest: Position,
+    ) -> anyhow::Result<Option<(vk::Semaphore, u64)>> {
+        let device = &self.vk.device;
         let frame = &mut self.swap[self.swap_idx];
 
-        let tex = textures.get_mut(surface);
-        if tex.is_none() {
-            if !compositor::is_sync_subsurface(surface) {
-                error!(
-                    "trying to render surface @{} that hasn't been imported",
-                    surface.id().protocol_id()
-                );
-            }
+        match texture {
+            Texture::Shm {
+                dirty,
+                staging_buffer,
+                image,
+                ..
+            } => {
+                if *dirty {
+                    // We only set up tracing for the staging command buffer if
+                    // we're actually going to use it.
+                    if !frame.use_staging {
+                        if let Some(ref ctx) = self.vk.graphics_queue.tracy_context {
+                            frame.staging_span = Some(ctx.span(tracy_client::span_location!())?);
+                        }
 
-            return Ok(());
+                        // Record the start timestamp.
+                        frame.staging_ts_pool.cmd_reset(device, frame.staging_cb);
+                        device.cmd_write_timestamp(
+                            frame.staging_cb,
+                            vk::PipelineStageFlags::TOP_OF_PIPE,
+                            frame.staging_ts_pool.pool,
+                            0,
+                        );
+                    }
+
+                    frame.use_staging = true;
+
+                    // Transfer the image to be writable. The upload happens
+                    // in the staging command buffer.
+                    insert_image_barrier(
+                        device,
+                        frame.staging_cb,
+                        image.image,
+                        None,
+                        vk::ImageLayout::UNDEFINED,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        vk::PipelineStageFlags2::NONE,
+                        vk::AccessFlags2::NONE,
+                        vk::PipelineStageFlags2::TRANSFER,
+                        vk::AccessFlags2::TRANSFER_WRITE,
+                    );
+
+                    // Upload from the staging buffer to the texture.
+                    cmd_upload_shm(device, frame.staging_cb, staging_buffer, image);
+                }
+
+                // Transition the image to be readable (in the second command buffer).
+                insert_image_barrier(
+                    device,
+                    frame.render_cb,
+                    image.image,
+                    None,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    vk::PipelineStageFlags2::TRANSFER,
+                    vk::AccessFlags2::TRANSFER_WRITE,
+                    vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                    vk::AccessFlags2::SHADER_READ,
+                );
+            } // Texture::Dmabuf {
+              //     dmabuf,
+              //     image,
+              //     semaphore,
+              //     ..
+              // } => {
+              //     // Grab a semaphore for explicit sync.
+              //     dmabuf::import_dmabuf_fence_as_semaphore(
+              //         self.vk.clone(),
+              //         *semaphore,
+              //         dmabuf.clone(),
+              //     )?;
+              //
+              //     // Transition the image to be readable. A special queue,
+              //     // EXTERNAL, is used in a queue transfer to indicate
+              //     // acquiring the texture from the wayland client.
+              //     insert_image_barrier(
+              //         device,
+              //         frame.render_cb,
+              //         image.image,
+              //         Some((vk::QUEUE_FAMILY_FOREIGN_EXT, self.vk.graphics_queue.family)),
+              //         vk::ImageLayout::GENERAL,
+              //         vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+              //         vk::PipelineStageFlags2::NONE,
+              //         vk::AccessFlags2::NONE,
+              //         vk::PipelineStageFlags2::FRAGMENT_SHADER,
+              //         vk::AccessFlags2::SHADER_READ,
+              //     );
+              //
+              //     // Release the image at the end.
+              //     insert_image_barrier(
+              //         device,
+              //         frame.render_cb,
+              //         image.image,
+              //         Some((self.vk.graphics_queue.family, vk::QUEUE_FAMILY_FOREIGN_EXT)),
+              //         vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+              //         vk::ImageLayout::GENERAL,
+              //         vk::PipelineStageFlags2::ALL_GRAPHICS,
+              //         vk::AccessFlags2::SHADER_READ,
+              //         vk::PipelineStageFlags2::NONE,
+              //         vk::AccessFlags2::NONE,
+              //     );
+              // }
         }
 
         // Convert the destination rect into clip coordinates.
-        let dst_pos = glam::Vec2::new(
-            (dest.loc.x as f32 / self.display_params.width as f32 * 2.0) - 1.0,
-            (dest.loc.y as f32 / self.display_params.height as f32 * 2.0) - 1.0,
-        );
-
-        let dst_size = glam::Vec2::new(
-            dest.size.w as f32 / self.display_params.width as f32 * 2.0,
-            dest.size.h as f32 / self.display_params.height as f32 * 2.0,
-        );
+        let display_size: glam::UVec2 =
+            (self.display_params.width, self.display_params.height).into();
+        let dst_pos = (dest.topleft.as_vec2() / display_size.as_vec2() * 2.0) - 1.0;
+        let dst_size = dest.size.as_vec2() / display_size.as_vec2() * 2.0;
 
         // Draw.
-        self.composite_pipeline.composite_surface(
-            frame.render_cb,
-            tex.unwrap(),
-            dst_pos,
-            dst_size,
-        )?;
+        self.composite_pipeline
+            .composite_surface(frame.render_cb, texture, dst_pos, dst_size)?;
 
-        Ok(())
+        Ok(None)
     }
 
     #[instrument(level = "trace", skip(self))]
@@ -503,7 +468,7 @@ impl EncodePipeline {
             .signal_semaphore_infos(&staging_signal_infos);
 
         // Only submit the staging cb if we actually recorded commands to it.
-        if frame.shm_uploads_queued {
+        if frame.use_staging {
             // Record the end timestamp.
             device.cmd_write_timestamp(
                 frame.staging_cb,
@@ -708,7 +673,7 @@ fn new_swapframe(
         plane_views,
         staging_cb: allocate_command_buffer(&vk.device, vk.graphics_queue.command_pool)?,
         render_cb: allocate_command_buffer(&vk.device, vk.graphics_queue.command_pool)?,
-        shm_uploads_queued: false,
+        use_staging: false,
         timeline,
         tp_staging_done: 0,
         tp_render_done: 0,
@@ -771,4 +736,33 @@ fn format_is_semiplanar(format: vk::Format) -> bool {
             | vk::Format::G12X4_B12X4R12X4_2PLANE_444_UNORM_3PACK16
             | vk::Format::G16_B16R16_2PLANE_444_UNORM
     )
+}
+
+pub unsafe fn cmd_upload_shm(
+    device: &ash::Device,
+    cb: vk::CommandBuffer,
+    buffer: &VkHostBuffer,
+    image: &VkImage,
+) {
+    let region = vk::BufferImageCopy::default()
+        .image_subresource(vk::ImageSubresourceLayers {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_level: 0,
+            base_array_layer: 0,
+            layer_count: 1,
+        })
+        .image_extent(vk::Extent3D {
+            width: image.width,
+            height: image.height,
+            depth: 1,
+        });
+
+    let regions = [region];
+    device.cmd_copy_buffer_to_image(
+        cb,
+        buffer.buffer,
+        image.image,
+        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        &regions,
+    );
 }

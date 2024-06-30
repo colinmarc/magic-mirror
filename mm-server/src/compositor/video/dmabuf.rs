@@ -10,7 +10,10 @@ use std::{
 use anyhow::{bail, Context};
 use ash::vk;
 use drm_fourcc::{DrmFormat, DrmFourcc};
-use smithay::{backend::allocator::dmabuf::Dmabuf, wayland::dmabuf};
+use smithay::{
+    backend::allocator::{dmabuf::Dmabuf, Buffer as _},
+    wayland::dmabuf,
+};
 use tracing::{debug, trace};
 
 use crate::vulkan::{create_image_view, select_memory_type, VkContext, VkImage};
@@ -152,7 +155,7 @@ pub fn import_dma_texture(
     buffer: &Dmabuf,
     usage: vk::ImageUsageFlags,
 ) -> anyhow::Result<VkImage> {
-    use smithay::backend::allocator::Buffer;
+    //    use smithay::backend::allocator::Buffer;
 
     assert_eq!(buffer.num_planes(), 1);
 

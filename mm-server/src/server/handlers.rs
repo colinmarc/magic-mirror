@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use crate::compositor::{ControlMessage, DisplayParams};
+use crate::compositor::{self, ControlMessage, DisplayParams};
 use crossbeam_channel::{select, Receiver};
 use hashbrown::HashMap;
 use mm_protocol as protocol;
@@ -384,13 +384,13 @@ fn attach(
 
 
                                 let state = match ev.state.try_into() {
-                                    Ok(KeyState::Pressed) => smithay::backend::input::KeyState::Pressed,
-                                    Ok(KeyState::Released) => smithay::backend::input::KeyState::Released,
-                                    Ok(KeyState::Repeat) => smithay::backend::input::KeyState::Pressed,
                                     Ok(KeyState::Unknown) | Err(_) => {
                                         send_err(outgoing, ErrorCode::ErrorProtocol, Some("invalid key state".to_string()));
                                         return;
                                     }
+                                    Ok(KeyState::Pressed) => compositor::KeyState::Pressed,
+                                    Ok(KeyState::Released) => compositor::KeyState::Released,
+                                    Ok(KeyState::Repeat) => compositor::KeyState::Repeat,
                                 };
 
                                 let evdev_scancode = match protocol::keyboard_input::Key::try_from(ev.key).map(key_to_evdev) {
@@ -414,7 +414,7 @@ fn attach(
 
                                 trace!(evdev_scancode, ?state, ?ch, "translated keyboard event");
 
-                                handle.control.send(ControlMessage::KeyboardEvent{
+                                handle.control.send(ControlMessage::KeyboardInput{
                                     evdev_scancode,
                                     state,
                                     char: ch,
@@ -436,12 +436,12 @@ fn attach(
                                 use protocol::pointer_input::*;
 
                                 let state = match ev.state.try_into() {
-                                    Ok(ButtonState::Pressed) => smithay::backend::input::ButtonState::Pressed,
-                                    Ok(ButtonState::Released) => smithay::backend::input::ButtonState::Released,
                                     Ok(ButtonState::Unknown) | Err(_) => {
                                         send_err(outgoing, ErrorCode::ErrorProtocol, Some("invalid button state".to_string()));
                                         return;
                                     }
+                                    Ok(ButtonState::Pressed) => compositor::ButtonState::Pressed,
+                                    Ok(ButtonState::Released) => compositor::ButtonState::Released,
                                 };
 
                                 // https://gitlab.freedesktop.org/libinput/libinput/-/blob/main/include/linux/linux/input-event-codes.h#L354
@@ -458,9 +458,9 @@ fn attach(
                                 };
 
                                 trace!(
-                                    "sending cursor input event: {:?} (pressed: {:?})",
-                                    ev.button,
-                                    state == smithay::backend::input::ButtonState::Pressed
+                                    button = ev.button,
+                                    pressed = (state == compositor::ButtonState::Pressed),
+                                    "sending cursor input event",
                                 );
 
                                 handle.control.send(ControlMessage::PointerInput{

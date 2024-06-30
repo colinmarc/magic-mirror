@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use crossbeam_channel::Sender;
+use mm_protocol as protocol;
 
 use crate::{
     codec::{AudioCodec, VideoCodec},
@@ -43,9 +44,9 @@ pub enum ControlMessage {
     },
     Detach(u64),
     UpdateDisplayParams(DisplayParams),
-    KeyboardEvent {
+    KeyboardInput {
         evdev_scancode: u32,
-        state: smithay::backend::input::KeyState,
+        state: super::KeyState,
         char: Option<char>,
     },
     PointerEntered,
@@ -56,7 +57,7 @@ pub enum ControlMessage {
         x: f64,
         y: f64,
         button_code: u32,
-        state: smithay::backend::input::ButtonState,
+        state: super::ButtonState,
     },
     PointerAxis(f64, f64),
     PointerAxisDiscrete(f64, f64),

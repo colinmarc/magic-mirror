@@ -500,7 +500,7 @@ impl EncoderInner {
             let encode_info = vk::VideoEncodeInfoKHR::default()
                 .flags(vk::VideoEncodeFlagsKHR::empty())
                 .dst_buffer(frame.copy_buffer.buffer)
-                .dst_buffer_range(frame.copy_buffer.size as u64)
+                .dst_buffer_range(frame.copy_buffer.len as u64)
                 .src_picture_resource(src_pic_resource)
                 .setup_reference_slot(&setup_reference_slot)
                 .reference_slots(&reference_slots)

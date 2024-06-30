@@ -47,6 +47,8 @@ nix = { version = "0.27.1", features = [
     "ioctl",
     "process",
     "signal",
+    "mman",
+    "fs",
 ] }
 drm-fourcc = "2.2.0"
 ctrlc = "3.4.1"
@@ -73,6 +75,10 @@ cursor-icon = "1.1.0"
 image = { version = "0.25.1", default-features = false, features = ["png"] }
 git-version = "0.3.9"
 wayland-scanner = "0.31.1"
+wayland-server = { version = "0.31.2", features = ["log"] }
+wayland-protocols = { version = "0.32.1", features = ["server", "staging", "unstable"] }
+hecs = "0.10.5"
+slotmap = "1.0.7"
 
 [dependencies.pulseaudio]
 git = "https://github.com/colinmarc/pulseaudio-rs"
@@ -92,10 +98,11 @@ rev = "92084df65f52aa15b704279fb6d8d26a3ee71809"
 git = "https://github.com/colinmarc/smithay"
 rev = "d176935e3223bea6ae48946219bc55d12ebbba54"
 default-features = false
-features = ["xwayland", "wayland_frontend", "desktop"]
+features = ["wayland_frontend", "desktop"]
 
 [build-dependencies]
 system-deps = "6"
+xkbcommon = { version = "0.7.0", default-features = false }
 
 [build-dependencies.slang]
 git = "https://github.com/colinmarc/slang-rs"
