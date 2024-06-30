@@ -8,7 +8,6 @@ use std::{
     time,
 };
 
-use anyhow::Result;
 use anyhow::{anyhow, Context};
 use crossbeam_channel as crossbeam;
 use lazy_static::lazy_static;
@@ -34,7 +33,7 @@ pub struct Session {
     pub detached_since: Option<time::Instant>,
     pub defunct: bool,
 
-    comp_thread_handle: std::thread::JoinHandle<Result<()>>,
+    comp_thread_handle: std::thread::JoinHandle<anyhow::Result<()>>,
     control_sender: WakingSender<ControlMessage>,
     operator_attachment_id: Option<u64>,
 
@@ -58,7 +57,7 @@ impl Session {
         application_config: &super::config::AppConfig,
         display_params: DisplayParams,
         bug_report_dir: Option<PathBuf>,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         let id = generate_id();
 
         // Do an early check that the executable exists.
@@ -121,7 +120,7 @@ impl Session {
         })
     }
 
-    pub fn update_display_params(&mut self, display_params: DisplayParams) -> Result<()> {
+    pub fn update_display_params(&mut self, display_params: DisplayParams) -> anyhow::Result<()> {
         if self.defunct {
             return Err(anyhow!("session defunct"));
         }
@@ -146,7 +145,7 @@ impl Session {
         operator: bool,
         video_params: VideoStreamParams,
         audio_params: AudioStreamParams,
-    ) -> Result<Attachment> {
+    ) -> anyhow::Result<Attachment> {
         if self.defunct {
             return Err(anyhow!("session defunct"));
         } else if !operator {
@@ -165,11 +164,13 @@ impl Session {
         );
 
         let (events_send, events_recv) = crossbeam_channel::unbounded();
+        let (ready_send, ready_recv) = oneshot::channel();
         match self.control_sender.send(ControlMessage::Attach {
             id,
             sender: events_send,
             video_params,
             audio_params,
+            ready: ready_send,
         }) {
             Ok(_) => {}
             Err(crossbeam::SendError(_)) => {
@@ -181,6 +182,8 @@ impl Session {
         self.operator_attachment_id = Some(id);
         self.detached_since = None;
 
+        ready_recv.recv().context("attachment rejected")?;
+
         Ok(Attachment {
             attachment_id: id,
             events: events_recv,
@@ -188,7 +191,7 @@ impl Session {
         })
     }
 
-    pub fn detach(&mut self, attachment: Attachment) -> Result<()> {
+    pub fn detach(&mut self, attachment: Attachment) -> anyhow::Result<()> {
         if self.defunct {
             return Err(anyhow!("session defunct"));
         }
@@ -207,7 +210,7 @@ impl Session {
         }
     }
 
-    pub fn stop(self) -> Result<()> {
+    pub fn stop(self) -> anyhow::Result<()> {
         if let Err(crossbeam::TrySendError::Full(_)) =
             self.control_sender.try_send(ControlMessage::Stop)
         {

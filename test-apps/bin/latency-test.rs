@@ -30,7 +30,7 @@ fn main() {
             primary_window: Some(Window {
                 title: "Latency Test".to_string(),
                 resolution: WindowResolution::new(SIZE * 8.0, SIZE * 8.0),
-                present_mode: PresentMode::Immediate,
+                present_mode: PresentMode::Mailbox,
                 ..Default::default()
             }),
             ..Default::default()

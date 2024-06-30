@@ -4,10 +4,18 @@
 
 use std::sync::Arc;
 
-#[derive(Clone)]
 pub struct WakingSender<T> {
     waker: Arc<mio::Waker>,
     sender: crossbeam_channel::Sender<T>,
+}
+
+impl<T> Clone for WakingSender<T> {
+    fn clone(&self) -> Self {
+        Self {
+            waker: self.waker.clone(),
+            sender: self.sender.clone(),
+        }
+    }
 }
 
 impl<T> WakingSender<T> {

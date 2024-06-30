@@ -14,13 +14,13 @@ use crossbeam_channel as crossbeam;
 use tracing::{error, trace};
 
 use crate::codec::VideoCodec;
-use crate::compositor::{AttachedClients, CompositorEvent, VideoStreamParams, EPOCH};
+use crate::compositor::{CompositorEvent, CompositorHandle, VideoStreamParams, EPOCH};
 use crate::vulkan::video::VideoQueueExt;
 use crate::vulkan::*;
 
 use self::gop_structure::HierarchicalP;
 
-use super::{begin_cb, timeline_signal, timeline_wait};
+use super::begin_cb;
 
 mod dpb;
 mod gop_structure;
@@ -40,25 +40,17 @@ pub enum VulkanEncoder {
 impl VulkanEncoder {
     pub fn new(
         vk: Arc<VkContext>,
-        attached_clients: AttachedClients,
+        compositor: CompositorHandle,
         stream_seq: u64,
         params: VideoStreamParams,
         framerate: u32,
     ) -> anyhow::Result<Self> {
         match params.codec {
             VideoCodec::H264 => Ok(Self::H264(H264Encoder::new(
-                vk,
-                attached_clients,
-                stream_seq,
-                params,
-                framerate,
+                vk, compositor, stream_seq, params, framerate,
             )?)),
             VideoCodec::H265 => Ok(Self::H265(H265Encoder::new(
-                vk,
-                attached_clients,
-                stream_seq,
-                params,
-                framerate,
+                vk, compositor, stream_seq, params, framerate,
             )?)),
             _ => bail!("unsupported codec"),
         }
@@ -67,13 +59,12 @@ impl VulkanEncoder {
     pub unsafe fn submit_encode(
         &mut self,
         image: &VkImage,
-        semaphore: vk::Semaphore,
-        tp_acquire: u64,
-        tp_release: u64,
+        acquire: VkTimelinePoint,
+        release: VkTimelinePoint,
     ) -> anyhow::Result<()> {
         match self {
-            Self::H264(encoder) => encoder.submit_encode(image, semaphore, tp_acquire, tp_release),
-            Self::H265(encoder) => encoder.submit_encode(image, semaphore, tp_acquire, tp_release),
+            Self::H264(encoder) => encoder.submit_encode(image, acquire, release),
+            Self::H265(encoder) => encoder.submit_encode(image, acquire, release),
         }
     }
 
@@ -115,7 +106,7 @@ struct EncoderInner {
 impl EncoderInner {
     pub fn new(
         vk: Arc<VkContext>,
-        attached_clients: AttachedClients,
+        compositor: CompositorHandle,
         stream_seq: u64,
         width: u32,
         height: u32,
@@ -247,7 +238,7 @@ impl EncoderInner {
         let handle = std::thread::spawn(move || {
             writer_thread(
                 vk_clone,
-                attached_clients,
+                compositor,
                 stream_seq,
                 submitted_frames_rx,
                 done_frames_tx,
@@ -345,9 +336,8 @@ impl EncoderInner {
     pub unsafe fn submit_encode(
         &mut self,
         input: &VkImage,
-        semaphore: vk::Semaphore,
-        tp_acquire: u64,
-        tp_release: u64,
+        tp_acquire: VkTimelinePoint,
+        tp_release: VkTimelinePoint,
         frame_state: &gop_structure::GopFrame,
         rc_info: &mut (impl vk::ExtendsVideoBeginCodingInfoKHR + vk::ExtendsVideoCodingControlInfoKHR),
         codec_pic_info: &mut impl vk::ExtendsVideoEncodeInfoKHR,
@@ -500,7 +490,7 @@ impl EncoderInner {
             let encode_info = vk::VideoEncodeInfoKHR::default()
                 .flags(vk::VideoEncodeFlagsKHR::empty())
                 .dst_buffer(frame.copy_buffer.buffer)
-                .dst_buffer_range(frame.copy_buffer.size as u64)
+                .dst_buffer_range(frame.copy_buffer.len as u64)
                 .src_picture_resource(src_pic_resource)
                 .setup_reference_slot(&setup_reference_slot)
                 .reference_slots(&reference_slots)
@@ -602,9 +592,9 @@ impl EncoderInner {
 
         // Wait for the output buffer to be clear of the previous copy
         // operation, then establish new timeline points.
-        timeline_wait(&self.vk.device, frame.timeline, frame.tp_copied)?;
+        frame.tp_copied.wait()?;
         frame.tp_encoded += 10;
-        frame.tp_copied = frame.tp_encoded + 1;
+        frame.tp_copied = &frame.tp_encoded + 1;
 
         // Submit!
         {
@@ -613,18 +603,18 @@ impl EncoderInner {
             let cb_infos = [vk::CommandBufferSubmitInfo::default().command_buffer(frame.encode_cb)];
 
             let wait_infos = [vk::SemaphoreSubmitInfo::default()
-                .semaphore(semaphore)
-                .value(tp_acquire)
+                .semaphore(tp_acquire.timeline().as_semaphore())
+                .value(tp_acquire.into())
                 .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)];
 
             let signal_infos = [
                 vk::SemaphoreSubmitInfo::default()
-                    .semaphore(frame.timeline)
-                    .value(frame.tp_encoded)
+                    .semaphore(frame.timeline.as_semaphore())
+                    .value(frame.tp_encoded.value())
                     .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
                 vk::SemaphoreSubmitInfo::default()
-                    .semaphore(semaphore)
-                    .value(tp_release)
+                    .semaphore(tp_release.timeline().as_semaphore())
+                    .value(tp_release.value())
                     .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
             ];
 
@@ -701,9 +691,9 @@ struct EncoderOutputFrame {
 
     hierarchical_layer: u32,
 
-    timeline: vk::Semaphore,
-    tp_encoded: u64,
-    tp_copied: u64,
+    timeline: VkTimelineSemaphore,
+    tp_encoded: VkTimelinePoint,
+    tp_copied: VkTimelinePoint,
     vk: Arc<VkContext>,
 }
 
@@ -774,7 +764,7 @@ impl EncoderOutputFrame {
             }
         };
 
-        let timeline = create_timeline_semaphore(&vk.device, 0)?;
+        let timeline = VkTimelineSemaphore::new(vk.clone(), 0)?;
 
         Ok(EncoderOutputFrame {
             encode_cb,
@@ -783,9 +773,9 @@ impl EncoderOutputFrame {
 
             hierarchical_layer: 0,
 
+            tp_encoded: timeline.new_point(0),
+            tp_copied: timeline.new_point(0),
             timeline,
-            tp_encoded: 0,
-            tp_copied: 0,
 
             vk,
         })
@@ -800,7 +790,6 @@ impl Drop for EncoderOutputFrame {
 
             device.queue_wait_idle(encode_queue.queue).unwrap();
             device.free_command_buffers(encode_queue.command_pool, &[self.encode_cb]);
-            device.destroy_semaphore(self.timeline, None);
             device.destroy_query_pool(self.query_pool, None);
         }
     }
@@ -828,7 +817,7 @@ struct QueryResults {
 /// back and forth with the main thread.
 fn writer_thread(
     vk: Arc<VkContext>,
-    attachments: AttachedClients,
+    compositor: CompositorHandle,
     stream_seq: u64,
     input: crossbeam::Receiver<WriterInput>,
     done: crossbeam::Sender<EncoderOutputFrame>,
@@ -839,7 +828,7 @@ fn writer_thread(
     for frame in input {
         let frame = match frame {
             WriterInput::InsertBytes(header) => {
-                attachments.dispatch(CompositorEvent::VideoFrame {
+                compositor.dispatch(CompositorEvent::VideoFrame {
                     stream_seq,
                     seq,
                     ts: EPOCH.elapsed().as_nanos() as u64,
@@ -857,8 +846,12 @@ fn writer_thread(
 
         // Wait for the frame to finish encoding.
         unsafe {
-            timeline_wait(device, frame.timeline, frame.tp_encoded)?;
+            frame.tp_encoded.wait()?;
         }
+
+        // Wake the compositor, so it can release buffers and send presentation
+        // feedback.
+        compositor.wake()?;
 
         // Get the buffer offsets for the encoded data.
         let mut results = [QueryResults::default()];
@@ -889,7 +882,7 @@ fn writer_thread(
             )
         };
 
-        attachments.dispatch(CompositorEvent::VideoFrame {
+        compositor.dispatch(CompositorEvent::VideoFrame {
             stream_seq,
             seq,
             ts: capture_ts,
@@ -899,7 +892,7 @@ fn writer_thread(
         seq += 1;
 
         unsafe {
-            timeline_signal(device, frame.timeline, frame.tp_copied)?;
+            frame.tp_copied.signal()?;
         }
 
         done.send(frame).ok();

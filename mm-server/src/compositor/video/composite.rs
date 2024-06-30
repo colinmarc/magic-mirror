@@ -10,8 +10,6 @@ use cstr::cstr;
 
 use crate::vulkan::*;
 
-use super::SurfaceTexture;
-
 pub const BLEND_FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
 
 #[derive(Copy, Clone, Debug)]
@@ -231,7 +229,7 @@ impl CompositePipeline {
     pub unsafe fn composite_surface(
         &self,
         cb: vk::CommandBuffer,
-        tex: &SurfaceTexture,
+        view: vk::ImageView,
         // In clip coordinates.
         // TODO: mat3 transform
         dst_pos: glam::Vec2,
@@ -248,11 +246,6 @@ impl CompositePipeline {
 
         // Push the texture.
         {
-            let view = match tex {
-                SurfaceTexture::Imported { image, .. } => image.view,
-                SurfaceTexture::Uploaded { image, .. } => image.view,
-            };
-
             let image_info = vk::DescriptorImageInfo::default()
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .image_view(view);

@@ -85,8 +85,11 @@ pub fn validate_resolution(resolution: Option<protocol::Size>) -> Result<(u32, u
 
 pub fn validate_ui_scale(ui_scale: Option<protocol::PixelScale>) -> Result<PixelScale> {
     match ui_scale {
-        Some(scale) => match scale.try_into() {
-            Ok(s) => Ok(s),
+        Some(scale) => match PixelScale::try_from(scale) {
+            Ok(s) if !s.is_fractional() => Ok(s),
+            Ok(_) => Err(ValidationError::NotSupported(
+                "fractional UI scales are not supported".into(),
+            )),
             Err(_) => Err(ValidationError::Invalid("invalid UI scale".into())),
         },
         None => Ok(PixelScale::ONE),
