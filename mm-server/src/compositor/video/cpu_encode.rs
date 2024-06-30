@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::{
     codec::VideoCodec,
     compositor::{
-        video::format_is_semiplanar, AttachedClients, CompositorEvent, VideoStreamParams, EPOCH,
+        video::format_is_semiplanar, CompositorEvent, CompositorHandle, VideoStreamParams, EPOCH,
     },
     vulkan::*,
 };
@@ -24,7 +24,7 @@ use bytes::BytesMut;
 use crossbeam_channel as crossbeam;
 use tracing::{error, instrument, trace, trace_span};
 
-use super::{begin_cb, timebase::Timebase, timeline_wait};
+use super::{begin_cb, timebase::Timebase};
 
 const DEFAULT_INPUT_FORMAT: vk::Format = vk::Format::G8_B8_R8_3PLANE_420_UNORM;
 
@@ -104,7 +104,7 @@ pub struct CpuEncoder {
     height: u32,
 
     encode_thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
-    input_frames: Option<crossbeam::Sender<(vk::Semaphore, u64, VkExtMemoryFrame)>>,
+    input_frames: Option<crossbeam::Sender<(VkTimelinePoint, VkExtMemoryFrame)>>,
     done_frames: crossbeam::Receiver<VkExtMemoryFrame>,
     graphics_queue: VkQueue,
     vk: Arc<VkContext>,
@@ -114,15 +114,14 @@ impl CpuEncoder {
     #[instrument(level = "trace", skip_all)]
     pub fn new(
         vk: Arc<VkContext>,
-        attachments: AttachedClients,
+        compositor: CompositorHandle,
         stream_seq: u64,
         params: VideoStreamParams,
         framerate: u32,
     ) -> anyhow::Result<Self> {
         let video_timebase = Timebase::new(600, *EPOCH);
 
-        let (input_frames_tx, input_frames_rx) =
-            crossbeam::unbounded::<(vk::Semaphore, u64, VkExtMemoryFrame)>();
+        let (input_frames_tx, input_frames_rx) = crossbeam::unbounded();
 
         // Use a "swapchain" of three frames.
         let (done_frames_tx, done_frames_rx) = crossbeam::bounded::<VkExtMemoryFrame>(3);
@@ -136,9 +135,7 @@ impl CpuEncoder {
                 .unwrap();
         }
 
-        let vk_clone = vk.clone();
         let thread = std::thread::Builder::new().name("encoder".to_string());
-
         let handle = match params.codec {
             #[cfg(feature = "ffmpeg_encode")]
             VideoCodec::H264 | VideoCodec::H265 if ffmpeg::probe_codec(params.codec) => thread
@@ -147,11 +144,10 @@ impl CpuEncoder {
                         .in_scope(|| ffmpeg::new_encoder(params, framerate, video_timebase))?;
 
                     encode_thread(
-                        vk_clone,
                         encoder,
                         input_frames_rx,
                         done_frames_tx,
-                        attachments,
+                        compositor,
                         stream_seq,
                         video_timebase,
                     )
@@ -163,11 +159,10 @@ impl CpuEncoder {
                     .context("failed to create encoder")?;
 
                 encode_thread(
-                    vk_clone,
                     encoder,
                     input_frames_rx,
                     done_frames_tx,
-                    attachments,
+                    compositor,
                     stream_seq,
                     video_timebase,
                 )
@@ -179,11 +174,10 @@ impl CpuEncoder {
                     .context("failed to create encoder")?;
 
                 encode_thread(
-                    vk_clone,
                     encoder,
                     input_frames_rx,
                     done_frames_tx,
-                    attachments,
+                    compositor,
                     stream_seq,
                     video_timebase,
                 )
@@ -254,9 +248,8 @@ impl CpuEncoder {
     pub unsafe fn submit_encode(
         &mut self,
         image: &VkImage,
-        semaphore: vk::Semaphore,
-        tp_acquire: u64,
-        tp_release: u64,
+        tp_acquire: VkTimelinePoint,
+        tp_release: VkTimelinePoint,
     ) -> anyhow::Result<()> {
         // "Acquire" a frame to copy to. This provides backpressure if the
         // encoder can't keep up.
@@ -380,20 +373,20 @@ impl CpuEncoder {
         {
             device.end_command_buffer(frame.copy_cb)?;
             device.reset_fences(&[frame.copy_fence])?;
-
-            let wait_vals = [tp_acquire];
-            let signal_vals = [tp_release];
+            let wait_semas = [tp_acquire.timeline().as_semaphore()];
+            let wait_vals = [tp_acquire.value()];
+            let signal_semas = [tp_release.timeline().as_semaphore()];
+            let signal_vals = [tp_release.value()];
             let mut timeline_sema_info = vk::TimelineSemaphoreSubmitInfo::default()
                 .wait_semaphore_values(&wait_vals)
                 .signal_semaphore_values(&signal_vals);
 
-            let semas = [semaphore];
             let cbs = [frame.copy_cb];
             let submit_info = vk::SubmitInfo::default()
-                .wait_semaphores(&semas)
+                .wait_semaphores(&wait_semas)
                 .wait_dst_stage_mask(&[vk::PipelineStageFlags::ALL_COMMANDS])
                 .command_buffers(&cbs)
-                .signal_semaphores(&semas)
+                .signal_semaphores(&signal_semas)
                 .push_next(&mut timeline_sema_info);
 
             device.queue_submit(self.graphics_queue.queue, &[submit_info], frame.copy_fence)?;
@@ -403,7 +396,7 @@ impl CpuEncoder {
             .input_frames
             .as_ref()
             .unwrap()
-            .send((semaphore, tp_release, frame))
+            .send((tp_release, frame))
         {
             Ok(_) => (),
             Err(crossbeam::SendError(_)) => {
@@ -434,11 +427,10 @@ impl Drop for CpuEncoder {
 }
 
 fn encode_thread(
-    vk: Arc<VkContext>,
     mut encoder: impl EncoderInner,
-    input_frames: crossbeam::Receiver<(vk::Semaphore, u64, VkExtMemoryFrame)>,
+    input_frames: crossbeam::Receiver<(VkTimelinePoint, VkExtMemoryFrame)>,
     done_frames: crossbeam::Sender<VkExtMemoryFrame>,
-    attachments: AttachedClients,
+    compositor: CompositorHandle,
     stream_seq: u64,
     video_timebase: Timebase,
 ) -> anyhow::Result<()> {
@@ -447,7 +439,7 @@ fn encode_thread(
     let mut packet_slab = BytesMut::new();
     let mut seq = 0;
 
-    for (semaphore, tp, frame) in input_frames {
+    for (tp, frame) in input_frames {
         let _tracy_frame = tracy_client::non_continuous_frame!("cpu encode");
         let span = trace_span!("encode_loop");
         let _guard = span.enter();
@@ -455,7 +447,11 @@ fn encode_thread(
         let capture_ts = EPOCH.elapsed().as_millis() as u64;
 
         // Wait for the copy operation to finish.
-        unsafe { timeline_wait(&vk.device, semaphore, tp) }?;
+        unsafe { tp.wait() }?;
+
+        // Wake the compositor, so it can release buffers and send presentation
+        // feedback.
+        compositor.wake()?;
 
         let pts = video_timebase.now();
 
@@ -469,7 +465,7 @@ fn encode_thread(
 
             trace!(len = pkt.len(), "encoded video packet");
 
-            attachments.dispatch(CompositorEvent::VideoFrame {
+            compositor.dispatch(CompositorEvent::VideoFrame {
                 stream_seq,
                 seq,
                 ts: capture_ts,
@@ -497,7 +493,7 @@ fn encode_thread(
 
         trace!("encoded video packet ({} bytes)", pkt.len());
 
-        attachments.dispatch(CompositorEvent::VideoFrame {
+        compositor.dispatch(CompositorEvent::VideoFrame {
             stream_seq,
             seq,
             ts: EPOCH.elapsed().as_millis() as u64,

@@ -20,7 +20,7 @@ ffmpeg-sys-next = { version = "6.1", optional = true }
 glam = "0.24.1"
 lazy_static = "1.4.0"
 libloading = "0.8.0"
-mio = { version = "0.8", features = ["net", "os-ext", "os-poll"] }
+mio = { version = "1", features = ["net", "os-ext", "os-poll"] }
 mio-timerfd = "0.2.0"
 quiche = { version = "0.18", features = ["boringssl-boring-crate"] }
 rcgen = "0.12.1"
@@ -47,6 +47,9 @@ nix = { version = "0.27.1", features = [
     "ioctl",
     "process",
     "signal",
+    "mman",
+    "fs",
+    "time"
 ] }
 drm-fourcc = "2.2.0"
 ctrlc = "3.4.1"
@@ -73,6 +76,14 @@ cursor-icon = "1.1.0"
 image = { version = "0.25.1", default-features = false, features = ["png"] }
 git-version = "0.3.9"
 wayland-scanner = "0.31.1"
+wayland-server = { version = "0.31.2", features = ["log"] }
+wayland-protocols = { version = "0.32.1", features = ["server", "staging", "unstable"] }
+slotmap = "1.0.7"
+x11rb = { version = "0.13", features = ["composite"] }
+
+[dependencies.ash]
+git = "https://github.com/ash-rs/ash"
+rev = "92084df65f52aa15b704279fb6d8d26a3ee71809"
 
 [dependencies.pulseaudio]
 git = "https://github.com/colinmarc/pulseaudio-rs"
@@ -84,18 +95,10 @@ rev = "ab9dbd872d8f01c2cb96d3f9fd880b26d37d1f0e"
 optional = true
 features = ["av1", "hevc"]
 
-[dependencies.ash]
-git = "https://github.com/ash-rs/ash"
-rev = "92084df65f52aa15b704279fb6d8d26a3ee71809"
-
-[dependencies.smithay]
-git = "https://github.com/colinmarc/smithay"
-rev = "d176935e3223bea6ae48946219bc55d12ebbba54"
-default-features = false
-features = ["xwayland", "wayland_frontend", "desktop"]
 
 [build-dependencies]
 system-deps = "6"
+xkbcommon = { version = "0.7.0", default-features = false }
 
 [build-dependencies.slang]
 git = "https://github.com/colinmarc/slang-rs"

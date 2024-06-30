@@ -9,7 +9,7 @@ use std::{
 
 use crate::waking_sender::WakingSender;
 
-use super::{AttachedClients, AudioStreamParams, CompositorEvent};
+use super::{AudioStreamParams, CompositorEvent, CompositorHandle};
 
 mod pulse;
 use anyhow::Context as _;
@@ -46,7 +46,7 @@ pub struct EncodePipeline {
     server_thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
     server_close_tx: WakingSender<()>,
 
-    attachments: AttachedClients,
+    compositor: CompositorHandle,
     stream_seq: u64,
 
     encoder: Option<Encoder>,
@@ -56,7 +56,7 @@ pub struct EncodePipeline {
 
 impl EncodePipeline {
     pub fn new(
-        attachments: AttachedClients,
+        compositor: CompositorHandle,
         xdg_runtime_dir: &Path,
     ) -> anyhow::Result<EncodePipeline> {
         // In this location, the server gets picked up without setting PULSE_SERVER
@@ -80,7 +80,7 @@ impl EncodePipeline {
             server_thread_handle: Some(server_handle),
             server_close_tx: close_tx,
 
-            attachments,
+            compositor,
             stream_seq: 0,
 
             encoder: None,
@@ -120,7 +120,7 @@ impl EncodePipeline {
         let mut encoder = opus::Encoder::new(params.sample_rate, ch, opus::Application::LowDelay)
             .context("failed to create opus encoder")?;
 
-        let attachments = self.attachments.clone();
+        let compositor = self.compositor.clone();
         let thread_handle = std::thread::Builder::new()
             .name("audio encode".into())
             .spawn(move || {
@@ -157,7 +157,7 @@ impl EncodePipeline {
                     buf.resize(frame.buf.len(), 0);
 
                     let len = encoder.encode_float(&frame.buf, &mut buf)?;
-                    attachments.dispatch(CompositorEvent::AudioFrame {
+                    compositor.dispatch(CompositorEvent::AudioFrame {
                         stream_seq,
                         seq,
                         ts: frame.capture_ts,

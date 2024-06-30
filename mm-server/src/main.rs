@@ -126,6 +126,7 @@ fn main() -> Result<()> {
 
     let closer = srv.closer();
     ctrlc::set_handler(move || {
+        debug!("received SIGINT");
         closer.send(()).ok();
     })?;
 

@@ -5,9 +5,11 @@
 #![allow(clippy::too_many_arguments)]
 
 mod chain;
-pub(crate) use chain::*;
-
+mod timeline;
 pub mod video;
+
+pub(crate) use chain::*;
+pub use timeline::*;
 
 use cstr::cstr;
 use nix::libc;
@@ -916,7 +918,7 @@ pub struct VkHostBuffer {
     pub buffer: vk::Buffer,
     pub memory: vk::DeviceMemory,
     pub access: *mut c_void,
-    pub size: usize,
+    pub len: usize,
     vk: Arc<VkContext>,
 }
 
@@ -970,7 +972,7 @@ impl VkHostBuffer {
             buffer,
             memory,
             access,
-            size,
+            len: size,
             vk,
         })
     }
@@ -992,9 +994,14 @@ impl VkHostBuffer {
             buffer: buf,
             memory,
             access,
-            size: buffer_size,
+            len: buffer_size,
             vk,
         }
+    }
+
+    pub fn copy_from_slice(&mut self, src: &[u8]) {
+        let dst = unsafe { std::slice::from_raw_parts_mut(self.access as *mut u8, self.len) };
+        dst.copy_from_slice(src);
     }
 }
 
@@ -1052,24 +1059,6 @@ pub fn create_timestamp_query_pool(
         pool,
         num_timestamps,
     })
-}
-
-pub fn create_timeline_semaphore(
-    device: &ash::Device,
-    initial_value: u64,
-) -> anyhow::Result<vk::Semaphore> {
-    let sema = unsafe {
-        device.create_semaphore(
-            &vk::SemaphoreCreateInfo::default().push_next(
-                &mut vk::SemaphoreTypeCreateInfo::default()
-                    .semaphore_type(vk::SemaphoreType::TIMELINE)
-                    .initial_value(initial_value),
-            ),
-            None,
-        )?
-    };
-
-    Ok(sema)
 }
 
 pub fn create_fence(device: &ash::Device, signalled: bool) -> anyhow::Result<vk::Fence> {

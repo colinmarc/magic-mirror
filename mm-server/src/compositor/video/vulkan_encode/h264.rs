@@ -14,7 +14,7 @@ use ash::vk::native::{
 use bytes::Bytes;
 use tracing::{debug, trace};
 
-use crate::compositor::{AttachedClients, VideoStreamParams};
+use crate::compositor::{CompositorHandle, VideoStreamParams};
 use crate::vulkan::*;
 
 use super::gop_structure::HierarchicalP;
@@ -65,7 +65,7 @@ pub struct H264Encoder {
 impl H264Encoder {
     pub fn new(
         vk: Arc<VkContext>,
-        attached_clients: AttachedClients,
+        compositor: CompositorHandle,
         stream_seq: u64,
         params: VideoStreamParams,
         framerate: u32,
@@ -225,7 +225,7 @@ impl H264Encoder {
 
         let inner = super::EncoderInner::new(
             vk.clone(),
-            attached_clients,
+            compositor,
             stream_seq,
             params.width,
             params.height,
@@ -280,9 +280,8 @@ impl H264Encoder {
     pub unsafe fn submit_encode(
         &mut self,
         input: &VkImage,
-        semaphore: vk::Semaphore,
-        tp_acquire: u64,
-        tp_release: u64,
+        tp_acquire: VkTimelinePoint,
+        tp_release: VkTimelinePoint,
     ) -> anyhow::Result<()> {
         let frame_state = self.structure.next_frame();
         if frame_state.is_keyframe {
@@ -467,7 +466,6 @@ impl H264Encoder {
 
         self.inner.submit_encode(
             input,
-            semaphore,
             tp_acquire,
             tp_release,
             &frame_state,
