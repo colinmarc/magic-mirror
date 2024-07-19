@@ -110,7 +110,7 @@ impl Stats {
     pub fn video_latency(&self) -> f32 {
         let inner = self.inner.read().unwrap();
 
-        let avg = inner.video_latency.get_average() + (inner.connection_rtt.as_nanos() as u64 / 2);
+        let avg = inner.video_latency.get_average() + inner.connection_rtt.as_nanos() as u64;
         avg as f32 / 1_000_000.0
     }
 }
