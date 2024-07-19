@@ -615,8 +615,8 @@ impl App {
                     }
                 }
                 protocol::MessageType::LockPointer(protocol::LockPointer { x, y }) => {
-                    self.window
-                        .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
+                    debug!(x, y, "cursor locked");
+
                     if let Some(aspect) = self.renderer.get_texture_aspect() {
                         let (width, height) = self
                             .remote_display_params
@@ -640,8 +640,12 @@ impl App {
                         let pos: winit::dpi::PhysicalPosition<f64> = (x, y).into();
                         self.window.set_cursor_position(pos)?;
                     }
+
+                    self.window
+                        .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
                 }
                 protocol::MessageType::ReleasePointer(_) => {
+                    debug!("cursor released");
                     self.window
                         .set_cursor_grab(winit::window::CursorGrabMode::None)?;
                 }
