@@ -67,7 +67,7 @@ features = [
 
 [build-dependencies.slang]
 git = "https://github.com/colinmarc/slang-rs"
-rev = "cede1ccd06c8de392533d25bd32052a4cd50e9d5"
+rev = "78f7be2eb9a694747c6878d476984f576e21edf4"
 # Uses SLANG_DIR if set, otherwise builds slang from source
 features = ["from-source"]
 
