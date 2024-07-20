@@ -1307,7 +1307,10 @@ fn find_sessions(
 
 fn determine_resolution(resolution: Resolution, width: u32, height: u32) -> protocol::Size {
     match resolution {
-        Resolution::Auto => protocol::Size { width, height },
+        Resolution::Auto => protocol::Size {
+            width: width.next_multiple_of(2),
+            height: height.next_multiple_of(2),
+        },
         Resolution::Height(h) => {
             let h = std::cmp::min(h, height);
 
