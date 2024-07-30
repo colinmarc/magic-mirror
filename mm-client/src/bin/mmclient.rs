@@ -123,6 +123,7 @@ struct MainLoop {
 
 struct App {
     configured_resolution: Resolution,
+    configured_ui_scale: Option<f64>,
     configured_codec: protocol::VideoCodec,
     configured_framerate: u32,
     configured_preset: u32,
@@ -765,7 +766,11 @@ impl App {
                     .and_then(|a| a.streaming_resolution.clone());
                 let remote_scale = self.remote_display_params.ui_scale.as_ref().unwrap();
 
-                let desired_ui_scale = determine_ui_scale(self.window.scale_factor());
+                let desired_ui_scale = determine_ui_scale(
+                    self.configured_ui_scale
+                        .unwrap_or(self.window.scale_factor()),
+                );
+
                 let desired_streaming_res = Some(determine_resolution(
                     self.configured_resolution,
                     self.window_width,
@@ -1039,6 +1044,7 @@ fn main() -> Result<()> {
         configured_codec,
         configured_framerate: args.framerate,
         configured_resolution: args.resolution,
+        configured_ui_scale: args.ui_scale,
         configured_preset: args.preset + 1,
 
         window,
