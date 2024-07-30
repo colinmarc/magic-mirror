@@ -358,6 +358,7 @@ impl LatencyTest {
                     }
                 }
             }
+            AppEvent::ConnectionClosed => bail!("server closed connection"),
             ev => debug!("unxpected event: {:?}", ev),
         }
 
@@ -380,7 +381,7 @@ impl LatencyTest {
             protocol::KeyboardInput {
                 key: protocol::keyboard_input::Key::Space.into(),
                 state: protocol::keyboard_input::KeyState::Released.into(),
-                char: ' '.into(),
+                ..Default::default()
             },
             Some(self.attachment_sid),
             false,
