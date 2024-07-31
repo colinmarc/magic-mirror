@@ -618,6 +618,12 @@ impl App {
                 protocol::MessageType::LockPointer(protocol::LockPointer { x, y }) => {
                     debug!(x, y, "cursor locked");
 
+                    // On most platforms, we have to lock the cursor before we
+                    // warp it. On mac, it's the other way around.
+                    #[cfg(not(target_vendor = "macos"))]
+                    self.window
+                        .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
+
                     if let Some(aspect) = self.renderer.get_texture_aspect() {
                         let (width, height) = self
                             .remote_display_params
@@ -642,6 +648,7 @@ impl App {
                         self.window.set_cursor_position(pos)?;
                     }
 
+                    #[cfg(target_vendor = "apple")]
                     self.window
                         .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
                 }
