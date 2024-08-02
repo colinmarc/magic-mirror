@@ -16,6 +16,7 @@ runs:
         (cd $RUNNER_TEMP/slang && curl -o - -fsSL "$slang_url" | tar zxv)
         echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
         echo "LD_LIBRARY_PATH=$RUNNER_TEMP/slang/lib" >> "$GITHUB_ENV"
+        echo "DYLD_LIBRARY_PATH=$RUNNER_TEMP/slang/lib" >> "$GITHUB_ENV"
       env:
         GH_TOKEN: ${{ inputs.token }}
 
