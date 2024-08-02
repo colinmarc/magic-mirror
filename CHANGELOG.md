@@ -1,3 +1,15 @@
+## [mmserver-v0.4.0] - 2024-08-02
+
+### New Features
+
+- Rewrite compositor from scratch (945a7793abbbc377f8c9ad1a852715203a16b097)
+- Allow attachments to be configured for HDR10 output (0c4b85af422378881f550f61882439b1a4abade1)
+- Support streaming in HDR (713dbbdce931e0ba98cc51bf144a2fe26dd9e2a1)
+
+### Bugfixes
+
+- Improve compositor error messages with s/client/app (e5b24afe2ccd8ce77f74a5732a2e02f723256cda)
+
 ## [mmclient-v0.3.0] - 2024-08-02
 
 ### New Features
