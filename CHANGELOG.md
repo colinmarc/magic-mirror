@@ -1,3 +1,21 @@
+## [mmclient-v0.3.0] - 2024-08-02
+
+### New Features
+
+- Allow attachments to be configured for HDR10 output (0c4b85af422378881f550f61882439b1a4abade1)
+- Support playing HDR streams (12ef76930f729af0331bb83c3ceadb110bf22a6f)
+
+### Bugfixes
+
+- Make --detach the default (7ca5ee3ea03bcc19f754c1542675be360e3216af)
+- Take name or id for --kill (7a1f8c1483bd43c292e5ec8189535b0e59fc453c)
+- Move the cursor before locking it (2a5cc571f868c7ade0c9798b41e96ee21209de4d)
+- Calculate RTT correctly (4762c1ab0594897949e4ce81a7897fab30d9c7fe)
+- Make sure session width/height are even (5a344ade0e3cd62c1c8e0f4b99d6be8dee7b513f)
+- Handle ConnectionClosed (953b9d4398ccca75b4108da0c31589c56747ff70)
+- Ensure --ui-scale overrides environment scaling (776b4dc2c5462a05c8520e769361f3136d5bcc6a)
+- Swap order of lock/warp when locking cursor on not-mac (525622b29d46fc8e659d0e3c37cf920faf587866)
+
 ## [mmclient-v0.2.0] - 2024-05-08
 
 ### New Features
