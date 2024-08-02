@@ -23,8 +23,8 @@ jobs:
       - name: install slang
         run: |
           mkdir $RUNNER_TEMP/slang
-          slang_url=$( gh api https://api.github.com/repos/shader-slang/slang/releases/latest |\
-            jq -r '.assets[] | .browser_download_url' | grep linux-x86_64.tar.gz )
+          slang_url=$( gh api https://api.github.com/repos/shader-slang/slang/releases |\
+            jq -r '.[].assets[].browser_download_url' | grep linux-x86_64.tar.gz )
           (cd $RUNNER_TEMP/slang && curl -o - -fsSL "$slang_url" | tar zxv)
           echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$(dirname $(find $RUNNER_TEMP/slang -name libslang.*))" >> "$GITHUB_ENV"
@@ -69,8 +69,8 @@ jobs:
       - name: install slang
         run: |
           mkdir $RUNNER_TEMP/slang
-          slang_url=$( gh api https://api.github.com/repos/shader-slang/slang/releases/latest |\
-            jq -r ".assets[] | .browser_download_url" | grep macos-aarch64.zip )
+          slang_url=$( gh api https://api.github.com/repos/shader-slang/slang/releases |\
+            jq -r ".[].assets[].browser_download_url" | grep macos-aarch64.zip )
           curl -o "$RUNNER_TEMP/slang.zip" -fsSL "$slang_url"
           (cd "$RUNNER_TEMP/slang" && unzip "$RUNNER_TEMP/slang.zip")
           echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
