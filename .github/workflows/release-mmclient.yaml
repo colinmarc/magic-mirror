@@ -20,18 +20,12 @@ jobs:
             ffmpeg libavutil-dev libavformat-dev libavdevice-dev libavfilter-dev \
             libfontconfig-dev libfreetype-dev
 
-      - name: install slang
-        run: |
-          mkdir $RUNNER_TEMP/slang
-          slang_url=$( gh api https://api.github.com/repos/shader-slang/slang/releases/latest |\
-            jq -r '.assets[] | .browser_download_url' | grep linux-x86_64.tar.gz )
-          (cd $RUNNER_TEMP/slang && curl -o - -fsSL "$slang_url" | tar zxv)
-          echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$(dirname $(find $RUNNER_TEMP/slang -name libslang.*))" >> "$GITHUB_ENV"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/install-slang
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: linux-x86_64
+
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -66,19 +60,12 @@ jobs:
           brew install ffmpeg@6 protobuf
           brew link ffmpeg@6
 
-      - name: install slang
-        run: |
-          mkdir $RUNNER_TEMP/slang
-          slang_url=$( gh api https://api.github.com/repos/shader-slang/slang/releases/latest |\
-            jq -r ".assets[] | .browser_download_url" | grep macos-aarch64.zip )
-          curl -o "$RUNNER_TEMP/slang.zip" -fsSL "$slang_url"
-          (cd "$RUNNER_TEMP/slang" && unzip "$RUNNER_TEMP/slang.zip")
-          echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
-          echo "DYLD_LIBRARY_PATH=$(dirname $(find $RUNNER_TEMP/slang -name libslang.*))" >> "$GITHUB_ENV"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/install-slang
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: macos-aarch64
+
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: |
