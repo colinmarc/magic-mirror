@@ -106,7 +106,6 @@ jobs:
             --tag-pattern "client" \
             --tag "$GITHUB_REF_NAME" --latest | tail -n +2 | tee -a release-notes.txt
 
-
       - name: download artifacts
         uses: actions/download-artifact@v4
         with:
