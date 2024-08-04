@@ -7,6 +7,8 @@ use prost::Message as _;
 include!(concat!(env!("OUT_DIR"), "/_include.rs"));
 pub use messages::*;
 
+mod timestamp;
+
 #[derive(Debug, thiserror::Error)]
 enum ProtobufError {
     #[error(transparent)]

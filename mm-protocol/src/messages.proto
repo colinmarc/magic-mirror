@@ -4,8 +4,6 @@
 
 syntax = "proto3";
 
-import "google/protobuf/timestamp.proto";
-
 package messages;
 
 // # The Magic Mirror Streaming Protocol (MMSP) version 0.1.0
@@ -100,6 +98,16 @@ package messages;
 // ## Common types
 //
 // Some protobuf messages are reused in multiple messages below.
+
+// ### Timestamp
+//
+// Represents an instant independent of time zone or local calendar, represented
+// as the sum of seconds and nanoseconds since the UNIX epoch of January 1st,
+// 1970.
+message Timestamp {
+  int64 seconds = 1; // Required.
+  int64 nanos = 2;   // Required.
+}
 
 // ### Size, Extent
 //
@@ -426,9 +434,9 @@ message ListSessions {}
 // sessions to the client.
 message SessionList {
   message Session {
-    uint64 session_id = 1;                       // Required.
-    string application_name = 2;                 // Required.
-    google.protobuf.Timestamp session_start = 3; // Required.
+    uint64 session_id = 1;       // Required.
+    string application_name = 2; // Required.
+    Timestamp session_start = 3; // Required.
 
     VirtualDisplayParameters display_params = 10; // Required.
 

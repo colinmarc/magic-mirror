@@ -1121,7 +1121,6 @@ dependencies = [
  "octets",
  "prost",
  "prost-build",
- "prost-types",
  "thiserror",
 ]
 
