@@ -23,6 +23,9 @@ use crate::{
 };
 use crate::{vulkan::VkContext, waking_sender::WakingSender};
 
+/// How long to wait for the compositor to accept a new attachment.
+const ATTACH_TIMEOUT: time::Duration = time::Duration::from_secs(1);
+
 pub struct Session {
     pub id: u64,
     pub display_params: DisplayParams,
@@ -182,7 +185,9 @@ impl Session {
         self.operator_attachment_id = Some(id);
         self.detached_since = None;
 
-        ready_recv.recv().context("attachment rejected")?;
+        ready_recv
+            .recv_timeout(ATTACH_TIMEOUT)
+            .context("attachment rejected")?;
 
         Ok(Attachment {
             attachment_id: id,
