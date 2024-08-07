@@ -47,8 +47,8 @@ pub fn select_rc_mode(
 ) -> RateControlMode {
     assert!(params.preset <= 9);
 
-    let mut min_qp = 17;
-    let mut target_qp = 40 - (2 * params.preset); // 22 - 40;
+    let min_qp = 17;
+    let target_qp = 40 - (2 * params.preset); // 22 - 40;
 
     let supports_crf = caps
         .rate_control_modes
