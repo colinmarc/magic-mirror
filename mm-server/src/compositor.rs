@@ -236,7 +236,7 @@ impl Compositor {
 
             video_pipeline: None,
             new_video_stream_params: None,
-            video_stream_seq: 0,
+            video_stream_seq: 1,
 
             audio_pipeline,
 
