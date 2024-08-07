@@ -24,6 +24,7 @@ use tracing::{debug, error};
 use mm_protocol as protocol;
 
 use crate::state::SharedState;
+use crate::waking_sender::WakingOneshot;
 use crate::waking_sender::WakingSender;
 
 const MAX_QUIC_PACKET_SIZE: usize = 1350;
@@ -59,6 +60,7 @@ struct Outgoing {
 pub struct StreamWorker {
     incoming_messages: Option<Sender<protocol::MessageType>>,
     outgoing_messages: Receiver<protocol::MessageType>,
+    done: oneshot::Receiver<()>,
 }
 
 pub struct ClientConnection {
@@ -254,13 +256,33 @@ impl Server {
                 };
             }
 
-            // Let workers know if any peers hung up.
+            // Let workers know if any peers hung up, and let peers know if any
+            // workers finished.
             for client in self.clients.values_mut() {
+                let mut to_close = Vec::new();
                 for (sid, worker) in client.in_flight.iter_mut() {
                     if client.conn.stream_finished(*sid) {
                         trace!("peer hung up on stream {:?}:{}", client.conn_id, sid);
                         worker.incoming_messages.take();
                     }
+
+                    if matches!(
+                        worker.done.try_recv(),
+                        Ok(()) | Err(oneshot::TryRecvError::Disconnected)
+                    ) && worker.outgoing_messages.is_empty()
+                    {
+                        to_close.push(*sid);
+                    }
+                }
+
+                for sid in to_close {
+                    trace!(sid, "closing stream because worker finished");
+
+                    client.conn.stream_send(sid, &[], true)?;
+                    client
+                        .conn
+                        .stream_shutdown(sid, quiche::Shutdown::Read, 0)?;
+                    client.in_flight.remove(&sid);
                 }
             }
 
@@ -328,21 +350,7 @@ impl Server {
                                     break;
                                 }
                             }
-                            Err(TryRecvError::Disconnected) => {
-                                client.conn.stream_send(sid, &[], true)?;
-                                client
-                                    .conn
-                                    .stream_shutdown(sid, quiche::Shutdown::Read, 0)?;
-
-                                // TODO this makes the assumption that a worker
-                                // is completely done once they hang up the
-                                // sender.
-                                client.in_flight.remove(&sid);
-                                break;
-                            }
-                            Err(TryRecvError::Empty) => {
-                                break;
-                            }
+                            Err(_) => break,
                         }
                     }
                 }
@@ -498,6 +506,9 @@ impl Server {
                     let outgoing_send = WakingSender::new(self.waker.clone(), outgoing_send);
                     let outgoing_dgrams = client.dgram_send.clone();
 
+                    let (done_send, done_recv) = oneshot::channel();
+                    let done_send = WakingOneshot::new(self.waker.clone(), done_send);
+
                     let state_clone = self.state.clone();
                     let max_dgram_len = match client.conn.dgram_max_writable_len() {
                         Some(v) => v,
@@ -515,42 +526,30 @@ impl Server {
                             outgoing_send,
                             outgoing_dgrams,
                             max_dgram_len,
+                            done_send,
                         );
                     });
 
                     let worker = StreamWorker {
                         incoming_messages: Some(incoming_send),
                         outgoing_messages: outgoing_recv,
+                        done: done_recv,
                     };
 
                     client.in_flight.entry(sid).or_insert(worker)
                 }
             };
 
-            let mut defunct = false;
             let incoming = worker.incoming_messages.as_ref().unwrap();
             for msg in messages {
                 if incoming.send(msg).is_err() {
                     // The worker finished execution, so ignore any further
                     // messages.
-                    defunct = true;
                     break;
                 }
             }
 
-            if defunct {
-                client.err_stream(
-                    sid,
-                    ErrorCode::ErrorProtocolUnexpectedMessage,
-                    &mut self.scratch,
-                );
-
-                // TODO: this makes an assumption about the protocol, which is
-                // that workers aren't interested in sending any more messages
-                // once they hang up on the receiver side. An explicit Done
-                // would be more flexible.
-                client.in_flight.remove(&sid);
-            } else if fin {
+            if fin {
                 // Signal to the worker that the peer has stopped sending
                 // messages.
                 worker.incoming_messages.take();

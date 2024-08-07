@@ -2,7 +2,12 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use crate::compositor::{self, ControlMessage, DisplayParams};
+use crate::{
+    compositor::{self, CompositorEvent, ControlMessage, DisplayParams},
+    session::Session,
+    state::SharedState,
+    waking_sender::{WakingOneshot, WakingSender},
+};
 use crossbeam_channel::{select, Receiver};
 use hashbrown::HashMap;
 use mm_protocol as protocol;
@@ -26,16 +31,13 @@ impl From<DisplayParams> for protocol::VirtualDisplayParameters {
     }
 }
 
-use crate::{
-    compositor::CompositorEvent, session::Session, state::SharedState, waking_sender::WakingSender,
-};
-
 pub fn dispatch(
     state: SharedState,
     incoming: Receiver<protocol::MessageType>,
     outgoing: WakingSender<protocol::MessageType>,
     outgoing_dgrams: WakingSender<protocol::MessageType>,
     max_dgram_len: usize,
+    done: WakingOneshot<()>,
 ) {
     let instant = std::time::Instant::now();
 
@@ -73,6 +75,7 @@ pub fn dispatch(
     drop(incoming);
     drop(outgoing);
     drop(outgoing_dgrams);
+    let _ = done.send(());
 
     debug!(dur = ?instant.elapsed(),"worker finished");
 }
@@ -487,6 +490,9 @@ fn attach(
                                         return;
                                     }
                                 }
+                            }
+                            protocol::MessageType::Error(ev) => {
+                                error!("received error from client: {}: {}", ev.err_code().as_str_name(), ev.error_text);
                             }
                             msg => {
                                 debug!("received {} from client on attachment stream", msg);

@@ -40,3 +40,20 @@ impl<T> WakingSender<T> {
         Ok(())
     }
 }
+
+pub struct WakingOneshot<T> {
+    waker: Arc<mio::Waker>,
+    sender: oneshot::Sender<T>,
+}
+
+impl<T> WakingOneshot<T> {
+    pub fn new(waker: Arc<mio::Waker>, sender: oneshot::Sender<T>) -> Self {
+        Self { waker, sender }
+    }
+
+    pub fn send(self, msg: T) -> Result<(), oneshot::SendError<T>> {
+        self.sender.send(msg)?;
+        self.waker.wake().unwrap();
+        Ok(())
+    }
+}
