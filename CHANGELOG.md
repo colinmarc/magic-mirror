@@ -1,3 +1,13 @@
+## [mmserver-v0.4.1] - 2024-08-08
+
+### Bugfixes
+
+- Time out if the compositor doesn't accept an attachment in a reasonable timeframe (c1d6c6ca82fe3ff5ffcbf204c7f90e149b82f0ae)
+- Explicitly close QUIC streams when a worker finishes (a4b0c18e4af7455dcde689b241e4fe2737e50f57)
+- Never use 0 as a stream_seq (8fc95e4ef0d4a01d9c1809860a633c7417913115)
+- Raise the attachment timeout to account for slow clients (6b60df3e7625da72157b5a6ae8479e9e05469c71)
+- Set a default for video_profile (b4f2e01548ad0d374b4fc816f6a2a5c7c11f1751)
+
 ## [mmserver-v0.4.0] - 2024-08-02
 
 ### New Features
