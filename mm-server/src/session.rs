@@ -24,7 +24,7 @@ use crate::{
 use crate::{vulkan::VkContext, waking_sender::WakingSender};
 
 /// How long to wait for the compositor to accept a new attachment.
-const ATTACH_TIMEOUT: time::Duration = time::Duration::from_secs(1);
+const ATTACH_TIMEOUT: time::Duration = time::Duration::from_secs(10);
 
 pub struct Session {
     pub id: u64,
