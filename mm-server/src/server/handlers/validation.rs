@@ -101,8 +101,9 @@ pub fn validate_ui_scale(ui_scale: Option<protocol::PixelScale>) -> Result<Pixel
 
 fn validate_profile(profile: i32) -> Result<VideoProfile> {
     let p: protocol::VideoProfile = match profile.try_into() {
-        Ok(p) => p,
         Err(_) => return Err(ValidationError::Invalid("invalid video profile".into())),
+        Ok(protocol::VideoProfile::Unknown) => return Ok(VideoProfile::Hd),
+        Ok(p) => p,
     };
 
     match p.try_into() {
