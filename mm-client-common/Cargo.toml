@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["lib", "cdylib"]
+crate-type = ["lib", "staticlib"]
 name = "mm_client_common"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "bin/uniffi-bindgen.rs"
 
 [dependencies]
 mm-protocol = { path = "../mm-protocol", features = ["uniffi"] }
@@ -21,7 +25,7 @@ ring = "0.17"
 thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["time", "env-filter"] }
-uniffi = "0.28"
+uniffi = { version = "0.28", features = ["cli"] }
 
 [build-dependencies]
 uniffi = { version = "0.27", features = ["build"] }
