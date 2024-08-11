@@ -63,6 +63,9 @@ struct Cli {
     host: String,
     /// The name of the app, or the ID of an existing session.
     app: Option<String>,
+    /// Print a list of launchable applications and exit.
+    #[arg(long)]
+    list_apps: bool,
     /// Print a list of matching sessions and exit.
     #[arg(short = 'L', long)]
     list: bool,
@@ -736,21 +739,31 @@ pub fn main() -> anyhow::Result<()> {
     init_logging()?;
 
     let args = Cli::parse();
-    let cmds: u8 = vec![args.list, args.kill, args.launch, args.resume]
-        .into_iter()
-        .map(|b| b as u8)
-        .sum();
+    let cmds: u8 = vec![
+        args.list_apps,
+        args.list,
+        args.kill,
+        args.launch,
+        args.resume,
+    ]
+    .into_iter()
+    .map(|b| b as u8)
+    .sum();
     if cmds > 1 {
         bail!("only one of --launch, --resume, --list, or --kill may be specified");
-    } else if !args.list && args.app.is_none() {
+    } else if !(args.list || args.list_apps) && args.app.is_none() {
         bail!("an app name or session ID must be specified");
+    } else if args.list_apps && args.app.is_some() {
+        bail!("an app name or session ID may not be specified alongside --list-apps")
     }
 
     debug!("establishing connection to {:}", &args.host);
     let client = client::Client::new(&args.host, "mmclient").block_on()?;
 
-    if args.list {
-        return cmd_list(&args, &client);
+    if args.list_apps {
+        return cmd_list_apps(&client);
+    } else if args.list {
+        return cmd_list_sessions(&args, &client);
     } else if args.kill {
         return cmd_kill(&args, &client);
     }
@@ -1028,7 +1041,32 @@ fn filter_sessions(sessions: Vec<client::Session>, app: &str) -> Vec<client::Ses
         .collect()
 }
 
-fn cmd_list(args: &Cli, client: &client::Client) -> anyhow::Result<()> {
+fn cmd_list_apps(client: &client::Client) -> anyhow::Result<()> {
+    let apps = client.list_applications(DEFAULT_TIMEOUT).block_on()?;
+    if apps.is_empty() {
+        println!("No launchable applications found.");
+        return Ok(());
+    }
+
+    let mut tw = tabwriter::TabWriter::new(std::io::stdout()).padding(4);
+
+    use std::io::Write as _;
+    writeln!(&mut tw, "Name\tDescription")?;
+    writeln!(&mut tw, "----\t-----------")?;
+
+    for app in apps {
+        if app.description.len() <= 80 {
+            writeln!(&mut tw, "{}\t{}", app.name, app.description)?;
+        } else {
+            writeln!(&mut tw, "{}\t{}...", app.name, &app.description[..77])?;
+        }
+    }
+
+    tw.flush()?;
+    Ok(())
+}
+
+fn cmd_list_sessions(args: &Cli, client: &client::Client) -> anyhow::Result<()> {
     let sessions = client.list_sessions(DEFAULT_TIMEOUT).block_on()?;
     let sessions = if let Some(target) = args.app.as_ref() {
         filter_sessions(sessions, target)
