@@ -252,6 +252,26 @@ impl Client {
         })
     }
 
+    pub async fn list_applications(
+        &self,
+        timeout: time::Duration,
+    ) -> Result<Vec<Application>, ClientError> {
+        let res = match self
+            .roundtrip(protocol::ListApplications {}, timeout)
+            .await?
+        {
+            protocol::MessageType::ApplicationList(res) => res,
+            protocol::MessageType::Error(e) => return Err(ClientError::ServerError(e)),
+            msg => return Err(ClientError::UnexpectedMessage(msg)),
+        };
+
+        Ok(res
+            .list
+            .into_iter()
+            .map(Application::try_from)
+            .collect::<Result<Vec<_>, validation::ValidationError>>()?)
+    }
+
     pub async fn list_sessions(
         &self,
         timeout: time::Duration,
