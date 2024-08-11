@@ -99,6 +99,7 @@ mod parsed {
     #[derive(Debug, Clone, PartialEq, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(super) struct AppConfig {
+        pub(super) description: Option<String>,
         pub(super) command: Vec<String>,
         pub(super) environment: Option<HashMap<String, String>>,
         pub(super) xwayland: Option<bool>,
@@ -125,6 +126,7 @@ pub struct ServerConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppConfig {
+    pub description: Option<String>,
     pub command: Vec<OsString>,
     pub env: HashMap<OsString, OsString>,
     pub xwayland: bool,
@@ -209,6 +211,7 @@ impl Config {
             }
 
             let res = AppConfig {
+                description: app.description,
                 command: app.command.into_iter().map(OsString::from).collect(),
                 env: app
                     .environment
@@ -347,6 +350,7 @@ mod test {
 
     lazy_static! {
         static ref EXAMPLE_APP: AppConfig = AppConfig {
+            description: None,
             command: vec!["echo".to_owned().into(), "hello".to_owned().into()],
             env: HashMap::new(),
             xwayland: true,
