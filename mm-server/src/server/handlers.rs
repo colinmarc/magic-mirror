@@ -53,6 +53,7 @@ pub fn dispatch(
     let _guard = span.enter();
 
     match initial {
+        protocol::MessageType::ListApplications(_) => list_applications(state, &outgoing),
         protocol::MessageType::LaunchSession(msg) => launch_session(state, msg, &outgoing),
         protocol::MessageType::ListSessions(_) => list_sessions(state, &outgoing),
         protocol::MessageType::UpdateSession(msg) => update_session(state, msg, &outgoing),
@@ -78,6 +79,23 @@ pub fn dispatch(
     let _ = done.send(());
 
     debug!(dur = ?instant.elapsed(),"worker finished");
+}
+
+fn list_applications(state: SharedState, response: &WakingSender<protocol::MessageType>) {
+    let apps = state
+        .lock()
+        .unwrap()
+        .cfg
+        .apps
+        .iter()
+        .map(|(name, app)| protocol::application_list::Application {
+            name: name.clone(),
+            description: app.description.clone().unwrap_or_default(),
+        })
+        .collect();
+
+    let msg = protocol::ApplicationList { list: apps };
+    response.send(msg.into()).ok();
 }
 
 fn launch_session(

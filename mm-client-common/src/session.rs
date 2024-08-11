@@ -9,6 +9,25 @@ use mm_protocol as protocol;
 use crate::display_params;
 use crate::validation::*;
 
+/// A launchable application on the server.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Application {
+    pub name: String,
+    pub description: String,
+}
+
+impl TryFrom<protocol::application_list::Application> for Application {
+    type Error = ValidationError;
+
+    fn try_from(value: protocol::application_list::Application) -> Result<Self, Self::Error> {
+        Ok(Application {
+            name: value.name,
+            description: value.description,
+        })
+    }
+}
+
+/// A running session on the server.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Session {
     pub id: u64,
