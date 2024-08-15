@@ -497,7 +497,6 @@ impl Compositor {
 
     fn idle(&mut self) -> anyhow::Result<()> {
         // Accept any waiting clients, but only if we're not mid-resize.
-        // TODO: vkcube never acks if we put it in suspended mode. Maybe others?
         if !self.state.pending_attachments.is_empty() && self.state.surfaces_ready() {
             let pending_attachments = self.state.pending_attachments.drain(..).collect::<Vec<_>>();
             for attach_msg in pending_attachments {
@@ -842,10 +841,10 @@ impl Compositor {
                             self.state.default_seat.keyboard_input(
                                 &self.state.serial,
                                 evdev_scancode,
-                                KeyState::Pressed,
+                                KeyState::Released,
                             );
 
-                            state = KeyState::Released
+                            state = KeyState::Pressed
                         }
 
                         self.state.default_seat.keyboard_input(
