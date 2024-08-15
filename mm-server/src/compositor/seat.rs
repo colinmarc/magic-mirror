@@ -314,7 +314,7 @@ impl Seat {
             }
 
             if vector.y != 0.0 {
-                wl_pointer.axis(now, wl_pointer::Axis::HorizontalScroll, vector.x);
+                wl_pointer.axis(now, wl_pointer::Axis::VerticalScroll, vector.y);
                 p.pending_frame = true;
             }
         }
