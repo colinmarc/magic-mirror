@@ -517,7 +517,7 @@ impl App {
                             || chunk.stream_seq > self.video_stream_seq.unwrap())
                     {
                         let protocol::Size { width, height } =
-                            attachment.streaming_resolution.clone().unwrap();
+                            attachment.streaming_resolution.unwrap();
                         self.video_stream_seq = Some(chunk.stream_seq);
                         self.video_stream.reset(
                             attachment.attachment_id,
@@ -683,7 +683,7 @@ impl App {
                                 attachment_type: protocol::AttachmentType::Operator.into(),
                                 client_name: "mmclient".to_string(),
                                 session_id: self.session_id,
-                                streaming_resolution: self.remote_display_params.resolution.clone(),
+                                streaming_resolution: self.remote_display_params.resolution,
                                 video_codec: self.configured_codec.into(),
                                 quality_preset: self.configured_preset,
                                 video_profile: self.configured_profile.into(),
@@ -777,7 +777,7 @@ impl App {
                 let current_streaming_res = self
                     .attachment
                     .as_ref()
-                    .and_then(|a| a.streaming_resolution.clone());
+                    .and_then(|a| a.streaming_resolution);
                 let remote_scale = self.remote_display_params.ui_scale.as_ref().unwrap();
 
                 let desired_ui_scale = determine_ui_scale(
@@ -980,7 +980,7 @@ fn main() -> Result<()> {
     let session_id = if args.launch || matched.is_empty() {
         info!("launching a new session for for app {:?}", target);
 
-        let new_sess = match launch_session(&mut conn, &target, desired_params.clone()) {
+        let new_sess = match launch_session(&mut conn, &target, desired_params) {
             Ok(v) => v,
             Err(e) => {
                 conn.close()?;
@@ -991,14 +991,14 @@ fn main() -> Result<()> {
         new_sess.id
     } else {
         let session = matched.pop().unwrap();
-        if session.display_params != Some(desired_params.clone()) {
+        if session.display_params != Some(desired_params) {
             debug!("updating session params to {:?}", desired_params);
 
             match update_session(
                 &mut conn,
                 protocol::UpdateSession {
                     session_id: session.session_id,
-                    display_params: Some(desired_params.clone()),
+                    display_params: Some(desired_params),
                 },
             ) {
                 Ok(_) => (),
@@ -1020,7 +1020,7 @@ fn main() -> Result<()> {
         .ok_or(anyhow!("new session not found in session list"))?;
 
     let remote_display_params = session.display_params.unwrap();
-    let streaming_resolution = remote_display_params.resolution.clone().unwrap();
+    let streaming_resolution = remote_display_params.resolution.unwrap();
 
     let vk = Arc::new(vulkan::VkContext::new(
         window.clone(),
@@ -1232,10 +1232,7 @@ fn dump_session_list(sessions: &[protocol::session_list::Session]) -> anyhow::Re
     writeln!(&mut tw, "----------\t----------------\t-------")?;
 
     for session in sessions {
-        let session_start = session
-            .session_start
-            .clone()
-            .and_then(|s| s.try_into().ok());
+        let session_start = session.session_start.and_then(|s| s.try_into().ok());
         let runtime = match session_start {
             Some(start) if start < now => {
                 // Round to seconds.

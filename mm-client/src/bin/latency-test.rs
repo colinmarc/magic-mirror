@@ -145,7 +145,7 @@ fn main() -> anyhow::Result<()> {
         protocol::LaunchSession {
             application_name: "latency-test".to_string(),
             display_params: Some(protocol::VirtualDisplayParameters {
-                resolution: Some(resolution.clone()),
+                resolution: Some(resolution),
                 framerate_hz: framerate,
                 ..Default::default()
             }),
