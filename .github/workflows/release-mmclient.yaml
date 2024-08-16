@@ -21,6 +21,10 @@ jobs:
             libfontconfig-dev libfreetype-dev
 
       - uses: actions/checkout@v4
+      - with:
+          fetch-depth: 0
+          fetch-tags: true
+
       - uses: ./.github/actions/install-slang
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -104,7 +108,7 @@ jobs:
           git cliff -c .github/workflows/cliff.toml \
             --include-path "mm-client/**/*" \
             --tag-pattern "client" \
-            --tag "$GITHUB_REF_NAME" --latest | tail -n +2 | tee -a release-notes.txt
+            --latest | tail -n +2 | tee -a release-notes.txt
 
       - name: download artifacts
         uses: actions/download-artifact@v4
