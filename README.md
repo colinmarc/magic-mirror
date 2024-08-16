@@ -1,6 +1,6 @@
 
 <p align="center" style="font-size:0.9em">
-<i>server download:</i> <a href="https://github.com/colinmarc/magic-mirror/releases/download/mmserver-v0.4.0/mmserver-v0.4.0-linux-amd64.tar.gz">linux-amd64</a>
+<i>server download:</i> <a href="https://github.com/colinmarc/magic-mirror/releases/download/mmserver-v0.4.1/mmserver-v0.4.1-linux-amd64.tar.gz">linux-amd64</a>
 <i>client download:</i> <a href="https://github.com/colinmarc/magic-mirror/releases/download/mmclient-v0.3.0/mmclient-v0.3.0-linux-amd64.tar.gz">linux-amd64</a> • <a href="https://github.com/colinmarc/magic-mirror/releases/download/mmclient-v0.3.0/mmclient-v0.3.0-darwin-arm64.tar.gz">darwin-arm64</a>
 </p>
 
