@@ -72,6 +72,8 @@ pub(crate) struct Conn {
     conn: quiche::Connection,
     partial_reads: HashMap<u64, bytes::BytesMut>,
     open_streams: HashSet<u64>,
+
+    shutdown: oneshot::Receiver<()>,
     shutting_down: bool,
 
     incoming: flume::Sender<ConnEvent>,
@@ -86,6 +88,7 @@ impl Conn {
         incoming: flume::Sender<ConnEvent>,
         outgoing: flume::Receiver<OutgoingMessage>,
         ready: oneshot::Sender<Result<(), ConnError>>,
+        shutdown: oneshot::Receiver<()>,
     ) -> Result<Self, ConnError> {
         let (hostname, server_addr) = resolve_server(addr)?;
         let bind_addr = match server_addr {
@@ -142,6 +145,8 @@ impl Conn {
             conn,
             partial_reads: HashMap::new(),
             open_streams: HashSet::new(),
+
+            shutdown,
             shutting_down: false,
 
             incoming,
@@ -160,10 +165,13 @@ impl Conn {
         let start = time::Instant::now();
 
         loop {
-            self.poll.poll(
-                &mut events,
-                self.conn.timeout().or(Some(time::Duration::from_secs(1))),
-            )?;
+            const ONE_SECOND: time::Duration = time::Duration::from_secs(1);
+            let timeout = self
+                .conn
+                .timeout()
+                .map_or(ONE_SECOND, |d| d.min(ONE_SECOND));
+
+            self.poll.poll(&mut events, Some(timeout))?;
 
             let now = time::Instant::now();
             if self.conn.timeout_instant().is_some_and(|t| now >= t) {
@@ -191,6 +199,10 @@ impl Conn {
                 } else if start.elapsed() > CONNECT_TIMEOUT {
                     let _ = self.ready.take().unwrap().send(Err(ConnError::Timeout));
                 }
+            }
+
+            if let Ok(Some(())) = self.shutdown.try_recv() {
+                self.start_shutdown()?;
             }
 
             // if (now - self.stats_timer) > time::Duration::from_millis(200) {
@@ -245,8 +257,7 @@ impl Conn {
                             match self.incoming.send(ConnEvent::Datagram(msg)) {
                                 Ok(()) => {}
                                 Err(_) => {
-                                    self.conn.close(true, 0x00, b"")?;
-                                    self.shutting_down = true;
+                                    self.start_shutdown()?;
                                     break;
                                 }
                             }
@@ -279,9 +290,7 @@ impl Conn {
                             break;
                         }
                         Err(flume::TryRecvError::Disconnected) => {
-                            trace!("shutting down");
-                            self.conn.close(true, 0x00, b"")?;
-                            self.shutting_down = true;
+                            self.start_shutdown()?;
                             break;
                         }
                     }
@@ -303,8 +312,7 @@ impl Conn {
                     match self.incoming.send(ConnEvent::StreamClosed(sid)) {
                         Ok(()) => {}
                         Err(_) => {
-                            self.conn.close(true, 0x00, b"")?;
-                            self.shutting_down = true;
+                            self.start_shutdown()?;
                             break;
                         }
                     }
@@ -385,8 +393,7 @@ impl Conn {
             match self.incoming.send(ConnEvent::StreamMessage(sid, msg)) {
                 Ok(()) => {}
                 Err(_) => {
-                    self.conn.close(true, 0x00, b"")?;
-                    self.shutting_down = true;
+                    self.start_shutdown()?;
                     break;
                 }
             }
@@ -407,6 +414,15 @@ impl Conn {
         trace!(sid, %msg, fin, "sending message");
         self.conn.stream_send(sid, &self.scratch[..len], fin)?;
 
+        Ok(())
+    }
+
+    fn start_shutdown(&mut self) -> Result<(), ConnError> {
+        match self.conn.close(true, 0x00, b"") {
+            Ok(()) | Err(quiche::Error::Done) => (),
+            Err(e) => return Err(e.into()),
+        }
+        self.shutting_down = true;
         Ok(())
     }
 }

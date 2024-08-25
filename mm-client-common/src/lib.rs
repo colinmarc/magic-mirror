@@ -62,13 +62,18 @@ struct ConnHandle {
     outgoing: flume::Sender<conn::OutgoingMessage>,
     roundtrips: flume::Sender<(u64, Roundtrip)>,
     attachments: flume::Sender<(u64, AttachmentState)>,
+    shutdown: oneshot::Sender<()>,
 }
 
 impl ConnHandle {
     /// Signals the connection thread that it should close.
     fn close(self) -> Result<(), Option<conn::ConnError>> {
-        drop(self.outgoing);
+        let _ = self.shutdown.send(());
         self.waker.wake().map_err(conn::ConnError::from)?;
+
+        if !self.thread_handle.is_finished() {
+            return Ok(());
+        }
 
         match self.thread_handle.join() {
             Ok(Ok(_)) => Ok(()),
@@ -406,12 +411,13 @@ async fn spawn_conn(
     let (incoming_tx, incoming_rx) = flume::unbounded();
     let (outgoing_tx, outgoing_rx) = flume::unbounded();
     let (ready_tx, ready_rx) = oneshot::channel();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     // Rendezvous channels for synchronized state.
     let (roundtrips_tx, roundtrips_rx) = flume::bounded(0);
     let (attachments_tx, attachments_rx) = flume::bounded(0);
 
-    let mut conn = conn::Conn::new(addr, incoming_tx, outgoing_rx, ready_tx)?;
+    let mut conn = conn::Conn::new(addr, incoming_tx, outgoing_rx, ready_tx, shutdown_rx)?;
     let waker = conn.waker();
 
     // Spawn a polling loop for the quic connection.
@@ -451,6 +457,7 @@ async fn spawn_conn(
         thread_handle,
         waker,
         outgoing: outgoing_tx,
+        shutdown: shutdown_tx,
         roundtrips: roundtrips_tx,
         attachments: attachments_tx,
     })

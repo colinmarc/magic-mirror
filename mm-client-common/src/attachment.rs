@@ -486,6 +486,9 @@ impl AttachmentState {
                 // Mute the attachment_ended callback once.
                 self.reattach_required = msg.reattach_required;
             }
+            protocol::MessageType::SessionEnded(_) => {
+                // We just check for the fin on the attachment stream.
+            }
             protocol::MessageType::Error(error) => {
                 self.delegate
                     .server_error(error.err_code(), error.error_text);
