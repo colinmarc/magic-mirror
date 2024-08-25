@@ -15,6 +15,7 @@ use tracing::{debug, error};
 
 mod attachment;
 mod conn;
+mod logging;
 mod packet;
 mod session;
 mod validation;
@@ -25,6 +26,7 @@ pub mod input;
 pub mod pixel_scale;
 
 pub use attachment::*;
+pub use logging::*;
 pub use packet::Packet;
 pub use session::*;
 
