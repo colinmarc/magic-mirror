@@ -37,6 +37,8 @@ jobs:
             --include-path "$comp_dir/**/*" )
           echo "BUMPED_VERSION=$version" | tee -a "$GITHUB_ENV"
           echo "BUMPED_VERSION_SHORT=$( echo $version | sed -E 's/^[a-z]+-v(.*)/\1/' )" | tee -a "$GITHUB_ENV"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: replace version in files
         if: ${{ env.BUMPED_VERSION != '' }}
