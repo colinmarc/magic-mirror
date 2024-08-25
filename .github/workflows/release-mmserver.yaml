@@ -19,7 +19,7 @@ jobs:
         run: sudo apt install nasm cmake protobuf-compiler libxkbcommon-dev
 
       - uses: actions/checkout@v4
-      - with:
+        with:
           fetch-depth: 0
           fetch-tags: true
 
