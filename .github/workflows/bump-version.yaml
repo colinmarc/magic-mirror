@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - uses: swatinem/rust-cache@v2
       - run: cargo install git-cliff@^2.2 cargo-edit@^0.12
