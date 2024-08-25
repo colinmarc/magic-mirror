@@ -18,13 +18,13 @@ bytes = "1"
 ip_rfc = "0.1"
 flume = "0.11"
 futures = { version = "0.3", features = ["executor"] }
+log = "0.4"
 mio = { version = "1", features = ["net", "os-ext", "os-poll"] }
 prost-types = "0.13"
 quiche = { version = "0.22", features = ["qlog"] }
 ring = "0.17"
 thiserror = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["time", "env-filter"] }
+tracing = { version = "0.1", features = ["log"] }
 uniffi = { version = "0.28", features = ["cli"] }
 
 [build-dependencies]
