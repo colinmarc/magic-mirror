@@ -690,7 +690,7 @@ message AudioChunk {
 
 // ### 060 - Keyboard Input
 //
-// This message, which must be sent by the client on the same stream as the
+// This message, which must originate from the client on the same stream as the
 // original `030 - Attach` message, represents keybaord input from the user.
 message KeyboardInput {
   enum KeyState {
@@ -1003,7 +1003,7 @@ message UpdateCursor {
 
 // ### 067 - Lock Pointer
 //
-// This message, which must be sent by the server on the same stream as the
+// This message, which must originate from the server on the same stream as the
 // original `030 - Attach` message, indicates that the pointer should be locked
 // to the given location.
 //
@@ -1016,7 +1016,7 @@ message LockPointer {
 
 // ### 068 - Release Pointer
 //
-// This message, which must be sent by the server on the same stream as the
+// This message, which must originate from the server on the same stream as the
 // original `030 - Attach` message, indicates the pointer should be no longer
 // be locked.
 message ReleasePointer {
@@ -1024,7 +1024,7 @@ message ReleasePointer {
 
 // ### 069 - Relative Pointer Motion
 //
-// This message, which must be sent by the client on the same stream as the
+// This message, which must originate from the client on the same stream as the
 // original `030 - Attach` message, indicates that the Pointer has moved.
 //
 // The vector should be in the space defined by the `resolution` parameter of
