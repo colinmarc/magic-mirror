@@ -4,19 +4,18 @@ use anyhow::anyhow;
 use gilrs::{Event, EventType, Gamepad};
 
 use mm_protocol::{
-    self as protocol,
-    gamepad_input::{Button, ButtonState},
-    gamepad_motion::Axis,
+    gamepad_available::GamepadLayout,
+    gamepad_input::{GamepadButton, GamepadButtonState},
+    gamepad_motion::GamepadAxis,
 };
-use protocol::gamepad_available::GamepadLayout;
 use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
 pub enum GamepadEvent {
     Available(u64, GamepadLayout),
     Unavailable(u64),
-    Input(u64, Button, ButtonState),
-    Motion(u64, Axis, f64),
+    Input(u64, GamepadButton, GamepadButtonState),
+    Motion(u64, GamepadAxis, f64),
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -48,7 +47,7 @@ impl RemoteGamepad {
         let set_pressed = |state: &mut bool, button| {
             if !*state {
                 proxy.send_event(
-                    GamepadEvent::Input(self.id, button, ButtonState::Pressed).into(),
+                    GamepadEvent::Input(self.id, button, GamepadButtonState::Pressed).into(),
                 )?;
             }
 
@@ -59,7 +58,7 @@ impl RemoteGamepad {
         let set_released = |state: &mut bool, button| {
             if *state {
                 proxy.send_event(
-                    GamepadEvent::Input(self.id, button, ButtonState::Released).into(),
+                    GamepadEvent::Input(self.id, button, GamepadButtonState::Released).into(),
                 )?;
             }
 
@@ -69,28 +68,28 @@ impl RemoteGamepad {
 
         match axis {
             gilrs::Axis::DPadX if value == 0.0 => {
-                set_released(&mut self.dpad.left, Button::DpadLeft)?;
-                set_released(&mut self.dpad.right, Button::DpadRight)?;
+                set_released(&mut self.dpad.left, GamepadButton::DpadLeft)?;
+                set_released(&mut self.dpad.right, GamepadButton::DpadRight)?;
             }
             gilrs::Axis::DPadX if value < 0.0 => {
-                set_pressed(&mut self.dpad.left, Button::DpadLeft)?;
-                set_released(&mut self.dpad.right, Button::DpadRight)?;
+                set_pressed(&mut self.dpad.left, GamepadButton::DpadLeft)?;
+                set_released(&mut self.dpad.right, GamepadButton::DpadRight)?;
             }
             gilrs::Axis::DPadX if value > 0.0 => {
-                set_released(&mut self.dpad.left, Button::DpadLeft)?;
-                set_pressed(&mut self.dpad.right, Button::DpadRight)?;
+                set_released(&mut self.dpad.left, GamepadButton::DpadLeft)?;
+                set_pressed(&mut self.dpad.right, GamepadButton::DpadRight)?;
             }
             gilrs::Axis::DPadY if value == 0.0 => {
-                set_released(&mut self.dpad.up, Button::DpadUp)?;
-                set_released(&mut self.dpad.down, Button::DpadDown)?;
+                set_released(&mut self.dpad.up, GamepadButton::DpadUp)?;
+                set_released(&mut self.dpad.down, GamepadButton::DpadDown)?;
             }
             gilrs::Axis::DPadY if value < 0.0 => {
-                set_pressed(&mut self.dpad.up, Button::DpadUp)?;
-                set_released(&mut self.dpad.down, Button::DpadDown)?;
+                set_pressed(&mut self.dpad.up, GamepadButton::DpadUp)?;
+                set_released(&mut self.dpad.down, GamepadButton::DpadDown)?;
             }
             gilrs::Axis::DPadY if value > 0.0 => {
-                set_released(&mut self.dpad.up, Button::DpadUp)?;
-                set_pressed(&mut self.dpad.down, Button::DpadDown)?;
+                set_released(&mut self.dpad.up, GamepadButton::DpadUp)?;
+                set_pressed(&mut self.dpad.down, GamepadButton::DpadDown)?;
             }
             _ => unreachable!(),
         };
@@ -184,8 +183,12 @@ where
     T: From<GamepadEvent> + Send,
 {
     let gev = match ev {
-        EventType::ButtonPressed(button, _) => input_event(pad.id, button, ButtonState::Pressed),
-        EventType::ButtonReleased(button, _) => input_event(pad.id, button, ButtonState::Released),
+        EventType::ButtonPressed(button, _) => {
+            input_event(pad.id, button, GamepadButtonState::Pressed)
+        }
+        EventType::ButtonReleased(button, _) => {
+            input_event(pad.id, button, GamepadButtonState::Released)
+        }
         EventType::AxisChanged(axis, value, _) => {
             // Some gamepads treat the dpad as an axis. The protocol
             // treats it as a bunch of buttons.
@@ -206,12 +209,12 @@ where
             match button {
                 gilrs::Button::LeftTrigger2 => Some(GamepadEvent::Motion(
                     pad.id,
-                    Axis::LeftTrigger,
+                    GamepadAxis::LeftTrigger,
                     value.max(0.0) as _,
                 )),
                 gilrs::Button::RightTrigger2 => Some(GamepadEvent::Motion(
                     pad.id,
-                    Axis::LeftTrigger,
+                    GamepadAxis::LeftTrigger,
                     value.max(0.0) as _,
                 )),
                 _ => None,
@@ -236,7 +239,7 @@ where
 fn input_event(
     protocol_id: u64,
     button: gilrs::Button,
-    state: ButtonState,
+    state: GamepadButtonState,
 ) -> Option<GamepadEvent> {
     gilrs_button_to_proto(button).map(|button| GamepadEvent::Input(protocol_id, button, state))
 }
@@ -255,41 +258,41 @@ fn layout(pad: Gamepad) -> GamepadLayout {
     }
 }
 
-fn girls_axis_to_proto(axis: gilrs::Axis) -> Option<Axis> {
+fn girls_axis_to_proto(axis: gilrs::Axis) -> Option<GamepadAxis> {
     let axis = match axis {
-        gilrs::Axis::LeftStickX => Axis::LeftX,
-        gilrs::Axis::LeftStickY => Axis::LeftY,
-        gilrs::Axis::RightStickX => Axis::RightX,
-        gilrs::Axis::RightStickY => Axis::RightY,
-        gilrs::Axis::LeftZ => Axis::RightTrigger,
-        gilrs::Axis::RightZ => Axis::RightTrigger,
+        gilrs::Axis::LeftStickX => GamepadAxis::LeftX,
+        gilrs::Axis::LeftStickY => GamepadAxis::LeftY,
+        gilrs::Axis::RightStickX => GamepadAxis::RightX,
+        gilrs::Axis::RightStickY => GamepadAxis::RightY,
+        gilrs::Axis::LeftZ => GamepadAxis::RightTrigger,
+        gilrs::Axis::RightZ => GamepadAxis::RightTrigger,
         _ => return None,
     };
 
     Some(axis)
 }
 
-fn gilrs_button_to_proto(button: gilrs::Button) -> Option<Button> {
+fn gilrs_button_to_proto(button: gilrs::Button) -> Option<GamepadButton> {
     let button = match button {
-        gilrs::Button::South => Button::South,
-        gilrs::Button::East => Button::East,
-        gilrs::Button::North => Button::North,
-        gilrs::Button::West => Button::West,
-        gilrs::Button::C => Button::C,
-        gilrs::Button::Z => Button::Z,
-        gilrs::Button::LeftTrigger => Button::ShoulderLeft,
-        gilrs::Button::LeftTrigger2 => Button::TriggerLeft,
-        gilrs::Button::RightTrigger => Button::ShoulderRight,
-        gilrs::Button::RightTrigger2 => Button::TriggerRight,
-        gilrs::Button::Select => Button::Select,
-        gilrs::Button::Start => Button::Start,
-        gilrs::Button::Mode => Button::Logo,
-        gilrs::Button::LeftThumb => Button::JoystickLeft,
-        gilrs::Button::RightThumb => Button::JoystickRight,
-        gilrs::Button::DPadUp => Button::DpadUp,
-        gilrs::Button::DPadDown => Button::DpadDown,
-        gilrs::Button::DPadLeft => Button::DpadLeft,
-        gilrs::Button::DPadRight => Button::DpadRight,
+        gilrs::Button::South => GamepadButton::South,
+        gilrs::Button::East => GamepadButton::East,
+        gilrs::Button::North => GamepadButton::North,
+        gilrs::Button::West => GamepadButton::West,
+        gilrs::Button::C => GamepadButton::C,
+        gilrs::Button::Z => GamepadButton::Z,
+        gilrs::Button::LeftTrigger => GamepadButton::ShoulderLeft,
+        gilrs::Button::LeftTrigger2 => GamepadButton::TriggerLeft,
+        gilrs::Button::RightTrigger => GamepadButton::ShoulderRight,
+        gilrs::Button::RightTrigger2 => GamepadButton::TriggerRight,
+        gilrs::Button::Select => GamepadButton::Select,
+        gilrs::Button::Start => GamepadButton::Start,
+        gilrs::Button::Mode => GamepadButton::Logo,
+        gilrs::Button::LeftThumb => GamepadButton::JoystickLeft,
+        gilrs::Button::RightThumb => GamepadButton::JoystickRight,
+        gilrs::Button::DPadUp => GamepadButton::DpadUp,
+        gilrs::Button::DPadDown => GamepadButton::DpadDown,
+        gilrs::Button::DPadLeft => GamepadButton::DpadLeft,
+        gilrs::Button::DPadRight => GamepadButton::DpadRight,
         _ => return None,
     };
 
