@@ -66,8 +66,8 @@ impl wayland_server::Dispatch<wl_shm::WlShm, ()> for State {
                 state.shm_pools.insert_with_key(|k| {
                     let wl_shm_pool = data_init.init(id, k);
                     ShmPool {
-                        wl_shm: wl_shm.clone(),
-                        wl_shm_pool,
+                        _wl_shm: wl_shm.clone(),
+                        _wl_shm_pool: wl_shm_pool,
                         // The pool shouldn't be unmapped until all buffers referencing it have been
                         // destroyed. We represent this constraint with an Arc.
                         pool: Arc::new(RwLock::new(pool)),

@@ -17,8 +17,8 @@ use wayland_server::protocol::{wl_shm, wl_shm_pool};
 slotmap::new_key_type! { pub struct ShmPoolKey; }
 
 pub struct ShmPool {
-    pub wl_shm: wl_shm::WlShm,
-    pub wl_shm_pool: wl_shm_pool::WlShmPool,
+    pub _wl_shm: wl_shm::WlShm,
+    pub _wl_shm_pool: wl_shm_pool::WlShmPool,
     pub pool: Arc<RwLock<Pool>>,
 }
 

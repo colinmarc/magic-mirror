@@ -12,8 +12,6 @@ use crate::{
     vulkan::*,
 };
 
-use super::VkPlaneView;
-
 // Also defined in convert.slang.
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -227,7 +225,7 @@ impl ConvertPipeline {
     pub fn ds_for_conversion(
         &self,
         blend_image: &VkImage,
-        planes: &[VkPlaneView],
+        planes: &[vk::ImageView],
     ) -> anyhow::Result<vk::DescriptorSet> {
         let set_layouts = [self.descriptor_set_layout];
         let allocate_info = vk::DescriptorSetAllocateInfo::default()
@@ -254,7 +252,7 @@ impl ConvertPipeline {
 
         let y_image_infos = [vk::DescriptorImageInfo::default()
             .image_layout(vk::ImageLayout::GENERAL)
-            .image_view(planes[0].view)];
+            .image_view(planes[0])];
         let y_write = vk::WriteDescriptorSet::default()
             .dst_set(ds)
             .dst_binding(1)
@@ -265,7 +263,7 @@ impl ConvertPipeline {
         if self.semiplanar {
             let uv_image_infos = [vk::DescriptorImageInfo::default()
                 .image_layout(vk::ImageLayout::GENERAL)
-                .image_view(planes[1].view)];
+                .image_view(planes[1])];
             let uv_write = vk::WriteDescriptorSet::default()
                 .dst_set(ds)
                 .dst_binding(2)
@@ -280,7 +278,7 @@ impl ConvertPipeline {
         } else {
             let u_image_infos = [vk::DescriptorImageInfo::default()
                 .image_layout(vk::ImageLayout::GENERAL)
-                .image_view(planes[1].view)];
+                .image_view(planes[1])];
             let u_write = vk::WriteDescriptorSet::default()
                 .dst_set(ds)
                 .dst_binding(2)
@@ -290,7 +288,7 @@ impl ConvertPipeline {
 
             let v_image_infos = [vk::DescriptorImageInfo::default()
                 .image_layout(vk::ImageLayout::GENERAL)
-                .image_view(planes[2].view)];
+                .image_view(planes[2])];
             let v_write = vk::WriteDescriptorSet::default()
                 .dst_set(ds)
                 .dst_binding(3)

@@ -833,7 +833,7 @@ fn writer_thread(
                     seq,
                     ts: EPOCH.elapsed().as_nanos() as u64,
                     frame: header,
-                    hierarchical_layer: 0,
+                    _hierarchical_layer: 0,
                 });
 
                 seq += 1;
@@ -887,7 +887,7 @@ fn writer_thread(
             seq,
             ts: capture_ts,
             frame: Bytes::copy_from_slice(packet),
-            hierarchical_layer: frame.hierarchical_layer,
+            _hierarchical_layer: frame.hierarchical_layer,
         });
         seq += 1;
 

@@ -31,13 +31,6 @@ use super::{
 
 use vulkan_encode::VulkanEncoder;
 
-pub struct VkPlaneView {
-    pub format: vk::Format,
-    pub view: vk::ImageView,
-    pub width: u32,
-    pub height: u32,
-}
-
 pub enum Encoder {
     Cpu(CpuEncoder),
     Vulkan(VulkanEncoder),
@@ -114,7 +107,7 @@ pub struct SwapFrame {
     blend_image: VkImage,
     /// A YUV image we copy to before passing on to the encoder.
     encode_image: VkImage,
-    plane_views: Vec<VkPlaneView>,
+    plane_views: Vec<vk::ImageView>,
 
     staging_cb: vk::CommandBuffer,
     render_cb: vk::CommandBuffer,
@@ -607,7 +600,7 @@ impl Drop for EncodePipeline {
                 );
 
                 for view in &frame.plane_views {
-                    device.destroy_image_view(view.view, None);
+                    device.destroy_image_view(*view, None);
                 }
 
                 device.destroy_query_pool(frame.render_ts_pool.pool, None);
@@ -682,19 +675,7 @@ fn new_swapframe(
             .push_next(&mut usage_info);
 
         let view = unsafe { vk.device.create_image_view(&create_info, None)? };
-
-        let (width, height) = if idx == 0 {
-            (encode_image.width, encode_image.height)
-        } else {
-            (encode_image.width / 2, encode_image.height / 2)
-        };
-
-        plane_views.push(VkPlaneView {
-            format,
-            view,
-            width,
-            height,
-        });
+        plane_views.push(view);
     }
 
     let convert_ds = convert_pipeline.ds_for_conversion(&blend_image, &plane_views)?;

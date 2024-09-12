@@ -27,7 +27,6 @@ pub struct GopFrame {
 pub struct HierarchicalP {
     pub layers: u32,
     pub gop_size: u32,
-    pub mini_gop_size: u32,
     frame_num: u64,
 }
 
@@ -42,7 +41,6 @@ impl HierarchicalP {
         Self {
             layers,
             gop_size,
-            mini_gop_size,
             frame_num: 0,
         }
     }

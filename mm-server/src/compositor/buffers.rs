@@ -78,7 +78,6 @@ pub enum BufferBacking {
     },
     Dmabuf {
         format: PlaneMetadata,
-        modifier: DrmModifier,
         fd: OwnedFd,
         image: VkImage,
 
@@ -333,7 +332,6 @@ pub fn import_dmabuf_buffer(
         wl_buffer,
         backing: BufferBacking::Dmabuf {
             format,
-            modifier,
             fd,
             image,
             interop_sema,

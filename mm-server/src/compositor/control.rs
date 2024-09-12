@@ -77,7 +77,7 @@ pub enum CompositorEvent {
         ts: u64,
         frame: bytes::Bytes,
         /// A lower value means a higher priority.
-        hierarchical_layer: u32,
+        _hierarchical_layer: u32,
     },
     AudioFrame {
         stream_seq: u64,

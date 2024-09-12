@@ -470,7 +470,7 @@ fn encode_thread(
                 seq,
                 ts: capture_ts,
                 frame: pkt,
-                hierarchical_layer: 0, // TODO
+                _hierarchical_layer: 0, // TODO
             });
             seq += 1;
         }
@@ -498,7 +498,7 @@ fn encode_thread(
             seq,
             ts: EPOCH.elapsed().as_millis() as u64,
             frame: pkt,
-            hierarchical_layer: 0, // TODO
+            _hierarchical_layer: 0, // TODO
         });
         seq += 1;
     }
