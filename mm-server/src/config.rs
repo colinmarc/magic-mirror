@@ -302,7 +302,7 @@ fn collect_includes(p: impl AsRef<Path>) -> anyhow::Result<Vec<(String, parsed::
                 let path = entry.path();
                 let ext = path.extension().and_then(OsStr::to_str);
                 if matches!(ext, Some("toml") | Some("json")) {
-                    res.push(include_file(path)?)
+                    res.push(include_file(&path).context(format!("reading {}", path.display()))?)
                 }
             }
             _ => continue,
