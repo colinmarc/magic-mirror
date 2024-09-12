@@ -52,6 +52,7 @@ lazy_static = "1.4.0"
 glam = "0.26.0"
 image = { version = "0.25.1", features = ["png"], default-features = false }
 ip_rfc = "0.1.0"
+gilrs = "0.10.9"
 
 [dependencies.winit]
 version = "0.29"

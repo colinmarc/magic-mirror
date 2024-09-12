@@ -33,6 +33,7 @@ use mm_client::conn::ConnEvent;
 use mm_client::conn::*;
 use mm_client::cursor::*;
 use mm_client::flash::Flash;
+use mm_client::gamepad::*;
 use mm_client::keys::*;
 use mm_client::overlay::Overlay;
 use mm_client::render::Renderer;
@@ -626,7 +627,7 @@ impl App {
 
                     // On most platforms, we have to lock the cursor before we
                     // warp it. On mac, it's the other way around.
-                    #[cfg(not(target_vendor = "macos"))]
+                    #[cfg(not(target_vendor = "apple"))]
                     self.window
                         .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
 
@@ -725,6 +726,30 @@ impl App {
                 if self.video_stream.prepare_frame()?.is_some() {
                     self.window.request_redraw();
                 }
+            }
+            AppEvent::GamepadEvent(gev) => {
+                let msg: protocol::MessageType = match gev {
+                    GamepadEvent::Available(id, layout) => protocol::GamepadAvailable {
+                        id,
+                        layout: layout.into(),
+                    }
+                    .into(),
+                    GamepadEvent::Unavailable(id) => protocol::GamepadUnavailable { id }.into(),
+                    GamepadEvent::Input(id, button, state) => protocol::GamepadInput {
+                        gamepad_id: id,
+                        button: button.into(),
+                        state: state.into(),
+                    }
+                    .into(),
+                    GamepadEvent::Motion(id, axis, value) => protocol::GamepadMotion {
+                        gamepad_id: id,
+                        axis: axis.into(),
+                        value,
+                    }
+                    .into(),
+                };
+
+                self.conn.send(msg, Some(self.attachment_sid), false)?;
             }
         }
 
@@ -1049,6 +1074,7 @@ fn main() -> Result<()> {
 
     let audio_stream = audio::AudioStream::new()?;
     let video_stream = video::VideoStream::new(vk.clone(), proxy.clone());
+    spawn_gamepad_monitor(proxy.clone())?;
 
     let now = time::Instant::now();
 
@@ -1121,6 +1147,7 @@ pub enum AppEvent {
     ConnectionClosed,
     VideoStreamReady(Arc<vulkan::VkImage>, video::VideoStreamParams),
     VideoFrameAvailable,
+    GamepadEvent(GamepadEvent),
 }
 
 impl From<ConnEvent> for AppEvent {
@@ -1147,6 +1174,12 @@ impl From<VideoStreamEvent> for AppEvent {
     }
 }
 
+impl From<GamepadEvent> for AppEvent {
+    fn from(event: GamepadEvent) -> Self {
+        Self::GamepadEvent(event)
+    }
+}
+
 impl std::fmt::Debug for AppEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1156,6 +1189,7 @@ impl std::fmt::Debug for AppEvent {
             AppEvent::ConnectionClosed => write!(f, "ConnectionClosed"),
             AppEvent::VideoStreamReady(_, params) => write!(f, "VideoStreamReady({params:?})"),
             AppEvent::VideoFrameAvailable => write!(f, "VideoFrameAvailable"),
+            AppEvent::GamepadEvent(gev) => write!(f, "GamepadEvent({gev:?})"),
         }
     }
 }

@@ -491,6 +491,11 @@ fn attach(
                                     }
                                 }
                             }
+                            // Gamepads are not yet supported.
+                            protocol::MessageType::GamepadAvailable(ev) => debug!("{:?}", ev),
+                            protocol::MessageType::GamepadUnavailable(ev) => debug!("{:?}", ev),
+                            protocol::MessageType::GamepadMotion(ev) => debug!("{:?}", ev),
+                            protocol::MessageType::GamepadInput(ev) => debug!("{:?}", ev),
                             protocol::MessageType::Error(ev) => {
                                 error!("received error from client: {}: {}", ev.err_code().as_str_name(), ev.error_text);
                             }

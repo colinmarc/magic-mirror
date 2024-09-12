@@ -120,6 +120,10 @@ message_types! {
     67 => LockPointer,
     68 => ReleasePointer,
     69 => RelativePointerMotion,
+    70 => GamepadAvailable,
+    71 => GamepadUnavailable,
+    72 => GamepadMotion,
+    73 => GamepadInput,
 }
 
 /// Reads a header-prefixed message from a byte slice, and returns the number

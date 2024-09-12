@@ -670,8 +670,8 @@ message AudioChunk {
 // ## Input
 //
 // Input messages are used by the client to indicate user interaction, whether
-// it be via a keyboard, mouse, controller, or some other input. Input is
-// always scoped to an attachment and sent on the attachment stream.
+// it be via a keyboard, mouse, gamepad, or some other input. Input is always
+// scoped to an attachment and sent on the attachment stream.
 //
 // ### Relative vs absolute cursor motion
 // 
@@ -1019,8 +1019,7 @@ message LockPointer {
 // This message, which must originate from the server on the same stream as the
 // original `030 - Attach` message, indicates the pointer should be no longer
 // be locked.
-message ReleasePointer {
-}
+message ReleasePointer {}
 
 // ### 069 - Relative Pointer Motion
 //
@@ -1032,4 +1031,117 @@ message ReleasePointer {
 message RelativePointerMotion {
   double x = 1; // Required.
   double y = 2; // Required.
+}
+
+// ### 070 - Gamepad Available
+//
+// This message, which must originate from the client on the same stream as the
+// original `030 - Attach` message, indicates that a gamepad is available
+// on the client.
+message GamepadAvailable {
+  // The gamepad button layout.
+  enum GamepadLayout {
+    CONTROLLER_LAYOUT_UNKNOWN = 0;
+    CONTROLLER_LAYOUT_GENERIC_DUAL_STICK = 1;
+    CONTROLLER_LAYOUT_SONY_DUALSHOCK = 2;
+  }
+
+  // Required. A client-provided identifier that should remain stable if the
+  // gamepad is unplugged and replugged.
+  uint64 id = 1;
+
+  // Required.
+  GamepadLayout layout = 2;
+}
+
+// ### 071 - Gamepad Unavailable
+//
+// This message, which must originate from the client on the same stream as the
+// original `030 - Attach` message, indicates that a gamepad is no longer
+// available, for example because it was unplugged.
+message GamepadUnavailable {
+  uint64 id = 1;
+}
+
+// ### 072 - Gamepad Motion
+//
+// This message, which must originate from the client on the same stream as the
+// original `030 - Attach` message, indicates movement on a joystock or trigger.
+message GamepadMotion {
+  enum Axis {
+    AXIS_UNKNOWN = 0;
+
+    // The left and right joysticks on a standard two-stick gamepad.
+    AXIS_LEFT_X = 1;
+    AXIS_LEFT_Y = 2;
+    AXIS_RIGHT_X = 3;
+    AXIS_RIGHT_Y = 4;
+
+    // The soft triggers on a standard two-stick gamepad, usually called
+    // L2 and R2.
+    AXIS_LEFT_TRIGGER = 5;
+    AXIS_RIGHT_TRIGGER = 6;
+  }
+
+  uint64 gamepad_id = 1; // Required.
+  Axis axis = 2; // Required.
+
+  // Required, with a value from -1.0 to 1.0. Zero always represents the resting
+  // position, and triggers will therefore usually range from 0.0 to 1.0.
+  double value = 3;
+}
+
+// ### 073 - Gamepad Input
+//
+// This message, which must originate from the client on the same stream as the
+// original `030 - Attach` message, indicates input from a gamepad button.
+message GamepadInput {
+  enum ButtonState {
+    BUTTON_STATE_UNKNOWN = 0;
+    BUTTON_STATE_PRESSED = 1;
+    BUTTON_STATE_RELEASED = 2;
+  }
+
+  enum Button {
+    BUTTON_UNKNOWN = 0;
+    BUTTON_DPAD_LEFT = 1;
+    BUTTON_DPAD_RIGHT = 2;
+    BUTTON_DPAD_UP = 3;
+    BUTTON_DPAD_DOWN = 4;
+
+    // X on a DualShock/DualSense, A on an Xbox gamepad, and B on a Nintendo
+    // gamepad.
+    BUTTON_SOUTH = 5;
+    BUTTON_EAST = 6;
+    BUTTON_NORTH = 7;
+    BUTTON_WEST = 8;
+
+    // The right and left shoulder buttons, usually called L1 and R1.
+    BUTTON_SHOULDER_LEFT = 9;
+    BUTTON_SHOULDER_RIGHT = 10;
+
+    // The left and right joystick buttons, usually called L3 and R3.
+    BUTTON_JOYSTICK_LEFT = 11;
+    BUTTON_JOYSTICK_RIGHT = 12;
+
+    // Assorted buttons on the face of the gamepad.
+    BUTTON_START = 13;
+    BUTTON_SELECT = 14;
+    BUTTON_LOGO = 15;
+    BUTTON_SHARE = 16;
+
+    // Occasionally, gamepads will have another two buttons next to the NESW
+    // buttons.
+    BUTTON_C = 17;
+    BUTTON_Z = 18;
+
+    // Very rarely, gamepads will have another set of buttons rather than
+    // triggers.
+    BUTTON_TRIGGER_LEFT = 19;
+    BUTTON_TRIGGER_RIGHT = 20;
+  }
+
+  uint64 gamepad_id = 1; // Required.
+  Button button = 2;     // Required.
+  ButtonState state = 3; // Required
 }
