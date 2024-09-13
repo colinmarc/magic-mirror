@@ -12,7 +12,6 @@ pub(crate) use chain::*;
 pub use timeline::*;
 
 use cstr::cstr;
-use nix::libc;
 use std::ffi::{c_void, CStr, CString};
 use std::sync::Arc;
 
@@ -116,7 +115,7 @@ pub struct VkDeviceInfo {
     pub device_type: vk::PhysicalDeviceType,
     pub device_vendor: Vendor,
     pub limits: vk::PhysicalDeviceLimits,
-    pub drm_node: nix::libc::dev_t,
+    pub drm_node: libc::dev_t,
     pub graphics_family: u32,
     pub encode_family: Option<u32>,
     pub supports_h264: bool,

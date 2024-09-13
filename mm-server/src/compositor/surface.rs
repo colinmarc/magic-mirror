@@ -479,10 +479,10 @@ impl State {
     /// an idle operation, the timestamps are only accurate if the compositor
     /// thread is woken within a reasonable timeframe.
     pub fn send_presentation_feedback(&mut self) -> anyhow::Result<()> {
-        let time = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)?;
-        let tv_sec_hi = (time.tv_sec() >> 32) as u32;
-        let tv_sec_lo = (time.tv_sec() & 0xFFFFFFFF) as u32;
-        let tv_nsec = time.tv_nsec() as u32;
+        let time = rustix::time::clock_gettime(rustix::time::ClockId::Monotonic);
+        let tv_sec_hi = (time.tv_sec >> 32) as u32;
+        let tv_sec_lo = (time.tv_sec & 0xFFFFFFFF) as u32;
+        let tv_nsec = time.tv_nsec as u32;
 
         let framerate = self.effective_display_params().framerate;
         let refresh = time::Duration::from_secs_f64(1.0 / framerate as f64).as_nanos() as u32;

@@ -8,7 +8,7 @@ use std::{
 };
 
 use anyhow::bail;
-use nix::sys::mman::{mmap, munmap, MapFlags, ProtFlags};
+use rustix::mm::{mmap, munmap, MapFlags, ProtFlags};
 use wayland_server::protocol::{wl_shm, wl_shm_pool};
 
 // TODO: malicious or broken clients can cause us to crash with SIGBUS. We
@@ -74,11 +74,11 @@ unsafe fn map(fd: impl AsFd, size: usize) -> anyhow::Result<*mut u8> {
     }
 
     let ptr = mmap(
-        None,
-        size.try_into()?,
-        ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
-        MapFlags::MAP_SHARED,
-        Some(fd),
+        std::ptr::null_mut(),
+        size,
+        ProtFlags::READ | ProtFlags::WRITE,
+        MapFlags::SHARED,
+        fd,
         0,
     )?;
 

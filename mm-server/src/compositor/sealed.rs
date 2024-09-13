@@ -9,10 +9,7 @@ use std::{
     os::fd::{AsFd, AsRawFd, BorrowedFd},
 };
 
-use nix::{
-    fcntl::{fcntl, FcntlArg, SealFlag},
-    sys::memfd::{memfd_create, MemFdCreateFlag},
-};
+use rustix::fs::{fcntl_add_seals, memfd_create, MemfdFlags, SealFlags};
 
 pub struct SealedFile {
     file: File,
@@ -23,7 +20,7 @@ impl SealedFile {
     pub fn new(name: impl AsRef<CStr>, contents: &[u8]) -> anyhow::Result<Self> {
         let fd = memfd_create(
             name.as_ref(),
-            MemFdCreateFlag::MFD_CLOEXEC | MemFdCreateFlag::MFD_ALLOW_SEALING,
+            MemfdFlags::CLOEXEC | MemfdFlags::ALLOW_SEALING,
         )?;
 
         let mut file: File = fd.into();
@@ -31,14 +28,9 @@ impl SealedFile {
         file.flush()?;
         file.seek(SeekFrom::Start(0))?;
 
-        fcntl(
-            file.as_raw_fd(),
-            FcntlArg::F_ADD_SEALS(
-                SealFlag::F_SEAL_SEAL
-                    | SealFlag::F_SEAL_WRITE
-                    | SealFlag::F_SEAL_SHRINK
-                    | SealFlag::F_SEAL_GROW,
-            ),
+        fcntl_add_seals(
+            &file,
+            SealFlags::SEAL | SealFlags::WRITE | SealFlags::SHRINK | SealFlags::GROW,
         )?;
 
         Ok(Self {

@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use anyhow::{bail, Context as _};
+use anyhow::bail;
 use ash::vk;
 use drm_fourcc::DrmModifier;
 use hashbrown::HashSet;
@@ -380,25 +380,90 @@ pub fn validate_buffer_parameters(
 
 #[allow(dead_code)]
 mod ioctl {
+    use rustix::{io::Errno, ioctl::Opcode};
+    use std::{ffi::c_void, os::fd::RawFd};
+
     pub(super) const DMA_BUF_SYNC_READ: u32 = 1 << 0;
     pub(super) const DMA_BUF_SYNC_WRITE: u32 = 1 << 1;
 
+    // Opcode::write::<dma_buf_import_sync_file>(b'b', 3);
+
     #[repr(C)]
     #[allow(non_camel_case_types)]
-    pub(super) struct dma_buf_export_sync_file {
+    struct dma_buf_export_sync_file {
         pub flags: u32,
         pub fd: i32,
     }
 
     #[repr(C)]
     #[allow(non_camel_case_types)]
-    pub(super) struct dma_buf_import_sync_file {
+    struct dma_buf_import_sync_file {
         pub flags: u32,
         pub fd: i32,
     }
 
-    nix::ioctl_readwrite!(export_sync_file, b'b', 2, dma_buf_export_sync_file);
-    nix::ioctl_write_ptr!(import_sync_file, b'b', 3, dma_buf_import_sync_file);
+    pub(super) struct ExportSyncFile(dma_buf_export_sync_file);
+
+    impl ExportSyncFile {
+        pub(super) fn new(flags: u32) -> Self {
+            Self(dma_buf_export_sync_file { flags, fd: -1 })
+        }
+    }
+
+    pub(super) struct ImportSyncFile(dma_buf_import_sync_file);
+
+    impl ImportSyncFile {
+        pub(super) fn new(fd: RawFd, flags: u32) -> Self {
+            Self(dma_buf_import_sync_file { flags, fd })
+        }
+    }
+
+    unsafe impl rustix::ioctl::Ioctl for ExportSyncFile {
+        type Output = RawFd;
+
+        const OPCODE: Opcode = Opcode::read_write::<dma_buf_export_sync_file>(b'b', 2);
+        const IS_MUTATING: bool = true;
+
+        fn as_ptr(&mut self) -> *mut c_void {
+            &mut self.0 as *mut dma_buf_export_sync_file as _
+        }
+
+        unsafe fn output_from_ptr(
+            out: rustix::ioctl::IoctlOutput,
+            extract_output: *mut c_void,
+        ) -> rustix::io::Result<Self::Output> {
+            let res: &mut dma_buf_export_sync_file = &mut *(extract_output as *mut _);
+            if out != 0 {
+                Err(rustix::io::Errno::from_raw_os_error(out))
+            } else if res.fd <= 0 {
+                Err(Errno::INVAL)
+            } else {
+                Ok(res.fd)
+            }
+        }
+    }
+
+    unsafe impl rustix::ioctl::Ioctl for ImportSyncFile {
+        type Output = ();
+
+        const OPCODE: Opcode = Opcode::write::<dma_buf_import_sync_file>(b'b', 3);
+        const IS_MUTATING: bool = true;
+
+        fn as_ptr(&mut self) -> *mut c_void {
+            &mut self.0 as *mut dma_buf_import_sync_file as _
+        }
+
+        unsafe fn output_from_ptr(
+            out: rustix::ioctl::IoctlOutput,
+            _: *mut c_void,
+        ) -> rustix::io::Result<Self::Output> {
+            if out == 0 {
+                Ok(())
+            } else {
+                Err(Errno::from_raw_os_error(out))
+            }
+        }
+    }
 }
 
 /// Retrieves a dmabuf fence, and uses it to set a semaphore. The semaphore will
@@ -410,7 +475,7 @@ pub fn import_dmabuf_fence_as_semaphore(
     fd: impl AsFd,
 ) -> anyhow::Result<()> {
     let fd = fd.as_fd();
-    let sync_fd = export_sync_file(fd, ioctl::DMA_BUF_SYNC_READ)?;
+    let sync_fd = unsafe { export_sync_file(fd, ioctl::DMA_BUF_SYNC_READ)? };
 
     let import_info = vk::ImportSemaphoreFdInfoKHR::default()
         .semaphore(semaphore)
@@ -427,20 +492,9 @@ pub fn import_dmabuf_fence_as_semaphore(
 }
 
 /// Retrieves the fd of a sync file for a dmabuf.
-pub fn export_sync_file(dmabuf: impl AsRawFd, flags: u32) -> anyhow::Result<OwnedFd> {
-    let mut data = ioctl::dma_buf_export_sync_file { flags, fd: -1 };
-
-    let res = unsafe {
-        ioctl::export_sync_file(dmabuf.as_raw_fd(), &mut data)
-            .context("error in dma_buf_export_sync_file ioctl")?
-    };
-
-    if res != 0 {
-        bail!("ioctl dma_buf_export_sync_file failed: {}", res);
-    } else {
-        let fd = unsafe { OwnedFd::from_raw_fd(data.fd) };
-        Ok(fd)
-    }
+pub unsafe fn export_sync_file(dmabuf: impl AsFd, flags: u32) -> anyhow::Result<OwnedFd> {
+    let raw_fd = rustix::ioctl::ioctl(dmabuf, ioctl::ExportSyncFile::new(flags))?;
+    Ok(OwnedFd::from_raw_fd(raw_fd))
 }
 
 /// Attaches a sync file to a dmabuf.
@@ -450,24 +504,15 @@ pub fn export_sync_file(dmabuf: impl AsRawFd, flags: u32) -> anyhow::Result<Owne
 // `wl_buffer.release` until long after we're done compositing, which we do as
 // of this writing.
 #[allow(dead_code)]
-pub fn attach_sync_file(
-    dmabuf: impl AsRawFd,
+pub unsafe fn attach_sync_file(
+    dmabuf: impl AsFd,
     flags: u32,
-    sync_file: OwnedFd,
+    sync_file: OwnedFd, // Closed on return.
 ) -> anyhow::Result<()> {
-    let data = ioctl::dma_buf_import_sync_file {
-        flags,
-        fd: sync_file.as_raw_fd(),
-    };
+    rustix::ioctl::ioctl(
+        dmabuf,
+        ioctl::ImportSyncFile::new(sync_file.as_raw_fd(), flags),
+    )?;
 
-    let res = unsafe {
-        ioctl::import_sync_file(dmabuf.as_raw_fd(), &data)
-            .context("error in dma_buf_import_sync_file ioctl")?
-    };
-
-    if res != 0 {
-        bail!("ioctl dma_buf_import_sync_file failed: {}", res);
-    } else {
-        Ok(())
-    }
+    Ok(())
 }

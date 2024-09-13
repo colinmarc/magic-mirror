@@ -411,7 +411,7 @@ impl Compositor {
                                 self.shutting_down = Some(time::Instant::now());
 
                                 // Give the app a chance to clean up.
-                                signal_child(child.id() as i32, nix::sys::signal::SIGTERM)?;
+                                signal_child(child.id() as i32, rustix::process::Signal::Term)?;
                             }
                             Ok(msg) => self.handle_control_message(msg)?,
                             Err(crossbeam::TryRecvError::Empty) => break,
@@ -489,7 +489,7 @@ impl Compositor {
             if ready_once.is_some() && self.state.surfaces_ready() {
                 ready_once.take().unwrap().send(control_send.clone())?;
             } else if ready_once.is_some() && start.elapsed() > READY_TIMEOUT {
-                signal_child(child.id() as i32, nix::sys::signal::SIGKILL)?;
+                signal_child(child.id() as i32, rustix::process::Signal::Kill)?;
                 bail!("timed out waiting for client");
             }
         }

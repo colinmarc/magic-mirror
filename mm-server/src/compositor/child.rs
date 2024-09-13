@@ -62,7 +62,7 @@ pub fn spawn_child(
     let command = unsafe {
         command.pre_exec(|| {
             // Creates a new process group.
-            nix::unistd::setsid()?;
+            rustix::process::setsid()?;
             Ok(())
         })
     };
@@ -80,11 +80,11 @@ pub fn spawn_child(
     }
 }
 
-pub fn signal_child(pid: i32, sig: nix::sys::signal::Signal) -> anyhow::Result<()> {
+pub fn signal_child(pid: i32, sig: rustix::process::Signal) -> anyhow::Result<()> {
     // Signal the whole process group. We used setsid, so the group should be
     // the same as the child pid.
-    let pid = nix::unistd::Pid::from_raw(pid);
-    nix::sys::signal::killpg(pid, Some(sig))?;
+    let pid = rustix::process::Pid::from_raw(pid).unwrap();
+    rustix::process::kill_process_group(pid, sig)?;
 
     Ok(())
 }

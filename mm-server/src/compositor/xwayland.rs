@@ -10,7 +10,7 @@ pub use xwm::*;
 use std::{
     ffi::OsStr,
     io::Read as _,
-    os::fd::AsRawFd as _,
+    os::fd::{AsFd, AsRawFd as _},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -87,22 +87,17 @@ impl XWayland {
         );
 
         unsafe {
-            let wayland_socket_fd = wayland_xwayland.as_raw_fd();
-            let wm_socket_fd = xwm_xwayland.as_raw_fd();
-            let displayfd_fd = displayfd_send.as_raw_fd();
-            let socket_fd = socket.as_raw_fd();
-
             command.pre_exec(move || {
                 // Creates a new process group. This prevents SIGINT sent to
                 // mmserver from reaching Xwayland.
-                nix::unistd::setsid()?;
+                rustix::process::setsid()?;
 
                 // unset the CLOEXEC flag from the sockets we need to pass
                 // to xwayland.
-                unset_cloexec(wayland_socket_fd)?;
-                unset_cloexec(wm_socket_fd)?;
-                unset_cloexec(displayfd_fd)?;
-                unset_cloexec(socket_fd)?;
+                unset_cloexec(&wayland_xwayland)?;
+                unset_cloexec(&xwm_xwayland)?;
+                unset_cloexec(&displayfd_send)?;
+                unset_cloexec(&socket)?;
 
                 Ok(())
             });
@@ -157,11 +152,8 @@ impl XWayland {
     }
 }
 
-fn unset_cloexec(socket_fd: i32) -> Result<(), nix::Error> {
-    nix::fcntl::fcntl(
-        socket_fd,
-        nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::empty()),
-    )?;
+fn unset_cloexec(socket_fd: impl AsFd) -> Result<(), rustix::io::Errno> {
+    rustix::fs::fcntl_setfd(socket_fd, rustix::fs::FdFlags::empty())?;
 
     Ok(())
 }

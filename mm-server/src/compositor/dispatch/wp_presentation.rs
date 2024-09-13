@@ -17,7 +17,7 @@ impl wayland_server::GlobalDispatch<wp_presentation::WpPresentation, ()> for Sta
         data_init: &mut wayland_server::DataInit<'_, Self>,
     ) {
         let wp_presentation = data_init.init(resource, ());
-        wp_presentation.clock_id(nix::time::ClockId::CLOCK_MONOTONIC.as_raw() as u32)
+        wp_presentation.clock_id(libc::CLOCK_MONOTONIC as u32)
     }
 }
 

@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use nix::libc;
-
 use crate::compositor::{protocols::wl_drm, State};
 
 impl wayland_server::GlobalDispatch<wl_drm::WlDrm, ()> for State {
