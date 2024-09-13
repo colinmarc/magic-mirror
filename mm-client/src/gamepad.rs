@@ -1,3 +1,7 @@
+// Copyright 2024 Colin Marc <hi@colinmarc.com>
+//
+// SPDX-License-Identifier: MIT
+
 use std::collections::HashMap;
 
 use anyhow::anyhow;
