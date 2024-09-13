@@ -400,7 +400,7 @@ fn attach(
                                     Ok(KeyState::Repeat) => compositor::KeyState::Repeat,
                                 };
 
-                                let evdev_scancode = match protocol::keyboard_input::Key::try_from(ev.key).map(key_to_evdev) {
+                                let key_code = match protocol::keyboard_input::Key::try_from(ev.key).map(key_to_evdev) {
                                     Ok(Some(scancode)) => scancode,
                                     _ => {
                                         send_err(outgoing, ErrorCode::ErrorProtocol, Some("invalid key".to_string()));
@@ -419,10 +419,10 @@ fn attach(
                                     }
                                 };
 
-                                trace!(evdev_scancode, ?state, ?ch, "translated keyboard event");
+                                trace!(key_code, ?state, ?ch, "translated keyboard event");
 
                                 handle.control.send(ControlMessage::KeyboardInput{
-                                    evdev_scancode,
+                                    key_code,
                                     state,
                                     char: ch,
                                 }).ok();
@@ -491,11 +491,62 @@ fn attach(
                                     }
                                 }
                             }
-                            // Gamepads are not yet supported.
-                            protocol::MessageType::GamepadAvailable(ev) => debug!("{:?}", ev),
-                            protocol::MessageType::GamepadUnavailable(ev) => debug!("{:?}", ev),
-                            protocol::MessageType::GamepadMotion(ev) => debug!("{:?}", ev),
-                            protocol::MessageType::GamepadInput(ev) => debug!("{:?}", ev),
+                            protocol::MessageType::GamepadAvailable(_) => {
+                                // handle.control.send(ControlMessage::GamepadAvailable(ev.id)).ok();
+                            }
+                            protocol::MessageType::GamepadUnavailable(_) => {
+                                // handle.control.send(ControlMessage::GamepadUnavailable(ev.id)).ok();
+                            }
+                            protocol::MessageType::GamepadMotion(ev) => {
+                                let (scancode, is_trigger) = match protocol::gamepad_motion::GamepadAxis::try_from(ev.axis).ok().and_then(axis_to_evdev) {
+                                    Some(v) => v,
+                                    _ => {
+                                        send_err(outgoing, ErrorCode::ErrorProtocol, Some("invalid gamepad axis".to_string()));
+                                        return;
+                                    }
+                                };
+
+                                let cm = if is_trigger {
+                                    ControlMessage::GamepadTrigger {
+                                        _id: ev.gamepad_id,
+                                        trigger_code: scancode,
+                                        value: ev.value,
+                                    }
+                                } else {
+                                    ControlMessage::GamepadAxis {
+                                        _id: ev.gamepad_id,
+                                        axis_code: scancode,
+                                        value: ev.value,
+                                    }
+                                };
+
+                                handle.control.send(cm).ok();
+                            },
+                            protocol::MessageType::GamepadInput(ev) => {
+                                use protocol::gamepad_input::{GamepadButton, GamepadButtonState};
+                                let state = match ev.state.try_into() {
+                                    Ok(GamepadButtonState::Unknown) | Err(_) => {
+                                        send_err(outgoing, ErrorCode::ErrorProtocol, Some("invalid gamepad button state".to_string()));
+                                        return;
+                                    }
+                                    Ok(GamepadButtonState::Pressed) => compositor::ButtonState::Pressed,
+                                    Ok(GamepadButtonState::Released) => compositor::ButtonState::Released,
+                                };
+
+                                let scancode = match GamepadButton::try_from(ev.button).ok().and_then(gamepad_button_to_evdev) {
+                                    Some(v) => v,
+                                    _ => {
+                                        send_err(outgoing, ErrorCode::ErrorProtocol, Some("invalid gamepad button".to_string()));
+                                        return;
+                                    }
+                                };
+
+                                handle.control.send(ControlMessage::GamepadInput {
+                                    _id: ev.gamepad_id,
+                                    button_code: scancode,
+                                    state,
+                                }).ok();
+                            }
                             protocol::MessageType::Error(ev) => {
                                 error!("received error from client: {}: {}", ev.err_code().as_str_name(), ev.error_text);
                             }
@@ -823,6 +874,50 @@ fn key_to_evdev(key: protocol::keyboard_input::Key) -> Option<u32> {
         | Key::NumpadMemoryStore
         | Key::NumpadMemorySubtract => None,
         Key::Unknown => None,
+    }
+}
+
+fn axis_to_evdev(axis: protocol::gamepad_motion::GamepadAxis) -> Option<(u32, bool)> {
+    use protocol::gamepad_motion::GamepadAxis;
+    match axis {
+        GamepadAxis::LeftX => Some((0x00, false)),       // ABS_X
+        GamepadAxis::LeftY => Some((0x01, false)),       // ABS_Y
+        GamepadAxis::RightX => Some((0x03, false)),      // ABS_RX
+        GamepadAxis::RightY => Some((0x04, false)),      // ABS_RY,
+        GamepadAxis::LeftTrigger => Some((0x02, true)),  // ABS_Z
+        GamepadAxis::RightTrigger => Some((0x05, true)), // ABS_RZ
+        GamepadAxis::Unknown => None,
+    }
+}
+
+fn gamepad_button_to_evdev(button: protocol::gamepad_input::GamepadButton) -> Option<u32> {
+    use protocol::gamepad_input::GamepadButton;
+
+    // TODO: My Dualsense actually reports Dpad events as an axis (ABS_HAT0X).
+    // Otherwise, this simulates a Sony controller.
+
+    match button {
+        GamepadButton::DpadLeft => Some(0x222),      // BTN_DPAD_LEFT
+        GamepadButton::DpadRight => Some(0x223),     // BTN_DPAD_RIGHT
+        GamepadButton::DpadUp => Some(0x220),        // BTN_DPAD_UP
+        GamepadButton::DpadDown => Some(0x221),      // BTN_DPAD_DOWN
+        GamepadButton::South => Some(0x130),         // BTN_SOUTH
+        GamepadButton::East => Some(0x131),          // BTN_EAST
+        GamepadButton::North => Some(0x133),         // BTN_NORTH
+        GamepadButton::West => Some(0x134),          // BTN_WEST
+        GamepadButton::C => Some(0x132),             // BTN_C
+        GamepadButton::Z => Some(0x135),             // BTN_Z
+        GamepadButton::ShoulderLeft => Some(0x136),  // BTN_TL
+        GamepadButton::ShoulderRight => Some(0x137), // BTN_TR
+        GamepadButton::JoystickLeft => Some(0x13d),  // BTN_THUMBL
+        GamepadButton::JoystickRight => Some(0x13e), // BTN_THUMBR
+        GamepadButton::Start => Some(0x13b),         // BTN_START
+        GamepadButton::Select => Some(0x13a),        // BTN_SELECT
+        GamepadButton::Logo => Some(0x13c),          // BTN_MODE
+        GamepadButton::Share => None,                // TODO I'm not sure what code to use.
+        GamepadButton::TriggerLeft => Some(0x138),   // BTN_TL2
+        GamepadButton::TriggerRight => Some(0x139),  // BTN_TL3
+        GamepadButton::Unknown => None,
     }
 }
 

@@ -192,6 +192,7 @@ impl Compositor {
         create_global::<zwp_pointer_constraints_v1::ZwpPointerConstraintsV1>(&dh, 1);
         create_global::<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1>(&dh, 1);
         create_global::<zwp_text_input_manager_v3::ZwpTextInputManagerV3>(&dh, 1);
+        create_global::<wp_game_controller::WpGameControllerV1>(&dh, 1);
 
         create_global::<wl_shm::WlShm>(&dh, 1);
         create_global::<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>(&dh, 5);
@@ -817,7 +818,7 @@ impl Compositor {
                 self.state.new_display_params = Some(params);
             }
             ControlMessage::KeyboardInput {
-                evdev_scancode,
+                key_code: evdev_scancode,
                 char,
                 state,
             } => {
@@ -927,6 +928,26 @@ impl Compositor {
             ControlMessage::PointerLeft => {
                 self.state.default_seat.lift_pointer(&self.state.serial);
             }
+            // TODO: for now, we always assume a controller is plugged in.
+            // ControlMessage::GamepadAvailable(_) => (),
+            // ControlMessage::GamepadUnavailable(_) => (),
+            ControlMessage::GamepadAxis {
+                axis_code, value, ..
+            } => {
+                self.state.default_seat.gamepad_axis(axis_code, value);
+            }
+            ControlMessage::GamepadTrigger {
+                trigger_code,
+                value,
+                ..
+            } => {
+                self.state.default_seat.gamepad_trigger(trigger_code, value);
+            }
+            ControlMessage::GamepadInput {
+                button_code, state, ..
+            } => {
+                self.state.default_seat.gamepad_input(button_code, state);
+            }
             // Handled above.
             ControlMessage::Stop | ControlMessage::Attach { .. } => unreachable!(),
         }
@@ -938,10 +959,11 @@ impl Compositor {
 fn create_global<G: wayland_server::Resource + 'static>(
     dh: &wayland_server::DisplayHandle,
     version: u32,
-) where
+) -> wayland_server::backend::GlobalId
+where
     State: wayland_server::GlobalDispatch<G, ()>,
 {
-    let _ = dh.create_global::<State, G, ()>(version, ());
+    dh.create_global::<State, G, ()>(version, ())
 }
 
 fn gen_socket_name() -> OsString {

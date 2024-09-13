@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="game_controller_v1">
+  <copyright>
+    Copyright © 2023-2024 Collabora, Ltd.
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice (including the next
+    paragraph) shall be included in all copies or substantial portions of the
+    Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="Wayland protocol for game controller devices">
+    TODO high level documentation about game controllers and the input source
+  </description>
+
+  <interface name="wp_game_controller_v1" version="1">
+    <description summary="game controller input device">
+      This interface represents a physical game controller, also known as a
+      gamepad, held by the user in their hands.
+
+      The wp_game_controller_v1 interface generates events for every input
+      sources present on the game controller. The client can also request
+      haptic vibration, or rumble, if the hardware supports it.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="release the memory for the game controller object">
+        Destroy the game controller device.
+      </description>
+    </request>
+
+    <event name="name">
+      <description summary="name of this game controller">
+        User friendly device identification string. The game controller name
+        is a UTF-8 string that should not be NULL.
+      </description>
+      <arg name="name" type="string" summary="game controller name"/>
+    </event>
+
+    <enum name="theme">
+      <description summary="button theme">
+        Each vendor uses a different set of glyph on its controller's buttons.
+      </description>
+      <entry name="none" value="0" summary="default value"/>
+      <entry name="playstation" value="1" summary="Sony controllers"/>
+      <entry name="xbox" value="2" summary="Microsoft controllers"/>
+      <entry name="nintendo" value="3" summary="Nintendo controllers"/>
+    </enum>
+
+    <event name="theme_hint">
+      <description summary="theme the client should use">
+        Theme the client should follow to render the adequate glyph for matching
+        the button on the physical controller.
+      </description>
+      <arg name="hint" type="uint" enum="theme" summary="theme hint"/>
+    </event>
+
+    <event name="done">
+      <description summary="all properties events are sent">
+        This event is sent after all of the other properties event have been
+        sent. No more property events will be sent to the client after this.
+      </description>
+    </event>
+
+    <event name="enter">
+      <description summary="enter focus event">
+        Notification that the gamepad is focused on a given surface.
+      </description>
+      <arg name="serial" type="uint" summary="serial number of the enter evenr"/>
+      <arg name="surface" type="object" interface="wl_surface" summary="surface gaining gamepad focus"/>
+    </event>
+
+    <event name="leave">
+      <description summary="leave focus event">
+        Notification that the gamepad is no longer focused on the given surface.
+      </description>
+      <arg name="serial" type="uint" summary="serial number of the leave event"/>
+      <arg name="surface" type="object" interface="wl_surface" summary="surface loosing gamepad focus"/>
+    </event>
+
+    <enum name="button_state">
+      <description summary="physical input source state">
+        Describes the physical state of a button on the game controller.
+      </description>
+      <entry name="released" value="0" summary="the input source is not pressed"/>
+      <entry name="pressed" value="1" summary="the input source is pressed"/>
+    </enum>
+
+    <event name="button">
+      <description summary="game controller button event">
+        game controller button click and release notification.
+
+        The source is a button code as defined in the Linux kernel's
+        linux/input-event-codes.h header file.
+
+        The time argument is a timestamp in microseconds of the moment of the
+        state changes
+      </description>
+      <arg name="source" type="uint" summary="source that produced the event"/>
+      <arg name="state" type="uint" enum="button_state" summary="physical state of the button"/>
+      <arg name="time" type="uint" summary="timestamp with microsecond granularity"/>
+    </event>
+
+    <event name="trigger">
+      <description summary="game controller trigger event">
+        game controller trigger pressure notification, expressed with a value
+        varying between 0.0 and 1.0, with 0.0 being the neutral state.
+
+        The source is a button code as defined in the Linux kernel's
+        linux/input-event-codes.h header file.
+
+        The time argument is a timestamp in microseconds of the moment of the
+        state changes
+      </description>
+      <arg name="source" type="uint" summary="source that produced the event"/>
+      <arg name="value" type="fixed" summary="trigger value in the 0 to 1 range"/>
+      <arg name="time" type="uint" summary="timestamp with microsecond granularity"/>
+    </event>
+
+    <event name="axis">
+      <description summary="game controller axis event">
+        game controller axis position notification, expressed by a 2D
+        position varying from -1.0 to 1.0, with 0.0 being the neutral state.
+
+        The source is a button code as defined in the Linux kernel's
+        linux/input-event-codes.h header file.
+
+        The time argument is a timestamp in microseconds of the moment of the
+        state changes
+      </description>
+      <arg name="source" type="uint" summary="source that produced the event"/>
+      <arg name="value" type="fixed" summary="axis coordinate in the -1 to 1 range"/>
+      <arg name="time" type="uint" summary="timestamp with microsecond granularity"/>
+    </event>
+
+    <event name="frame">
+      <description summary="end of a game controller event sequence">
+        Indicates the end of a set of events that logically belong together.
+        A client is expected to accumulate the data in all events within the
+        frame before proceeding
+
+        All wp_game_controller_v1 events before a wp_game_controller_v1.frame
+        event belong together.
+      </description>
+    </event>
+  </interface>
+</protocol>
