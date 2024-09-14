@@ -2,105 +2,79 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::ffi::{OsStr, OsString};
+use std::{
+    os::fd::{AsFd, BorrowedFd, OwnedFd},
+    path::{Path, PathBuf},
+};
 
-use anyhow::{anyhow, bail};
-use pathsearch::find_executable_in_path;
-use tracing::{info, trace};
-use unshare::{Child, ExitStatus};
+use anyhow::{bail, Context as _};
+use rustix::process::{Pid, Signal, WaitId, WaitidOptions};
+use tracing::{debug, info};
 
-use crate::config::AppConfig;
+mod container;
+pub use container::Container;
 
-pub fn spawn_child(
-    app_config: AppConfig,
-    xdg_runtime_dir: &OsStr,
-    socket_name: &OsStr,
-    x11_display: Option<&OsStr>,
-    pipe: mio::unix::pipe::Sender,
-) -> anyhow::Result<unshare::Child> {
-    // This gets dropped when we return, closing the write side (in this process)
-    let stdout = unshare::Stdio::dup_file(&pipe)?;
-    let stderr = unshare::Stdio::dup_file(&pipe)?;
+/// A handle to a running container.
+pub struct ChildHandle {
+    pid: Pid,
+    pidfd: OwnedFd,
 
-    let mut args = app_config.command.clone();
-    let exe = args.remove(0);
-    let exe_path =
-        find_executable_in_path(&exe).ok_or(anyhow!("command {:?} not in PATH", &exe))?;
+    run_path: PathBuf,
+}
 
-    let mut envs: Vec<(OsString, OsString)> = app_config.env.clone().into_iter().collect();
-    envs.push(("WAYLAND_DISPLAY".into(), socket_name.into()));
-
-    if let Some(x11_display) = x11_display {
-        envs.push(("DISPLAY".into(), x11_display.to_owned()));
-    }
-
-    envs.push(("XDG_RUNTIME_DIR".into(), xdg_runtime_dir.into()));
-
-    // Shadow pipewire.
-    envs.push(("PIPEWIRE_REMOTE".into(), "(null)".into()));
-
-    // Shadow dbus.
-    // TODO: we can set up our own broker and provide desktop portal
-    // functionality.
-    // let dbus_socket = Path::join(Path::new(xdg_runtime_dir), "dbus");
-    // envs.push(("DBUS_SESSION_BUS_ADDRESS".into(), dbus_socket.into()));
-
-    tracing::debug!(
-        exe = exe_path.to_string_lossy().to_string(),
-        env = ?envs,
-        "launching child process"
-    );
-
-    let mut command = unshare::Command::new(&exe_path);
-    let command = command
-        .args(&args)
-        .envs(envs)
-        .stdin(unshare::Stdio::null())
-        .stdout(stdout)
-        .stderr(stderr);
-
-    let command = unsafe {
-        command.pre_exec(|| {
-            // Creates a new process group.
-            rustix::process::setsid()?;
-            Ok(())
-        })
-    };
-
-    match command.spawn() {
-        Ok(child) => {
-            trace!(pid = child.id(), "child process started");
-            Ok(child)
-        }
-        Err(e) => Err(anyhow!(
-            "failed to spawn child process '{}': {:#}",
-            exe_path.to_string_lossy(),
-            e
-        )),
+impl AsFd for ChildHandle {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.pidfd()
     }
 }
 
-pub fn signal_child(pid: i32, sig: rustix::process::Signal) -> anyhow::Result<()> {
-    // Signal the whole process group. We used setsid, so the group should be
-    // the same as the child pid.
-    let pid = rustix::process::Pid::from_raw(pid).unwrap();
-    rustix::process::kill_process_group(pid, sig)?;
+impl ChildHandle {
+    pub fn pid(&self) -> Pid {
+        self.pid
+    }
 
-    Ok(())
+    pub(crate) fn pidfd(&self) -> BorrowedFd<'_> {
+        self.pidfd.as_fd()
+    }
+
+    pub fn signal(&mut self, signal: Signal) -> anyhow::Result<()> {
+        debug!(?signal, pid = self.pid.as_raw_nonzero(), "signaling child");
+
+        rustix::process::pidfd_send_signal(self, signal).context("pidfd_send_signal")?;
+        Ok(())
+    }
+
+    pub fn wait(&mut self) -> anyhow::Result<()> {
+        let exit_status =
+            rustix::process::waitid(WaitId::PidFd(self.as_fd()), WaitidOptions::EXITED)
+                .context("waitid")?
+                .and_then(|x| x.exit_status())
+                .unwrap_or_default();
+
+        info!(exit_status, "child process exited");
+        if exit_status != 0 {
+            bail!("child process exited with status: {exit_status}");
+        }
+
+        Ok(())
+    }
+
+    /// Opens /dev/fuse inside the container, mounts it to the given path,
+    /// and returns the FD for use in a FUSE daemon.
+    pub fn fuse_mount(
+        &self,
+        dst: impl AsRef<Path>,
+        fsname: impl AsRef<str>,
+        st_mode: u32,
+    ) -> anyhow::Result<OwnedFd> {
+        let fd = container::fuse_mount(&self.pidfd, &dst, fsname.as_ref().to_owned(), st_mode)?;
+
+        Ok(fd)
+    }
 }
 
-pub fn wait_child(child: &mut Child) -> anyhow::Result<()> {
-    let exit_status = child.wait()?;
-
-    info!(
-        exit_status = exit_status.code().unwrap_or_default(),
-        "child process exited"
-    );
-
-    match exit_status {
-        ExitStatus::Exited(c) if c != 0 => {
-            bail!("child process exited with error code {}", c)
-        }
-        _ => Ok(()),
+impl Drop for ChildHandle {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.run_path);
     }
 }

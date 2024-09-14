@@ -50,6 +50,8 @@ macro_rules! vk_chain {
 
             $vis struct $Chain(std::pin::Pin<Box<[<$Chain Inner>] <'static> >>);
 
+            unsafe impl Send for $Chain {}
+
             #[allow(dead_code)]
             impl $Chain {
                 pub fn new<$lifetime: 'static>($HeadName: $HeadStruct, $($Name: $Struct,)*) -> Self {

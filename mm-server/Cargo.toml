@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.72"
 bytes = "1.4.0"
+clone3 = "0.2"
 cstr = "0.2.11"
 ffmpeg-next = { version = "7", optional = true }
 ffmpeg-sys-next = { version = "7", optional = true }
@@ -29,7 +30,7 @@ rcgen = "0.12.1"
 boring = "3"
 rand = "0.8.5"
 ring = "0.16.20"
-rustix = { version = "0.38", features = ["mm", "time"] }
+rustix = { version = "0.38", features = ["mm", "mount", "pipe", "time", "stdio"] }
 thiserror = "1.0.48"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
@@ -114,7 +115,8 @@ tracy = [
 ]
 
 [dev-dependencies]
-pretty_assertions = "1.4.0"
+pretty_assertions = "*"
+test-log = { version = "*", features = ["trace"] }
 
 [patch.crates-io]
 mio-timerfd = { git = "https://github.com/colinmarc/mio-timerfd.git" }
