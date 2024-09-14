@@ -24,6 +24,15 @@
 ##
 # include_apps = ["/etc/magic-mirror/apps.d"]
 
+## This determines where the server stores application data, i.e. the $HOME for
+## containerized applications. If not set, then $XDG_DATA_HOME/mmserver is used,
+## or $HOME/.local/share/mmserver if $XDG_DATA_HOME is not set.
+##
+## If you're running magic-mirror as a permanent daemon, you should set this to
+## something like /var/lib/magic-mirror.
+##
+# data_home = /var/lib/magic-mirror
+
 ## ***-----------------***
 ## *** Server Settings ***
 ## ***-----------------***
@@ -90,6 +99,25 @@ max_connections = 4
 ## elements.
 # force_1x_scale = false
 
+## Isolate the home directory. If set, the application will see a clean,
+## sandboxed $HOME (and /home/$(whoami)), rather than the system-wide one.
+## This home directory is saved between runs of the app to
+## `<data_home>/homes/<shared_home_name>`.
+# isolate_home = true
+
+## If `isolate_home` is set to true, this sets a name for the home directory,
+## can be shared between apps. For example, multiple apps with this option set
+## to 'myhome' will all see the same $HOME when they run. By default, this is
+## set to the name of the application.
+# shared_home_name = same as application name
+
+## If `isolate_home` is set to true, this mounts a brand new $HOME (using tmpfs)
+## each time the application is run. If set, `shared_home_name` is ignored.
+##
+## Note that any data saved while the app is running will be irrevocably
+## destroyed when it exits.
+# tmp_home = false
+
 ## ***----------------------***
 ## *** Default App Settings ***
 ## ***----------------------***
@@ -100,3 +128,5 @@ max_connections = 4
 [default_app_settings]
 xwayland = true
 force_1x_scale = false
+isolate_home = true
+tmp_home = false

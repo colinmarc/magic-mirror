@@ -41,6 +41,7 @@ use wayland_server::{
 
 use std::{
     ffi::{OsStr, OsString},
+    fs::File,
     io::{BufRead, BufReader},
     os::fd::AsRawFd,
     path::{Path, PathBuf},
@@ -80,6 +81,26 @@ const TIMER: mio::Token = mio::Token(4);
 const XDISPLAY: mio::Token = mio::Token(10);
 const XWAYLAND: mio::Token = mio::Token(11);
 const XWAYLAND_READY: mio::Token = mio::Token(12);
+
+pub struct Compositor {
+    poll: mio::Poll,
+    waker: Arc<mio::Waker>,
+
+    state: State,
+
+    listening_socket: wayland_server::ListeningSocket,
+    display: wayland_server::Display<State>,
+
+    child: ChildHandle,
+    child_debug_log: Option<File>,
+
+    xwayland: Option<xwayland::XWayland>,
+    xwayland_debug_log: Option<File>,
+
+    ready_once: Option<oneshot::Sender<WakingSender<ControlMessage>>>,
+    timer: mio_timerfd::TimerFd,
+    sleeping: bool,
+}
 
 pub struct State {
     serial: serial::Serial,
@@ -148,26 +169,15 @@ impl wayland_server::backend::ClientData for ClientState {
     }
 }
 
-pub struct Compositor {
-    poll: mio::Poll,
-    waker: Arc<mio::Waker>,
-
-    state: State,
-    display: wayland_server::Display<State>,
-    xdg_runtime_dir: mktemp::Temp,
-    bug_report_dir: Option<PathBuf>,
-
-    shutting_down: Option<time::Instant>,
-}
-
 impl Compositor {
-    pub fn new(
+    pub fn run(
         vk: Arc<VkContext>,
         app_config: AppConfig,
         display_params: DisplayParams,
         bug_report_dir: Option<PathBuf>,
-    ) -> anyhow::Result<Self> {
-        let display = wayland_server::Display::new().context("failed to create display")?;
+        ready_send: oneshot::Sender<WakingSender<ControlMessage>>,
+    ) -> anyhow::Result<()> {
+        let mut display = wayland_server::Display::new().context("failed to create display")?;
 
         let ui_scale = if app_config.force_1x_scale {
             PixelScale::ONE
@@ -200,14 +210,14 @@ impl Compositor {
         create_global::<xwayland_shell_v1::XwaylandShellV1>(&dh, 1);
         create_global::<wl_drm::WlDrm>(&dh, 2);
 
-        // Used for the wayland and xwayland sockets, among other things.
-        let xdg_runtime_dir = mktemp::Temp::new_dir().context("failed to create temp dir")?;
+        let mut container = Container::new(app_config.clone()).context("initializing container")?;
 
         let poll = mio::Poll::new()?;
         let waker = Arc::new(mio::Waker::new(poll.registry(), WAKER)?);
         let handle = CompositorHandle::new(waker.clone());
 
-        let audio_pipeline = audio::EncodePipeline::new(handle.clone(), &xdg_runtime_dir)?;
+        let audio_pipeline =
+            audio::EncodePipeline::new(handle.clone(), container.extern_run_path())?;
 
         let cached_dmabuf_feedback = buffers::CachedDmabufFeedback::new(vk.clone())?;
 
@@ -227,7 +237,7 @@ impl Compositor {
 
             default_seat: seat::Seat::default(),
 
-            app_config,
+            app_config: app_config.clone(),
             display_params,
             ui_scale,
             new_display_params: None,
@@ -246,27 +256,8 @@ impl Compositor {
             vk,
         };
 
-        Ok(Self {
-            poll,
-            waker,
-
-            display,
-            state,
-            xdg_runtime_dir,
-            bug_report_dir,
-
-            shutting_down: None,
-        })
-    }
-
-    pub fn run(
-        &mut self,
-        ready_send: oneshot::Sender<WakingSender<ControlMessage>>,
-    ) -> Result<(), anyhow::Error> {
-        let mut events = mio::Events::with_capacity(64);
-
-        let display_fd = self.display.backend().poll_fd().as_raw_fd();
-        self.poll.registry().register(
+        let display_fd = display.backend().poll_fd().as_raw_fd();
+        poll.registry().register(
             &mut mio::unix::SourceFd(&display_fd),
             DISPLAY,
             mio::Interest::READABLE,
@@ -274,20 +265,20 @@ impl Compositor {
 
         // Bind the listening socket.
         let socket_name = gen_socket_name();
-        let socket_path = Path::join(&self.xdg_runtime_dir, &socket_name);
+        let socket_path = container.extern_run_path().join(&socket_name);
         let listening_socket = wayland_server::ListeningSocket::bind_absolute(socket_path.clone())?;
         trace!(?socket_path, "bound wayland socket");
 
         let listener_fd = listening_socket.as_raw_fd();
-        self.poll.registry().register(
+        poll.registry().register(
             &mut mio::unix::SourceFd(&listener_fd),
             ACCEPT,
             mio::Interest::READABLE,
         )?;
 
         // Spawn Xwayland, if we're using it.
-        let (mut xwayland, mut xwayland_debug_log) = if self.state.app_config.xwayland {
-            let xwayland_debug_log = if let Some(bug_report_dir) = self.bug_report_dir.as_ref() {
+        let (xwayland, xwayland_debug_log) = if app_config.xwayland {
+            let xwayland_debug_log = if let Some(bug_report_dir) = bug_report_dir.as_ref() {
                 let path = bug_report_dir.join("xwayland.log");
                 Some(std::fs::File::create(path).context("failed to create xwayland logfile")?)
             } else {
@@ -295,19 +286,20 @@ impl Compositor {
             };
 
             let mut xwayland = xwayland::XWayland::spawn(
-                &mut self.display.handle(),
-                self.xdg_runtime_dir.as_os_str(),
-            )?;
+                &mut display.handle(),
+                container.extern_run_path().as_os_str(),
+            )
+            .context("spawning Xwayland")?;
 
             // Xwayland writes to this pipe when it's ready.
-            self.poll.registry().register(
+            poll.registry().register(
                 &mut xwayland.displayfd_recv,
                 XWAYLAND_READY,
                 mio::Interest::READABLE,
             )?;
 
             // Stderr/stdout of the xwayland process.
-            self.poll.registry().register(
+            poll.registry().register(
                 xwayland.output.get_mut(),
                 XWAYLAND,
                 mio::Interest::READABLE,
@@ -318,58 +310,98 @@ impl Compositor {
             (None, None)
         };
 
-        let xdisplay = xwayland.as_ref().map(|x| x.display_socket.clone());
-
         // Spawn the client with a pipe as stdout/stderr.
         let (pipe_send, mut pipe_recv) = mio::unix::pipe::new()?;
+        container.set_stdio(pipe_send)?;
 
-        let mut child = spawn_child(
-            self.state.app_config.clone(),
-            self.xdg_runtime_dir.as_os_str(),
-            &socket_name,
-            xdisplay.as_ref().map(|d| d.as_os_str()),
-            pipe_send,
-        )
-        .context("failed to start application process")?;
+        // Set the wayland socket and X11 sockets. The wayland socket is a
+        // relative path inside XDG_RUNTIME_DIR. The X11 socket is special
+        // and has to be in /tmp (even if we set DISPLAY to an absolute path,
+        // that path has to be rooted in /tmp).
+        container.set_env("WAYLAND_DISPLAY", &socket_name);
+        if let Some(xwayland) = &xwayland {
+            container.bind_mount(&xwayland.display_socket, xwayland::SOCKET_PATH);
+            container.set_env("DISPLAY", xwayland::SOCKET_PATH);
+        }
 
-        self.poll
-            .registry()
+        // Shadow pipewire, just in case.
+        container.set_env("PIPEWIRE_REMOTE", "(null)");
+
+        let child = container
+            .spawn()
+            .context("starting application container")?;
+
+        poll.registry().register(
+            &mut mio::unix::SourceFd(&child.pidfd().as_raw_fd()),
+            CHILD,
+            mio::Interest::READABLE,
+        )?;
+
+        poll.registry()
             .register(&mut pipe_recv, CHILD, mio::Interest::READABLE)?;
-        let mut child_output = BufReader::new(&mut pipe_recv);
 
-        // Framerate timer (simulates vblank).
-        let mut timer = mio_timerfd::TimerFd::new(mio_timerfd::ClockId::Monotonic)?;
-        let mut sleeping = false;
-
-        self.poll
-            .registry()
-            .register(&mut timer, TIMER, mio::Interest::READABLE)?;
+        // Use `glxinfo` and `eglinfo` to generate more debugging help.
+        if let Some(bug_report_dir) = bug_report_dir.as_ref() {
+            let p = bug_report_dir.to_owned();
+            let wayland_socket = socket_name.clone();
+            let x11_socket = xwayland.as_ref().map(|x| x.display_socket.clone());
+            std::thread::spawn(move || {
+                save_glxinfo_eglinfo(
+                    &p,
+                    &wayland_socket,
+                    x11_socket.as_ref().map(|p| p.as_os_str()),
+                );
+            });
+        }
 
         // If bug report mode is enabled, save the stdout/stderr of the child to
         // a logfile.
-        let mut child_debug_log = if let Some(bug_report_dir) = self.bug_report_dir.as_ref() {
-            let path = bug_report_dir.join(format!("child-{}.log", child.id()));
+        let child_debug_log = if let Some(bug_report_dir) = bug_report_dir.as_ref() {
+            let path = bug_report_dir.join(format!("child-{}.log", child.pid().as_raw_nonzero()));
             Some(std::fs::File::create(path).context("failed to create child logfile")?)
         } else {
             None
         };
 
-        // Use `glxinfo` and `eglinfo` to generate more debugging help.
-        if let Some(bug_report_dir) = self.bug_report_dir.as_ref() {
-            let p = bug_report_dir.to_owned();
-            let wayland_socket = socket_name.clone();
-            // let x11_socket = self.xwayland.as_ref().map(|xwm| xwm.x11_display);
-            let x11_socket = None;
-            std::thread::spawn(move || {
-                save_glxinfo_eglinfo(&p, &wayland_socket, x11_socket);
-            });
-        }
+        // Framerate timer (simulates vblank).
+        let mut timer = mio_timerfd::TimerFd::new(mio_timerfd::ClockId::Monotonic)?;
+
+        poll.registry()
+            .register(&mut timer, TIMER, mio::Interest::READABLE)?;
+
+        let mut compositor = Self {
+            poll,
+            waker,
+
+            display,
+            state,
+            listening_socket,
+
+            child,
+            child_debug_log,
+
+            xwayland,
+            xwayland_debug_log,
+
+            ready_once: Some(ready_send),
+            timer,
+            sleeping: false,
+        };
+
+        compositor.main_loop(pipe_recv)
+    }
+
+    fn main_loop(
+        &mut self,
+        mut child_pipe: mio::unix::pipe::Receiver,
+    ) -> Result<(), anyhow::Error> {
+        let mut events = mio::Events::with_capacity(64);
 
         let (control_send, control_recv) = crossbeam::unbounded();
         let control_send = WakingSender::new(self.waker.clone(), control_send);
 
         let start = time::Instant::now();
-        let mut ready_once = Some(ready_send);
+        let mut child_output = BufReader::new(&mut child_pipe);
 
         loop {
             trace_span!("poll").in_scope(|| self.poll.poll(&mut events, None))?;
@@ -377,7 +409,7 @@ impl Compositor {
             for event in events.iter() {
                 match event.token() {
                     ACCEPT => {
-                        if let Some(client_stream) = listening_socket.accept()? {
+                        if let Some(client_stream) = self.listening_socket.accept()? {
                             let _client = self
                                 .display
                                 .handle()
@@ -387,10 +419,10 @@ impl Compositor {
                         }
                     }
                     CHILD if event.is_read_closed() => {
-                        wait_child(&mut child)?;
+                        self.child.wait()?;
                         self.state.handle.kick_clients();
 
-                        if ready_once.is_some() {
+                        if self.ready_once.is_some() {
                             // The client exited immediately, which is an error.
                             bail!("client exited without doing anything");
                         } else {
@@ -398,18 +430,17 @@ impl Compositor {
                         }
                     }
                     CHILD if event.is_readable() => {
-                        dump_child_output(&mut child_output, &mut child_debug_log)
+                        dump_child_output(&mut child_output, &mut self.child_debug_log)
                     }
                     WAKER => loop {
                         match control_recv.try_recv() {
                             Ok(ControlMessage::Stop) => {
                                 self.state.handle.kick_clients();
-
                                 trace!("shutting down");
-                                self.shutting_down = Some(time::Instant::now());
 
-                                // Give the app a chance to clean up.
-                                signal_child(child.id() as i32, rustix::process::Signal::Term)?;
+                                // Usually, TERM doesn't work, because the
+                                // process is PID 1 in the container.
+                                self.child.signal(rustix::process::Signal::Kill)?;
                             }
                             Ok(msg) => self.handle_control_message(msg)?,
                             Err(crossbeam::TryRecvError::Empty) => break,
@@ -431,7 +462,7 @@ impl Compositor {
                             .context("failed to dispatch the xwm")?;
                     }
                     XWAYLAND_READY => {
-                        let xwayland = xwayland.as_mut().unwrap();
+                        let xwayland = self.xwayland.as_mut().unwrap();
                         if let Some(socket) = xwayland.is_ready()? {
                             self.poll
                                 .registry()
@@ -450,8 +481,7 @@ impl Compositor {
                         }
                     }
                     XWAYLAND if event.is_read_closed() => {
-                        trace!("here?");
-                        let exit = xwayland.as_mut().unwrap().child.wait()?;
+                        let exit = self.xwayland.as_mut().unwrap().child.wait()?;
                         bail!(
                             "Xwayland exited unexpectedly with status {}",
                             exit.code().unwrap_or_default()
@@ -459,21 +489,22 @@ impl Compositor {
                     }
                     XWAYLAND if event.is_readable() => {
                         dump_child_output(
-                            &mut xwayland.as_mut().unwrap().output,
-                            &mut xwayland_debug_log,
+                            &mut self.xwayland.as_mut().unwrap().output,
+                            &mut self.xwayland_debug_log,
                         );
                     }
                     TIMER => {
-                        timer.read()?;
+                        self.timer.read()?;
 
                         // Check if we need to resize the virtual display.
                         if let Some(new_params) = self.state.new_display_params.take() {
                             self.update_display_params(new_params)?;
 
                             // Update the render timer to match the new framerate.
-                            timer.set_timeout_interval(&time::Duration::from_secs_f64(
-                                1.0 / self.state.display_params.framerate as f64,
-                            ))?;
+                            self.timer
+                                .set_timeout_interval(&time::Duration::from_secs_f64(
+                                    1.0 / self.state.display_params.framerate as f64,
+                                ))?;
                         }
 
                         self.frame()?;
@@ -484,22 +515,25 @@ impl Compositor {
 
             self.idle()?;
 
-            if ready_once.is_some() && self.state.surfaces_ready() {
-                ready_once.take().unwrap().send(control_send.clone())?;
-            } else if ready_once.is_some() && start.elapsed() > READY_TIMEOUT {
-                signal_child(child.id() as i32, rustix::process::Signal::Kill)?;
+            // Check that we haven't timed out waiting for the client to start up.
+            if self.ready_once.is_some() && self.state.surfaces_ready() {
+                self.ready_once.take().unwrap().send(control_send.clone())?;
+            } else if self.ready_once.is_some() && start.elapsed() > READY_TIMEOUT {
+                self.child.signal(rustix::process::Signal::Kill)?;
                 bail!("timed out waiting for client");
             }
 
             // Sleep if we're not active.
-            if !sleeping && !self.state.is_active() {
-                sleeping = true;
-                timer.set_timeout_interval(&time::Duration::from_secs(1))?;
-            } else if sleeping && self.state.is_active() {
-                sleeping = false;
-                timer.set_timeout_interval(&time::Duration::from_secs_f64(
-                    1.0 / self.state.display_params.framerate as f64,
-                ))?;
+            if !self.sleeping && !self.state.is_active() {
+                self.sleeping = true;
+                self.timer
+                    .set_timeout_interval(&time::Duration::from_secs(1))?;
+            } else if self.sleeping && self.state.is_active() {
+                self.sleeping = false;
+                self.timer
+                    .set_timeout_interval(&time::Duration::from_secs_f64(
+                        1.0 / self.state.display_params.framerate as f64,
+                    ))?;
             }
         }
     }
@@ -1004,14 +1038,14 @@ fn dump_child_output(pipe: &mut impl BufRead, debug_log: &mut Option<std::fs::Fi
 fn save_glxinfo_eglinfo(
     bug_report_dir: impl AsRef<Path>,
     socket_name: &OsStr,
-    x11_display: Option<u32>,
+    x11_display: Option<&OsStr>,
 ) {
     use std::process::Command;
 
     if let Some(x11_display) = x11_display {
         match Command::new("glxinfo")
             .env_clear()
-            .env("DISPLAY", format!(":{}", x11_display))
+            .env("DISPLAY", x11_display)
             .output()
         {
             Ok(output) => {

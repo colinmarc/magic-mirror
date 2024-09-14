@@ -921,6 +921,8 @@ pub struct VkHostBuffer {
     vk: Arc<VkContext>,
 }
 
+unsafe impl Send for VkHostBuffer {}
+
 impl VkHostBuffer {
     pub fn new(
         vk: Arc<VkContext>,
