@@ -27,8 +27,8 @@ pub enum ProtocolError {
     ShortBuffer(usize),
     #[error("invalid message")]
     InvalidMessage,
-    #[error("invalid message type: {0}")]
-    InvalidMessageType(u32),
+    #[error("invalid message type: {0} (len={1})")]
+    InvalidMessageType(u32, usize),
 }
 
 pub const MAX_MESSAGE_SIZE: usize = 65535;
@@ -75,10 +75,10 @@ macro_rules! message_types {
                 res.map_err(|e| e.into())
             }
 
-            fn decode<B: bytes::Buf>(msg_type: u32, buf: B) -> Result<Self, ProtocolError> {
+            fn decode<B: bytes::Buf>(msg_type: u32, total_len: usize, buf: B) -> Result<Self, ProtocolError> {
                 match msg_type {
                     $($num => Ok($variant::decode(buf)?.into())),*,
-                    _ => Err(ProtocolError::InvalidMessageType(msg_type)),
+                    _ => Err(ProtocolError::InvalidMessageType(msg_type, total_len)),
                 }
             }
         }
@@ -152,12 +152,9 @@ pub fn decode_message(buf: &[u8]) -> Result<(MessageType, usize), ProtocolError>
         return Err(ProtocolError::ShortBuffer(total_len));
     }
 
-    let msg = MessageType::decode(msg_type, &buf[data_off..total_len])?;
-    if total_len < 10 {
-        Ok((msg, 10))
-    } else {
-        Ok((msg, total_len))
-    }
+    let padded_len = total_len.max(10);
+    let msg = MessageType::decode(msg_type, padded_len, &buf[data_off..total_len])?;
+    Ok((msg, padded_len))
 }
 
 /// Writes a header-prefixed message to a byte slice, and returns the number
@@ -165,13 +162,28 @@ pub fn decode_message(buf: &[u8]) -> Result<(MessageType, usize), ProtocolError>
 /// enough capacity.
 pub fn encode_message(msg: &MessageType, buf: &mut [u8]) -> Result<usize, ProtocolError> {
     let msg_type = msg.message_type();
-    let msg_type_len = octets::varint_len(msg_type as u64);
-
     let msg_len =
         u32::try_from(msg.encoded_len()).map_err(|_| ProtocolError::InvalidMessage)? as usize;
 
+    let header_len = encode_header(msg_type, msg_len, buf)?;
+    let total_len = header_len + msg_len;
+
+    let mut msg_buf = &mut buf[header_len..];
+    msg.encode(&mut msg_buf)?;
+
+    if total_len < 10 {
+        buf[total_len..].fill(0);
+        Ok(10)
+    } else {
+        Ok(total_len)
+    }
+}
+
+fn encode_header(msg_type: u32, msg_len: usize, buf: &mut [u8]) -> Result<usize, ProtocolError> {
+    let msg_type_len = octets::varint_len(msg_type as u64);
     let prefix_len = octets::varint_len((msg_type_len + msg_len) as u64);
     let total_len = prefix_len + msg_type_len + msg_len;
+
     if total_len > MAX_MESSAGE_SIZE {
         return Err(ProtocolError::InvalidMessage);
     } else if total_len > buf.len() || buf.len() < 10 {
@@ -185,15 +197,7 @@ pub fn encode_message(msg: &MessageType, buf: &mut [u8]) -> Result<usize, Protoc
         hdr.off()
     };
 
-    let mut msg_buf = &mut buf[off..];
-    msg.encode(&mut msg_buf)?;
-
-    if total_len < 10 {
-        buf[total_len..].fill(0);
-        Ok(10)
-    } else {
-        Ok(total_len)
-    }
+    Ok(off)
 }
 
 // get_varint correctly handles u64 varints, but the protocol specifies u32.
@@ -252,4 +256,27 @@ mod tests {
         data: bytes::Bytes::from(vec![9; 1200]),
         timestamp: 1234,
     });
+
+    #[test]
+    fn invalid_message_type() {
+        let msg_type = 999;
+
+        let msg_buf = [100_u8; 322];
+        let msg_len = msg_buf.len();
+
+        // Create a fake message with a msg_type of 999.
+        let mut buf = [0; MAX_MESSAGE_SIZE];
+        let header_len =
+            encode_header(msg_type, msg_len, &mut buf).expect("failed to encode fake message");
+        let total_len = header_len + msg_len;
+        buf[header_len..total_len].copy_from_slice(&msg_buf);
+
+        match decode_message(&buf) {
+            Err(ProtocolError::InvalidMessageType(t, len)) => {
+                assert_eq!(t, 999);
+                assert_eq!(len, total_len);
+            }
+            v => panic!("expected InvalidMessageType, got {:?}", v),
+        }
+    }
 }
