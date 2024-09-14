@@ -16,7 +16,7 @@ use std::{
 };
 
 lazy_static! {
-    static ref NAME_RE: Regex = Regex::new(r"\A[a-z0-9-_]+\z").unwrap();
+    static ref NAME_RE: Regex = Regex::new(r"\A[a-z][a-z0-9-_]*\z").unwrap();
     static ref DEFAULT_CFG: parsed::Config = {
         let mut v: parsed::Config = toml::from_str(include_str!("../../mmserver.default.toml")).unwrap();
         if let Some(ref mut apps) = &mut v.apps {
