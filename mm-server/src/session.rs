@@ -76,12 +76,13 @@ impl Session {
         // Launch the compositor, which in turn launches the app.
         let (ready_send, ready_recv) = oneshot::channel();
         let vk_clone = vk.clone();
+        let app_name = application_name.to_owned();
         let app_cfg = application_config.clone();
         let bug_report_dir_clone = bug_report_dir.clone();
         let comp_thread_handle = std::thread::spawn(move || {
-            tracy_client::set_thread_name!("Compositor");
+            tracy_client::set_thread_name!("compositor");
 
-            let span = debug_span!("session", session_id = id);
+            let span = debug_span!("session", session_id = id, app = app_name);
             let _guard = span.enter();
 
             let mut compositor =
