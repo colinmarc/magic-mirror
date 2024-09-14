@@ -85,10 +85,13 @@ impl Session {
             let span = debug_span!("session", session_id = id, app = app_name);
             let _guard = span.enter();
 
-            let mut compositor =
-                Compositor::new(vk_clone, app_cfg, display_params, bug_report_dir_clone)?;
-
-            compositor.run(ready_send)
+            Compositor::run(
+                vk_clone,
+                app_cfg,
+                display_params,
+                bug_report_dir_clone,
+                ready_send,
+            )
         });
 
         info!(session_id = id, application = ?application_name, "launching session");

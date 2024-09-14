@@ -8,7 +8,6 @@ use pathsearch::find_executable_in_path;
 pub use xwm::*;
 
 use std::{
-    ffi::OsStr,
     io::Read as _,
     os::fd::{AsFd, AsRawFd as _},
     path::{Path, PathBuf},
@@ -28,10 +27,13 @@ pub struct XWayland {
     xwm_socket: Option<mio::net::UnixStream>,
 }
 
+// Where the socket gets mounted inside the container.
+pub const SOCKET_PATH: &str = "/tmp/.x11-magic-mirror";
+
 impl XWayland {
     pub fn spawn(
         dh: &mut wayland_server::DisplayHandle,
-        xdg_runtime_dir: &OsStr,
+        xdg_runtime_dir: impl AsRef<Path>,
     ) -> anyhow::Result<Self> {
         // Used to capture stdout and stderr.
         let (output_send, output_recv) = mio::unix::pipe::new()?;
@@ -50,7 +52,7 @@ impl XWayland {
         // Rather than messing with global /tmp, we create a scoped X11 socket. At
         // some point in the past, X11 didn't support this, but clients should
         // support arbitrary paths by now.
-        let socket_path = Path::new(xdg_runtime_dir).join(".X11-unix").join("XMM");
+        let socket_path = xdg_runtime_dir.as_ref().join(".X11-magic-mirror");
         std::fs::create_dir_all(socket_path.parent().unwrap())?;
 
         let socket = mio::net::UnixListener::bind(&socket_path)?;
@@ -80,7 +82,7 @@ impl XWayland {
             }
         }
 
-        command.env("XDG_RUNTIME_DIR", xdg_runtime_dir);
+        command.env("XDG_RUNTIME_DIR", xdg_runtime_dir.as_ref());
         command.env(
             "WAYLAND_SOCKET",
             format!("{}", wayland_xwayland.as_raw_fd()),
