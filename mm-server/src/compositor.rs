@@ -339,9 +339,7 @@ impl Compositor {
 
         // Framerate timer (simulates vblank).
         let mut timer = mio_timerfd::TimerFd::new(mio_timerfd::ClockId::Monotonic)?;
-        timer.set_timeout_interval(&time::Duration::from_secs_f64(
-            1.0 / self.state.display_params.framerate as f64,
-        ))?;
+        let mut sleeping = false;
 
         self.poll
             .registry()
@@ -491,6 +489,17 @@ impl Compositor {
             } else if ready_once.is_some() && start.elapsed() > READY_TIMEOUT {
                 signal_child(child.id() as i32, rustix::process::Signal::Kill)?;
                 bail!("timed out waiting for client");
+            }
+
+            // Sleep if we're not active.
+            if !sleeping && !self.state.is_active() {
+                sleeping = true;
+                timer.set_timeout_interval(&time::Duration::from_secs(1))?;
+            } else if sleeping && self.state.is_active() {
+                sleeping = false;
+                timer.set_timeout_interval(&time::Duration::from_secs_f64(
+                    1.0 / self.state.display_params.framerate as f64,
+                ))?;
             }
         }
     }
