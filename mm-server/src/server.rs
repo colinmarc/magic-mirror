@@ -278,10 +278,8 @@ impl Server {
                 for sid in to_close {
                     trace!(sid, "closing stream because worker finished");
 
-                    client.conn.stream_send(sid, &[], true)?;
-                    client
-                        .conn
-                        .stream_shutdown(sid, quiche::Shutdown::Read, 0)?;
+                    let _ = client.conn.stream_send(sid, &[], true);
+                    let _ = client.conn.stream_shutdown(sid, quiche::Shutdown::Read, 0);
                     client.in_flight.remove(&sid);
                 }
             }
@@ -487,10 +485,20 @@ impl Server {
                 Ok(v) => v,
                 Err(e) => {
                     if e.downcast_ref::<protocol::ProtocolError>().is_some() {
-                        client.err_stream(sid, ErrorCode::ErrorProtocol, &mut self.scratch);
+                        client.err_stream(
+                            sid,
+                            ErrorCode::ErrorProtocol,
+                            Some(e.to_string()),
+                            &mut self.scratch,
+                        );
                     } else {
                         error!("unexpected error: {}", e);
-                        client.err_stream(sid, ErrorCode::ErrorServer, &mut self.scratch);
+                        client.err_stream(
+                            sid,
+                            ErrorCode::ErrorServer,
+                            Some("Internal server error".to_string()),
+                            &mut self.scratch,
+                        );
                     }
 
                     continue;
@@ -638,8 +646,22 @@ impl ClientConnection {
         let mut buf = scratch.split();
         let mut messages = Vec::new();
         while !buf.is_empty() {
-            let (msg, len) = match protocol::decode_message(&buf) {
-                Ok(v) => v,
+            match protocol::decode_message(&buf) {
+                Ok((msg, len)) => {
+                    trace!(
+                        conn_id = ?self.conn_id,
+                        stream_id = sid,
+                        len,
+                        "received {}", msg
+                    );
+
+                    messages.push(msg);
+                    buf.advance(len);
+                }
+                Err(protocol::ProtocolError::InvalidMessageType(t, len)) => {
+                    warn!(msgtype = t, len, "ignoring unknown message type");
+                    buf.advance(len);
+                }
                 Err(protocol::ProtocolError::ShortBuffer(n)) => {
                     trace!(
                         "partial message on stream {:?}:{}, need {} bytes",
@@ -653,16 +675,6 @@ impl ClientConnection {
                 }
                 Err(e) => return Err(e.into()),
             };
-
-            trace!(
-                conn_id = ?self.conn_id,
-                stream_id = sid,
-                len,
-                "received {}", msg
-            );
-
-            buf.advance(len);
-            messages.push(msg);
         }
 
         Ok((messages, stream_fin))
@@ -766,17 +778,25 @@ impl ClientConnection {
     }
 
     /// Send an Error message on a stream, then shut it down.
-    fn err_stream(&mut self, sid: u64, code: ErrorCode, scratch: &mut BytesMut) {
+    fn err_stream(
+        &mut self,
+        sid: u64,
+        code: ErrorCode,
+        error: Option<String>,
+        scratch: &mut BytesMut,
+    ) {
         // TODO actually send an error message
         let msg = protocol::Error {
+            error_text: error.unwrap_or_default(),
             err_code: code.into(),
-            ..Default::default()
         };
 
         let _ = self.write_message(sid, msg.into(), true, scratch);
         let _ = self
             .conn
             .stream_shutdown(sid, quiche::Shutdown::Read, code as u64);
+
+        self.in_flight.remove(&sid);
     }
 }
 
