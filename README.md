@@ -1,12 +1,8 @@
-
-<p align="center" style="font-size:0.9em">
-<i>server download:</i> <a href="https://github.com/colinmarc/magic-mirror/releases/download/mmserver-v0.4.1/mmserver-v0.4.1-linux-amd64.tar.gz">linux-amd64</a>
-<i>client download:</i> <a href="https://github.com/colinmarc/magic-mirror/releases/download/mmclient-v0.3.0/mmclient-v0.3.0-linux-amd64.tar.gz">linux-amd64</a> • <a href="https://github.com/colinmarc/magic-mirror/releases/download/mmclient-v0.3.0/mmclient-v0.3.0-darwin-arm64.tar.gz">darwin-arm64</a>
-</p>
-
 # Magic Mirror 🪞✨
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/colinmarc/magic-mirror/tests.yaml)
-![Discord](https://img.shields.io/discord/1284975819222945802?style=flat&label=discord&color=7289DA)
+[![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/colinmarc/magic-mirror/tests.yaml)](https://github.com/colinmarc/magic-mirror/actions/workflows/tests.yaml)
+[![Discord](https://img.shields.io/discord/1284975819222945802?style=flat&label=discord&color=7289DA)](https://discord.gg/v22G644DzS)
+[![Server Release](https://img.shields.io/github/v/release/colinmarc/magic-mirror?filter=mmserver*&display_name=tag&label=download)](https://github.com/colinmarc/magic-mirror/releases/tag/mmserver-v0.4.1)
+[![Client Release](https://img.shields.io/github/v/release/colinmarc/magic-mirror?filter=mmclient*&display_name=tag&label=download)](https://github.com/colinmarc/magic-mirror/releases/tag/mmclient-v0.3.0)
 
 This is a game streaming and remote desktop tool for Linux, featuring:
 
