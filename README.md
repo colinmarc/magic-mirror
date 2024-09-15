@@ -5,6 +5,8 @@
 </p>
 
 # Magic Mirror 🪞✨
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/colinmarc/magic-mirror/tests.yaml)
+![Discord](https://img.shields.io/discord/1284975819222945802?style=flat&label=discord&color=7289DA)
 
 This is a game streaming and remote desktop tool for Linux, featuring:
 
