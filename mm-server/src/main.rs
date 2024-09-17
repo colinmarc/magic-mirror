@@ -100,6 +100,8 @@ fn main() -> Result<()> {
     let mut cfg = config::Config::new(args.config.as_ref(), &args.include_apps)
         .context("failed to read config")?;
 
+    preflight_checks(&cfg)?;
+
     // Override with command line flags.
     cfg.bug_report_dir = bug_report_dir.clone();
     if let Some(bind) = args.bind {
@@ -178,4 +180,42 @@ fn init_logging(bug_report_dir: Option<impl AsRef<Path>>) -> Result<()> {
         .init();
 
     Ok(())
+}
+
+fn preflight_checks(config: &config::Config) -> anyhow::Result<()> {
+    match linux_version() {
+        Some((major, minor)) if major < 6 => {
+            bail!("kernel version {major}.{minor} is too low; 6.x required");
+        }
+        None => warn!("unable to determine linux kernel version!"),
+        _ => (),
+    }
+
+    std::fs::create_dir_all(&config.data_home).context(format!(
+        "failed to initialize data_home ({})",
+        config.data_home.display(),
+    ))?;
+
+    Ok(())
+}
+
+fn linux_version() -> Option<(u32, u32)> {
+    let uname = rustix::system::uname();
+    let version = uname.release().to_str().ok()?;
+
+    let version = version.split_whitespace().next()?;
+    let mut parts = version.splitn(3, ".");
+    let major = parts.next()?;
+    let minor = parts.next()?;
+
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+#[test]
+fn test_linux_version() {
+    let Some((major, _minor)) = linux_version() else {
+        panic!("failed to determine linux version");
+    };
+
+    assert!(major >= 6);
 }
