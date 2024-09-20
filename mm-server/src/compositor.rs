@@ -8,6 +8,7 @@ mod child;
 mod control;
 mod dispatch;
 mod handle;
+mod input;
 mod oneshot_render;
 mod output;
 mod protocols;
@@ -312,7 +313,9 @@ impl Compositor {
 
         // Spawn the client with a pipe as stdout/stderr.
         let (pipe_send, mut pipe_recv) = mio::unix::pipe::new()?;
-        container.set_stdio(pipe_send)?;
+        container.set_stdout(&pipe_send)?;
+        container.set_stderr(&pipe_send)?;
+        drop(pipe_send);
 
         // Set the wayland socket and X11 sockets. The wayland socket is a
         // relative path inside XDG_RUNTIME_DIR. The X11 socket is special

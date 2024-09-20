@@ -150,7 +150,9 @@ pub struct Container {
 
     intern_run_path: PathBuf,
     extern_run_path: PathBuf,
+
     additional_bind_mounts: Vec<(PathBuf, PathBuf)>,
+    internal_bind_mounts: Vec<(PathBuf, PathBuf, bool)>,
 
     uid: Uid,
     gid: Gid,
@@ -213,10 +215,15 @@ impl Container {
             extern_run_path,
 
             additional_bind_mounts: Vec::new(),
+            internal_bind_mounts: Vec::new(),
 
             uid,
             gid,
         })
+    }
+
+    pub fn intern_run_path(&self) -> &Path {
+        &self.intern_run_path
     }
 
     pub fn extern_run_path(&self) -> &Path {
@@ -228,6 +235,11 @@ impl Container {
             .push((src.as_ref().to_owned(), dst.as_ref().to_owned()));
     }
 
+    pub fn internal_bind_mount(&mut self, src: impl AsRef<Path>, dst: impl AsRef<Path>) {
+        self.internal_bind_mounts
+            .push((src.as_ref().to_owned(), dst.as_ref().to_owned(), true));
+    }
+
     pub fn set_env<K, V>(&mut self, key: K, val: V)
     where
         K: AsRef<OsStr>,
@@ -237,12 +249,17 @@ impl Container {
             .push((key.as_ref().to_owned(), val.as_ref().to_owned()))
     }
 
-    pub fn set_stdio<T: AsFd>(&mut self, stdio: T) -> anyhow::Result<()> {
+    pub fn set_stdout<T: AsFd>(&mut self, stdio: T) -> anyhow::Result<()> {
         let stdout = fcntl_dupfd_cloexec(&stdio, 0)?;
+        self.child_cmd.stdout(stdout);
+
+        Ok(())
+    }
+
+    pub fn set_stderr<T: AsFd>(&mut self, stdio: T) -> anyhow::Result<()> {
         let stderr = fcntl_dupfd_cloexec(&stdio, 0)?;
         let tmp_stderr = fcntl_dupfd_cloexec(&stdio, 0)?;
 
-        self.child_cmd.stdout(stdout);
         self.child_cmd.stderr(stderr);
         self.tmp_stderr = Some(tmp_stderr);
 
@@ -471,7 +488,7 @@ impl Container {
         // Attach detached bind mounts, now that the filesystem is prepared.
         for (_src_path, dst_path, is_dir, mount_fd) in bind_mounts {
             preexec_debug!(
-                "bind-mounting {} to {}",
+                "bind-mounting {} (ext) to {}",
                 _src_path.display(),
                 dst_path.display()
             );
@@ -493,7 +510,33 @@ impl Container {
         must!(symlinkat("/proc/self/fd/1", AT_FDCWD, "/dev/stdout"));
         must!(symlinkat("/proc/self/fd2", AT_FDCWD, "/dev/stderr"));
 
+        // Finally, internal bind mounts.
+        for (src_path, dst_path, is_dir) in &self.internal_bind_mounts {
+            preexec_debug!(
+                "bind-mounting {} to {}",
+                src_path.display(),
+                dst_path.display()
+            );
+
+            let fd = must!(detach_mount(src_path));
+
+            if *is_dir {
+                let _ = mkdirat(AT_FDCWD, dst_path, Mode::empty());
+            } else {
+                must!(touch(dst_path));
+            }
+
+            must!(reattach_mount(fd, dst_path));
+        }
+
         // TODO: Install seccomp handlers here.
+
+        // We don't trust std::os::Command's env handling, because sometimes
+        // it allocates.
+        // libc::clearenv();
+        // for (k, v) in &self.envs {
+        //     libc::setenv
+        // }
 
         // If successful, this never returns.
         let e = self.child_cmd.exec();
@@ -548,10 +591,13 @@ unsafe fn touch(path: impl AsRef<Path>) -> rustix::io::Result<()> {
 }
 
 unsafe fn detach_mount(path: impl AsRef<Path>) -> rustix::io::Result<OwnedFd> {
+    preexec_debug!("open_tree {}", path.as_ref().display());
     open_tree(
         AT_FDCWD,
         path.as_ref(),
-        OpenTreeFlags::OPEN_TREE_CLONE | OpenTreeFlags::OPEN_TREE_CLOEXEC,
+        OpenTreeFlags::OPEN_TREE_CLONE
+            | OpenTreeFlags::AT_RECURSIVE
+            | OpenTreeFlags::OPEN_TREE_CLOEXEC,
     )
 }
 

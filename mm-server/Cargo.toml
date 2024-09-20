@@ -18,6 +18,7 @@ clone3 = "0.2"
 cstr = "0.2.11"
 ffmpeg-next = { version = "7", optional = true }
 ffmpeg-sys-next = { version = "7", optional = true }
+fuser = { version = "0.14", default-features = false }
 glam = "0.24.1"
 lazy_static = "1.4.0"
 libc = "0.2"
@@ -30,7 +31,7 @@ rcgen = "0.12.1"
 boring = "3"
 rand = "0.8.5"
 ring = "0.16.20"
-rustix = { version = "0.38", features = ["mm", "mount", "pipe", "time", "stdio"] }
+rustix = { version = "0.38", features = ["mm", "mount", "pipe", "time", "thread", "stdio"] }
 thiserror = "1.0.48"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
@@ -88,7 +89,6 @@ rev = "747915fa4b2f7d0bd2c70ef5af108c75031efc53"
 optional = true
 features = ["av1", "hevc"]
 
-
 [build-dependencies]
 system-deps = "6"
 xkbcommon = { version = "0.7.0", default-features = false }
@@ -115,7 +115,8 @@ tracy = [
 ]
 
 [dev-dependencies]
-pretty_assertions = "1.4.0"
+pretty_assertions = "1"
+test-log = "*"
 
 [patch.crates-io]
 mio-timerfd = { git = "https://github.com/colinmarc/mio-timerfd.git" }
