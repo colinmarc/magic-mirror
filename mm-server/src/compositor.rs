@@ -506,7 +506,10 @@ impl Compositor {
 
     fn idle(&mut self) -> anyhow::Result<()> {
         // Accept any waiting clients, but only if we're not mid-resize.
-        if !self.state.pending_attachments.is_empty() && self.state.surfaces_ready() {
+        if !self.state.pending_attachments.is_empty()
+            && self.state.new_display_params.is_none()
+            && self.state.surfaces_ready()
+        {
             let pending_attachments = self.state.pending_attachments.drain(..).collect::<Vec<_>>();
             for attach_msg in pending_attachments {
                 if let ControlMessage::Attach {
@@ -620,6 +623,7 @@ impl Compositor {
                     // Discharge any pending frame callbacks, since we won't
                     // render the current content, and some clients get stuck
                     // otherwise.
+                    surf.content = None;
                     if let Some(cb) = surf.frame_callback.current.take() {
                         cb.done(now);
                     }
@@ -638,8 +642,21 @@ impl Compositor {
                 });
 
             if force_reattach {
+                // Clear any pending attachments which don't match the new output.
+                self.state.pending_attachments.retain(|pending| {
+                    let ControlMessage::Attach {
+                        video_params: VideoStreamParams { width, height, .. },
+                        ..
+                    } = pending
+                    else {
+                        unreachable!()
+                    };
+
+                    *width == params.width && *height == params.height
+                });
+
+                // Clear any current attachments.
                 self.state.handle.remove_all();
-                self.state.pending_attachments.clear();
                 self.state.audio_pipeline.stop_stream();
 
                 self.state.video_pipeline = None;

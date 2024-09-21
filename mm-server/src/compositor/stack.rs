@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use tracing::{trace, warn};
+use tracing::{debug, trace, warn};
 use wayland_server::Resource as _;
 
 use crate::compositor::{
@@ -210,9 +210,15 @@ impl State {
                 .map_or(false, |conf| conf.fullscreen)
         });
 
-        for id in self.surface_stack[first_visible_idx.unwrap_or_default()..].iter() {
+        for id in &self.surface_stack[first_visible_idx.unwrap_or_default()..] {
             let surf = &self.surfaces[*id];
             if surf.content.is_none() || surf.pending_configure.is_some() {
+                debug!(
+                    pending_attachments = self.pending_attachments.len(),
+                    content_is_some = surf.content.is_some(),
+                    pending_configure = ?surf.pending_configure,
+                    "surface not ready!"
+                );
                 return false;
             }
         }

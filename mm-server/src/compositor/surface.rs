@@ -4,7 +4,7 @@
 
 use std::time;
 
-use tracing::{trace, warn};
+use tracing::{debug, trace, warn};
 use wayland_protocols::{
     wp::presentation_time::server::wp_presentation_feedback,
     xdg::shell::server::{xdg_surface, xdg_toplevel},
@@ -281,36 +281,50 @@ impl State {
                     && surface.sent_configuration.is_none())
                     || surface.role.pending.is_some()
                 {
-                    trace!(?surface.sent_configuration, ?surface.configuration, ?surface.role, "test");
                     return Err(CommitError(
                         xdg_surface::Error::UnconfiguredBuffer,
                         "The buffer must be configured prior to attaching a buffer.".to_string(),
                     ));
                 }
 
-                buffer.needs_release = true;
-                surface.content = Some(ContentUpdate {
-                    buffer: buffer_id,
-                    wp_presentation_feedback: feedback,
-                });
+                // If we're waiting on an ack_configure, discard the buffer.
+                if surface.pending_configure.is_some() {
+                    debug!(pending_configure = ?surface.pending_configure, "discarding buffer");
+                    if let Some(fb) = feedback {
+                        fb.discarded();
+                    }
 
-                // In the case of shm buffer, we do a copy and immediately release it.
-                if let BufferBacking::Shm {
-                    staging_buffer,
-                    format,
-                    pool,
-                    dirty,
-                    ..
-                } = &mut buffer.backing
-                {
-                    let len = (format.stride * format.height) as usize;
-                    let pool = pool.read().unwrap();
-                    let contents = pool.data(format.offset as usize, len);
+                    if let Some(cb) = surface.frame_callback.pending.take() {
+                        cb.done(self.serial.next());
+                    }
 
-                    staging_buffer.copy_from_slice(contents);
-                    *dirty = true;
                     buffer.needs_release = false;
                     buffer.wl_buffer.release();
+                } else {
+                    buffer.needs_release = true;
+                    surface.content = Some(ContentUpdate {
+                        buffer: buffer_id,
+                        wp_presentation_feedback: feedback,
+                    });
+
+                    // In the case of shm buffer, we do a copy and immediately release it.
+                    if let BufferBacking::Shm {
+                        staging_buffer,
+                        format,
+                        pool,
+                        dirty,
+                        ..
+                    } = &mut buffer.backing
+                    {
+                        let len = (format.stride * format.height) as usize;
+                        let pool = pool.read().unwrap();
+                        let contents = pool.data(format.offset as usize, len);
+
+                        staging_buffer.copy_from_slice(contents);
+                        *dirty = true;
+                        buffer.needs_release = false;
+                        buffer.wl_buffer.release();
+                    }
                 }
             }
             None => (),

@@ -8,7 +8,7 @@ use std::{
     time,
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, bail, Context};
 use crossbeam_channel as crossbeam;
 use lazy_static::lazy_static;
 use pathsearch::find_executable_in_path;
@@ -165,26 +165,28 @@ impl Session {
 
         let (events_send, events_recv) = crossbeam_channel::unbounded();
         let (ready_send, ready_recv) = oneshot::channel();
-        match self.control_sender.send(ControlMessage::Attach {
-            id,
-            sender: events_send,
-            video_params,
-            audio_params,
-            ready: ready_send,
-        }) {
-            Ok(_) => {}
-            Err(crossbeam::SendError(_)) => {
-                self.defunct = true;
-                return Err(anyhow!("compositor died"));
-            }
+        if self
+            .control_sender
+            .send(ControlMessage::Attach {
+                id,
+                sender: events_send,
+                video_params,
+                audio_params,
+                ready: ready_send,
+            })
+            .is_err()
+        {
+            self.defunct = true;
+            bail!("compositor died");
+        }
+
+        if ready_recv.recv_timeout(ATTACH_TIMEOUT).is_err() {
+            let _ = self.control_sender.send(ControlMessage::Detach(id));
+            bail!("attachment rejected");
         }
 
         self.operator_attachment_id = Some(id);
         self.detached_since = None;
-
-        ready_recv
-            .recv_timeout(ATTACH_TIMEOUT)
-            .context("attachment rejected")?;
 
         Ok(Attachment {
             attachment_id: id,
@@ -216,7 +218,7 @@ impl Session {
         if let Err(crossbeam::TrySendError::Full(_)) =
             self.control_sender.try_send(ControlMessage::Stop)
         {
-            return Err(anyhow!("compositor channel full"));
+            bail!("compositor channel full");
         }
 
         match self.comp_thread_handle.join() {
