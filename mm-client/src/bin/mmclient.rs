@@ -146,7 +146,7 @@ struct App {
     remote_display_params: protocol::VirtualDisplayParameters,
     attachment: Option<protocol::Attached>,
 
-    attachment_sid: u64,
+    attachment_sid: Option<u64>,
     last_keepalive: time::Instant,
     end_session_on_exit: bool,
 
@@ -186,11 +186,11 @@ impl winit::application::ApplicationHandler<AppEvent> for MainLoop {
     ) {
         if let winit::event::DeviceEvent::MouseMotion { delta: (x, y) } = event {
             if let Some(app) = &mut self.app {
-                if app.attachment.is_some() {
+                if app.attachment.is_some() && app.attachment_sid.is_some() {
                     if let Some((x, y)) = app.motion_vector_to_session_space(x, y) {
                         let _ = app.conn.send(
                             protocol::RelativePointerMotion { x, y },
-                            Some(app.attachment_sid),
+                            app.attachment_sid,
                             false,
                         );
                     }
@@ -366,7 +366,9 @@ impl App {
                             char,
                         };
 
-                        self.conn.send(msg, Some(self.attachment_sid), false)?;
+                        if self.attachment_sid.is_some() {
+                            self.conn.send(msg, self.attachment_sid, false)?;
+                        }
                     }
                 }
             }
@@ -400,25 +402,27 @@ impl App {
                 });
 
                 if let Some((cursor_x, cursor_y)) = new_position {
-                    let msg = protocol::PointerMotion {
-                        x: cursor_x,
-                        y: cursor_y,
-                    };
+                    if self.attachment_sid.is_some() {
+                        let msg = protocol::PointerMotion {
+                            x: cursor_x,
+                            y: cursor_y,
+                        };
 
-                    self.conn.send(msg, Some(self.attachment_sid), false)?;
+                        self.conn.send(msg, self.attachment_sid, false)?;
 
-                    if new_position.is_some() && self.cursor_pos.is_none() {
-                        let msg = protocol::PointerEntered {};
-                        self.conn.send(msg, Some(self.attachment_sid), false)?;
-                    } else if new_position.is_none() && self.cursor_pos.is_some() {
-                        let msg = protocol::PointerLeft {};
-                        self.conn.send(msg, Some(self.attachment_sid), false)?;
+                        if new_position.is_some() && self.cursor_pos.is_none() {
+                            let msg = protocol::PointerEntered {};
+                            self.conn.send(msg, self.attachment_sid, false)?;
+                        } else if new_position.is_none() && self.cursor_pos.is_some() {
+                            let msg = protocol::PointerLeft {};
+                            self.conn.send(msg, self.attachment_sid, false)?;
+                        }
                     }
 
                     self.cursor_pos = new_position;
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => {
+            WindowEvent::MouseInput { state, button, .. } if self.attachment_sid.is_some() => {
                 use protocol::pointer_input::*;
 
                 if self.cursor_pos.is_none() {
@@ -450,26 +454,26 @@ impl App {
                     y: cursor_y,
                 };
 
-                self.conn.send(msg, Some(self.attachment_sid), false)?;
+                self.conn.send(msg, self.attachment_sid, false)?;
             }
             WindowEvent::MouseWheel {
                 delta: MouseScrollDelta::LineDelta(x, y),
                 phase: TouchPhase::Moved,
                 ..
-            } => {
+            } if self.attachment_sid.is_some() => {
                 let msg = protocol::PointerScroll {
                     scroll_type: protocol::pointer_scroll::ScrollType::Discrete.into(),
                     x: x as f64,
                     y: y as f64,
                 };
 
-                self.conn.send(msg, Some(self.attachment_sid), false)?;
+                self.conn.send(msg, self.attachment_sid, false)?;
             }
             WindowEvent::MouseWheel {
                 delta: MouseScrollDelta::PixelDelta(vector),
                 phase: TouchPhase::Moved,
                 ..
-            } => {
+            } if self.attachment_sid.is_some() => {
                 if let Some((x, y)) = self.motion_vector_to_session_space(vector.x, vector.y) {
                     let msg = protocol::PointerScroll {
                         scroll_type: protocol::pointer_scroll::ScrollType::Continuous.into(),
@@ -477,7 +481,7 @@ impl App {
                         y,
                     };
 
-                    self.conn.send(msg, Some(self.attachment_sid), false)?;
+                    self.conn.send(msg, self.attachment_sid, false)?;
                 }
             }
             _ => (),
@@ -665,37 +669,45 @@ impl App {
                         .set_cursor_grab(winit::window::CursorGrabMode::None)?;
                 }
                 protocol::MessageType::Error(e) => {
-                    error!("server error: {:#}", server_error(e));
+                    let err = server_error(e);
+                    error!("server error: {:#}", err);
+                    if self.reattaching {
+                        // This is fatal.
+                        return Err(err);
+                    }
                 }
                 _ => bail!("unexpected message: {:?}", msg),
             },
-            AppEvent::StreamClosed(sid) => {
-                if sid == self.attachment_sid {
-                    if self.exiting {
-                        return Ok(false);
-                    } else if self.reattaching {
-                        // Open a new attachment stream.
-                        debug!(
-                            "reattaching to session with resolution: {:?}",
-                            self.remote_display_params.resolution.clone()
-                        );
-                        self.attachment_sid = self.conn.send(
-                            protocol::Attach {
-                                attachment_type: protocol::AttachmentType::Operator.into(),
-                                client_name: "mmclient".to_string(),
-                                session_id: self.session_id,
-                                streaming_resolution: self.remote_display_params.resolution,
-                                video_codec: self.configured_codec.into(),
-                                quality_preset: self.configured_preset,
-                                video_profile: self.configured_profile.into(),
-                                ..Default::default()
-                            },
-                            None,
-                            false,
-                        )?;
-                    } else {
-                        bail!("server disconnected from session")
-                    }
+            AppEvent::StreamClosed(sid) if Some(sid) == self.attachment_sid => {
+                self.attachment_sid.take();
+
+                if self.exiting {
+                    return Ok(false);
+                } else if self.reattaching {
+                    // Open a new attachment stream.
+                    debug!(
+                        "reattaching to session with resolution: {:?}",
+                        self.remote_display_params.resolution.clone()
+                    );
+
+                    let sid = self.conn.send(
+                        protocol::Attach {
+                            attachment_type: protocol::AttachmentType::Operator.into(),
+                            client_name: "mmclient".to_string(),
+                            session_id: self.session_id,
+                            streaming_resolution: self.remote_display_params.resolution,
+                            video_codec: self.configured_codec.into(),
+                            quality_preset: self.configured_preset,
+                            video_profile: self.configured_profile.into(),
+                            ..Default::default()
+                        },
+                        None,
+                        false,
+                    )?;
+
+                    self.attachment_sid = Some(sid)
+                } else {
+                    bail!("server disconnected from session")
                 }
             }
             AppEvent::Datagram(msg) => match msg {
@@ -727,7 +739,7 @@ impl App {
                     self.window.request_redraw();
                 }
             }
-            AppEvent::GamepadEvent(gev) => {
+            AppEvent::GamepadEvent(gev) if self.attachment_sid.is_some() => {
                 let msg: protocol::MessageType = match gev {
                     GamepadEvent::Available(id, layout) => protocol::GamepadAvailable {
                         id,
@@ -749,8 +761,9 @@ impl App {
                     .into(),
                 };
 
-                self.conn.send(msg, Some(self.attachment_sid), false)?;
+                self.conn.send(msg, self.attachment_sid, false)?;
             }
+            _ => (),
         }
 
         Ok(true)
@@ -762,8 +775,11 @@ impl App {
         }
 
         if self.last_keepalive.elapsed() > time::Duration::from_secs(1) {
-            self.conn
-                .send(protocol::KeepAlive {}, Some(self.attachment_sid), false)?;
+            if self.attachment_sid.is_some() {
+                self.conn
+                    .send(protocol::KeepAlive {}, self.attachment_sid, false)?;
+            }
+
             self.last_keepalive = time::Instant::now();
         }
 
@@ -873,11 +889,8 @@ impl App {
             }
 
             self.flash.set_message("ending session...");
-        } else {
-            match self
-                .conn
-                .send(protocol::Detach {}, Some(self.attachment_sid), true)
-            {
+        } else if let Some(sid) = self.attachment_sid {
+            match self.conn.send(protocol::Detach {}, Some(sid), true) {
                 Ok(_) => (),
                 Err(e) => return Err(e).context("failed to detach cleanly"),
             }
@@ -1103,7 +1116,7 @@ fn main() -> Result<()> {
         conn,
         session_id: session.session_id,
 
-        attachment_sid,
+        attachment_sid: Some(attachment_sid),
         last_keepalive: now,
         end_session_on_exit: args.kill_on_exit,
 
