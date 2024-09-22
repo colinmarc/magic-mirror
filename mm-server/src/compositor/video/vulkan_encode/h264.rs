@@ -308,21 +308,23 @@ impl H264Encoder {
         let mut rc_layers = Vec::new();
 
         if let RateControlMode::Vbr(settings) = self.rc_mode {
-            h264_rc_layers.push(
-                vk::VideoEncodeH264RateControlLayerInfoEXT::default()
-                    .use_min_qp(true)
-                    .use_max_qp(true)
-                    .min_qp(vk::VideoEncodeH264QpEXT {
-                        qp_i: settings.min_qp as i32,
-                        qp_p: settings.min_qp as i32,
-                        qp_b: settings.min_qp as i32,
-                    })
-                    .max_qp(vk::VideoEncodeH264QpEXT {
-                        qp_i: settings.max_qp as i32,
-                        qp_p: settings.max_qp as i32,
-                        qp_b: settings.max_qp as i32,
-                    }),
-            );
+            for _ in 0..self.structure.layers {
+                h264_rc_layers.push(
+                    vk::VideoEncodeH264RateControlLayerInfoEXT::default()
+                        .use_min_qp(true)
+                        .use_max_qp(true)
+                        .min_qp(vk::VideoEncodeH264QpEXT {
+                            qp_i: settings.min_qp as i32,
+                            qp_p: settings.min_qp as i32,
+                            qp_b: settings.min_qp as i32,
+                        })
+                        .max_qp(vk::VideoEncodeH264QpEXT {
+                            qp_i: settings.max_qp as i32,
+                            qp_p: settings.max_qp as i32,
+                            qp_b: settings.max_qp as i32,
+                        }),
+                );
+            }
 
             rc_layers = h264_rc_layers
                 .iter_mut()
@@ -341,7 +343,7 @@ impl H264Encoder {
             .gop_frame_count(self.structure.gop_size)
             .idr_period(self.structure.gop_size)
             .consecutive_b_frame_count(0)
-            .temporal_layer_count(1)
+            .temporal_layer_count(rc_layers.len() as u32)
             .flags(vk::VideoEncodeH264RateControlFlagsEXT::REGULAR_GOP | pattern);
 
         let vbv_size = match self.rc_mode {

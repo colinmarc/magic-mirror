@@ -125,16 +125,14 @@ impl H265Encoder {
         //     "h265 quality level properties: {:#?}",
         //     quality_props.h265_props
         // );
-
-        let rc_mode = super::rate_control::select_rc_mode(params, &caps.encode_caps);
-        debug!(?rc_mode, "selected rate control mode");
-
-        // let mut layers = std::cmp::min(4, caps.h265_caps.max_sub_layer_count);
         let structure = super::default_structure(
             caps.h265_caps.max_sub_layer_count,
             caps.video_caps.max_dpb_slots,
             vk.device_info.device_vendor,
         )?;
+
+        let rc_mode = super::rate_control::select_rc_mode(params, &caps.encode_caps);
+        debug!(?rc_mode, "selected rate control mode");
 
         // TODO check more caps
         // TODO autoselect level
@@ -397,21 +395,23 @@ impl H265Encoder {
         let mut rc_layers = Vec::new();
 
         if let RateControlMode::Vbr(settings) = self.rc_mode {
-            h265_rc_layers.push(
-                vk::VideoEncodeH265RateControlLayerInfoEXT::default()
-                    .use_min_qp(true)
-                    .use_max_qp(true)
-                    .min_qp(vk::VideoEncodeH265QpEXT {
-                        qp_i: settings.min_qp as i32,
-                        qp_p: settings.min_qp as i32,
-                        qp_b: settings.min_qp as i32,
-                    })
-                    .max_qp(vk::VideoEncodeH265QpEXT {
-                        qp_i: settings.max_qp as i32,
-                        qp_p: settings.max_qp as i32,
-                        qp_b: settings.max_qp as i32,
-                    }),
-            );
+            for _ in 0..self.structure.layers {
+                h265_rc_layers.push(
+                    vk::VideoEncodeH265RateControlLayerInfoEXT::default()
+                        .use_min_qp(true)
+                        .use_max_qp(true)
+                        .min_qp(vk::VideoEncodeH265QpEXT {
+                            qp_i: settings.min_qp as i32,
+                            qp_p: settings.min_qp as i32,
+                            qp_b: settings.min_qp as i32,
+                        })
+                        .max_qp(vk::VideoEncodeH265QpEXT {
+                            qp_i: settings.max_qp as i32,
+                            qp_p: settings.max_qp as i32,
+                            qp_b: settings.max_qp as i32,
+                        }),
+                );
+            }
 
             for h265_layer in h265_rc_layers.iter_mut() {
                 rc_layers.push(
@@ -429,7 +429,7 @@ impl H265Encoder {
             .gop_frame_count(self.structure.gop_size)
             .idr_period(self.structure.gop_size)
             .consecutive_b_frame_count(0)
-            .sub_layer_count(1)
+            .sub_layer_count(rc_layers.len() as u32)
             .flags(vk::VideoEncodeH265RateControlFlagsEXT::REGULAR_GOP | pattern);
 
         let vbv_size = match self.rc_mode {
