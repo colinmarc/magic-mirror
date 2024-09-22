@@ -1014,13 +1014,13 @@ fn single_profile_list_info<'a>(
 }
 
 fn default_structure(
-    _max_layers: u32,
+    max_layers: u32,
     max_dpb_slots: u32,
     device_vendor: Vendor,
 ) -> anyhow::Result<HierarchicalP> {
     // Temporal layers don't work yet.
-    // let mut layers = std::cmp::min(4, max_layers);
-    let mut layers = 1;
+    let mut layers = std::cmp::min(4, max_layers);
+    // let mut layers = 1;
 
     const DEFAULT_GOP_SIZE: u32 = 256;
 
