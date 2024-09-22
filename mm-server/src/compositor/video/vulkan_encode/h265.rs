@@ -52,6 +52,7 @@ vk_chain! {
 struct H265Metadata {
     pic_type: u32,
     pic_order_cnt: i32,
+    ref_count: u32,
 }
 
 pub struct H265Encoder {
@@ -105,26 +106,26 @@ impl H265Encoder {
         trace!("encode capabilities: {:#?}", caps.encode_caps);
         trace!("h265 capabilities: {:#?}", caps.h265_caps);
 
-        // let quality_level = caps.encode_caps.max_quality_levels - 1;
-        // let mut quality_props = H265QualityLevelProperties::default();
+        let quality_level = caps.encode_caps.max_quality_levels - 1;
+        let mut quality_props = H265QualityLevelProperties::default();
 
-        // unsafe {
-        //     let get_info = vk::PhysicalDeviceVideoEncodeQualityLevelInfoKHR::default()
-        //         .video_profile(&profile.profile_info)
-        //         .quality_level(quality_level);
+        unsafe {
+            let get_info = vk::PhysicalDeviceVideoEncodeQualityLevelInfoKHR::default()
+                .video_profile(&profile.profile_info)
+                .quality_level(quality_level);
 
-        //     encode_loader.get_physical_device_video_encode_quality_level_properties(
-        //         vk.device_info.pdevice,
-        //         &get_info,
-        //         quality_props.as_mut(),
-        //     )?;
-        // }
+            encode_loader.get_physical_device_video_encode_quality_level_properties(
+                vk.device_info.pdevice,
+                &get_info,
+                quality_props.as_mut(),
+            )?;
+        }
 
-        // trace!("quality level properties: {:#?}", quality_props.props);
-        // trace!(
-        //     "h265 quality level properties: {:#?}",
-        //     quality_props.h265_props
-        // );
+        trace!("quality level properties: {:#?}", quality_props.props);
+        trace!(
+            "h265 quality level properties: {:#?}",
+            quality_props.h265_props
+        );
         let structure = super::default_structure(
             caps.h265_caps.max_sub_layer_count,
             caps.video_caps.max_dpb_slots,
@@ -484,34 +485,58 @@ impl H265Encoder {
             ..std::mem::zeroed()
         };
 
-        // Point to the references.
-        let ref_pics = frame_state
-            .ref_ids
-            .iter()
-            .map(|id| {
-                self.inner
-                    .dpb
-                    .get_pic(*id)
-                    .ok_or(anyhow::anyhow!("ref pic {id} missing from dpb",))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        for (idx, id) in frame_state.ref_ids.iter().enumerate() {
+            let pic = self
+                .inner
+                .dpb
+                .get_pic(*id)
+                .ok_or(anyhow::anyhow!("ref pic {id} missing from dpb"))?;
 
-        for (idx, pic) in ref_pics.iter().enumerate() {
             ref_lists_info.RefPicList0[idx] = pic.index as u8;
         }
 
+        // For each frame, we have to tell the decoder which pictures will be
+        // used as references in the future, in addition to those that are
+        // references for this frame.
+        let mut ref_ids = self
+            .pic_metadata
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(id, md)| {
+                let id = id as u32;
+                if md.ref_count == 0 {
+                    None
+                } else if frame_state.ref_ids.contains(&id) {
+                    md.ref_count -= 1;
+                    Some((id, true))
+                } else {
+                    Some((id, false))
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // Sort in descending order of POC.
+        ref_ids.sort_by_key(|(id, _)| {
+            std::cmp::Reverse(self.pic_metadata[*id as usize].pic_order_cnt)
+        });
+
         let mut short_term_refs = StdVideoH265ShortTermRefPicSet {
-            used_by_curr_pic_s0_flag: if ref_pics.is_empty() { 0 } else { 1 },
-            num_negative_pics: ref_pics.len() as u8,
-            used_by_curr_pic_s1_flag: 0, // No forward refs.
+            used_by_curr_pic_s0_flag: 0,
+            num_negative_pics: ref_ids.len() as u8,
+            // No forward refs.
+            used_by_curr_pic_s1_flag: 0,
             num_positive_pics: 0,
             ..std::mem::zeroed()
         };
 
         let pic_order_cnt = frame_state.gop_position as i32;
-        for (idx, id) in frame_state.ref_ids.iter().enumerate() {
-            short_term_refs.delta_poc_s0_minus1[idx] =
-                (pic_order_cnt - self.pic_metadata[*id as usize].pic_order_cnt - 1) as u16;
+        let mut delta_poc = 0;
+        for (idx, (id, is_direct_ref)) in ref_ids.into_iter().enumerate() {
+            delta_poc = (pic_order_cnt - self.pic_metadata[id as usize].pic_order_cnt) - delta_poc;
+            short_term_refs.delta_poc_s0_minus1[idx] = (delta_poc - 1) as u16;
+            if is_direct_ref {
+                short_term_refs.used_by_curr_pic_s0_flag |= 1 << idx;
+            }
         }
 
         let mut std_pic_info = vk::native::StdVideoEncodeH265PictureInfo {
@@ -531,7 +556,7 @@ impl H265Encoder {
             .set_IrapPicFlag(frame_state.is_keyframe as u32);
         std_pic_info
             .flags
-            .set_is_reference(frame_state.is_reference as u32);
+            .set_is_reference((frame_state.forward_ref_count > 0) as u32);
 
         if frame_state.is_keyframe {
             std_pic_info.flags.set_pic_output_flag(1);
@@ -590,10 +615,11 @@ impl H265Encoder {
         self.pic_metadata[frame_state.id as usize] = H265Metadata {
             pic_type,
             pic_order_cnt,
+            ref_count: frame_state.forward_ref_count,
         };
 
         // This is supposed to increment only for reference frames.
-        if frame_state.is_reference {
+        if frame_state.forward_ref_count > 0 {
             self.frame_num += 1;
         }
 

@@ -414,7 +414,7 @@ impl EncoderInner {
             setup_slot = setup_pic.index,
             gop_position = frame_state.gop_position,
             is_keyframe = frame_state.is_keyframe,
-            is_reference = frame_state.is_reference,
+            forward_ref_count = frame_state.forward_ref_count,
             input_image = ?input.image,
             "encoding frame"
         );
@@ -546,7 +546,7 @@ impl EncoderInner {
             );
 
             // Update state as if the operation succeeded.
-            if frame_state.is_reference {
+            if frame_state.forward_ref_count > 0 {
                 // Keyframes clear all dpb slots.
                 if frame_state.is_keyframe {
                     self.dpb.clear();

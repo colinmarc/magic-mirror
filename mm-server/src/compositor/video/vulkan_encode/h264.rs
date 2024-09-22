@@ -431,7 +431,7 @@ impl H264Encoder {
             .set_IdrPicFlag(frame_state.is_keyframe as u32);
         std_pic_info
             .flags
-            .set_is_reference(frame_state.is_reference as u32);
+            .set_is_reference((frame_state.forward_ref_count > 0) as u32);
 
         let mut h264_pic_info = vk::VideoEncodeH264PictureInfoEXT::default()
             .nalu_slice_entries(&nalu_slice_entries)
@@ -494,7 +494,7 @@ impl H264Encoder {
         };
 
         // This is supposed to increment only for reference frames.
-        if frame_state.is_reference {
+        if frame_state.forward_ref_count > 0 {
             self.frame_num += 1;
         }
 

@@ -9,9 +9,11 @@ pub struct GopFrame {
     pub gop_position: u64,
 
     pub id: u32,
+    /// The frame IDs this frame references.
     pub ref_ids: Vec<u32>,
     pub is_keyframe: bool,
-    pub is_reference: bool,
+    /// The number of frames referencing this one.
+    pub forward_ref_count: u32,
 }
 
 /// This implements hierarchical P-coding, which looks like this:
@@ -67,6 +69,14 @@ impl HierarchicalP {
             vec![ref_layer]
         };
 
+        let forward_ref_count = if layer == 0 {
+            // One for each layer above, plus the next mini-GOP.
+            self.layers
+        } else {
+            // One for each layer above.
+            self.layers - layer - 1
+        };
+
         // We use the layer as the frame ID.
         let frame = GopFrame {
             stream_position: self.frame_num,
@@ -75,7 +85,7 @@ impl HierarchicalP {
             id: layer,
             ref_ids,
             is_keyframe: gop_position == 0,
-            is_reference: layer == 0 || layer != (self.layers - 1),
+            forward_ref_count,
         };
 
         self.frame_num += 1;
@@ -123,7 +133,7 @@ mod test {
                 id: 0,
                 ref_ids: vec![],
                 is_keyframe: true,
-                is_reference: true,
+                forward_ref_count: 3,
             },
             GopFrame {
                 stream_position: 1,
@@ -131,7 +141,7 @@ mod test {
                 id: 2,
                 ref_ids: vec![0],
                 is_keyframe: false,
-                is_reference: false,
+                forward_ref_count: 0,
             },
             GopFrame {
                 stream_position: 2,
@@ -139,7 +149,7 @@ mod test {
                 id: 1,
                 ref_ids: vec![0],
                 is_keyframe: false,
-                is_reference: true,
+                forward_ref_count: 1,
             },
             GopFrame {
                 stream_position: 3,
@@ -147,7 +157,7 @@ mod test {
                 id: 2,
                 ref_ids: vec![1],
                 is_keyframe: false,
-                is_reference: false,
+                forward_ref_count: 0,
             },
             GopFrame {
                 stream_position: 4,
@@ -155,7 +165,7 @@ mod test {
                 id: 0,
                 ref_ids: vec![0],
                 is_keyframe: false,
-                is_reference: true,
+                forward_ref_count: 3,
             },
             GopFrame {
                 stream_position: 5,
@@ -163,7 +173,7 @@ mod test {
                 id: 2,
                 ref_ids: vec![0],
                 is_keyframe: false,
-                is_reference: false,
+                forward_ref_count: 0,
             },
             GopFrame {
                 stream_position: 6,
@@ -171,7 +181,7 @@ mod test {
                 id: 1,
                 ref_ids: vec![0],
                 is_keyframe: false,
-                is_reference: true,
+                forward_ref_count: 1,
             },
             GopFrame {
                 stream_position: 7,
@@ -179,7 +189,7 @@ mod test {
                 id: 2,
                 ref_ids: vec![1],
                 is_keyframe: false,
-                is_reference: false,
+                forward_ref_count: 0,
             },
         ];
 
@@ -199,7 +209,7 @@ mod test {
                 id: 0,
                 ref_ids: vec![],
                 is_keyframe: true,
-                is_reference: true,
+                forward_ref_count: 1,
             },
             GopFrame {
                 stream_position: 1,
@@ -207,7 +217,7 @@ mod test {
                 id: 0,
                 ref_ids: vec![0],
                 is_keyframe: false,
-                is_reference: true,
+                forward_ref_count: 1,
             },
             GopFrame {
                 stream_position: 2,
@@ -215,7 +225,7 @@ mod test {
                 id: 0,
                 ref_ids: vec![0],
                 is_keyframe: false,
-                is_reference: true,
+                forward_ref_count: 1,
             },
             GopFrame {
                 stream_position: 3,
@@ -223,7 +233,7 @@ mod test {
                 id: 0,
                 ref_ids: vec![0],
                 is_keyframe: false,
-                is_reference: true,
+                forward_ref_count: 1,
             },
         ];
 
