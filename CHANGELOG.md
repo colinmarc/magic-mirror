@@ -1,3 +1,15 @@
+## [mmclient-v0.4.0] - 2024-10-02
+
+### New Features
+
+- Plumb controller input through to the server (990f48cdac4181e69ac3cb5dd1473fe16fca3390)
+
+### Bugfixes
+
+- Remove unecessary clone (87c95e63f6c6ce2f63207f96da839408f4617785)
+- Rename Gamepad* enums to reduce the possibility of collision (5fd2241beff203c5c09089456e9326102213c2c2)
+- Prevent a reattaching doom loop (dfa5d75e8daefa3dc15468145f55a5d06e7cd6e1)
+
 ## [mmserver-v0.4.1] - 2024-08-16
 
 ### Bugfixes
