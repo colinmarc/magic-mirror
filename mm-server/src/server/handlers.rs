@@ -295,6 +295,7 @@ fn attach(
                     ErrorCode::ErrorServer,
                     Some("failed to attach to session".to_string()),
                 );
+
                 return;
             }
         }

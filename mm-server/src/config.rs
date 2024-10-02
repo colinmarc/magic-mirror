@@ -66,6 +66,8 @@ mod parsed {
         pub(super) include_apps: Option<Vec<PathBuf>>,
         pub(super) apps: Option<HashMap<String, AppConfig>>,
 
+        pub(super) data_home: Option<PathBuf>,
+
         #[converge(nest)]
         pub(super) server: Option<ServerConfig>,
         #[converge(nest)]
@@ -88,6 +90,8 @@ mod parsed {
     pub(super) struct DefaultAppSettings {
         pub(super) xwayland: Option<bool>,
         pub(super) force_1x_scale: Option<bool>,
+        pub(super) isolate_home: Option<bool>,
+        pub(super) tmp_home: Option<bool>,
     }
 
     #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -98,6 +102,9 @@ mod parsed {
         pub(super) environment: Option<HashMap<String, String>>,
         pub(super) xwayland: Option<bool>,
         pub(super) force_1x_scale: Option<bool>,
+        pub(super) isolate_home: Option<bool>,
+        pub(super) shared_home_name: Option<String>,
+        pub(super) tmp_home: Option<bool>,
     }
 }
 
@@ -105,6 +112,8 @@ mod parsed {
 pub struct Config {
     pub server: ServerConfig,
     pub apps: HashMap<String, AppConfig>,
+    pub data_home: PathBuf,
+
     pub bug_report_dir: Option<PathBuf>,
 }
 
@@ -125,6 +134,14 @@ pub struct AppConfig {
     pub env: HashMap<OsString, OsString>,
     pub xwayland: bool,
     pub force_1x_scale: bool,
+    pub home_isolation_mode: HomeIsolationMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeIsolationMode {
+    Unisolated,
+    Tmpfs,
+    Permanent(PathBuf),
 }
 
 impl Config {
@@ -162,6 +179,23 @@ impl Config {
             defaults
         };
 
+        let data_home = input.data_home.or_else(|| {
+            if let Ok(xdg_data_home) = std::env::var("XDG_DATA_HOME") {
+                Some(Path::new(&xdg_data_home).join("mmserver"))
+            } else if let Ok(home) = std::env::var("HOME") {
+                Some(
+                    Path::new(&home)
+                        .join(".local")
+                        .join("share")
+                        .join("mmserver"),
+                )
+            } else {
+                None
+            }
+        });
+
+        let data_home = data_home.ok_or(anyhow::anyhow!("failed to determine `data_home`. Set it explicitly or set one of $HOME or $XDG_DATA_HOME"))?;
+
         // We only unwrap values that should have been set in the default
         // config. This is verified by a test.
         let server = input.server.unwrap();
@@ -179,6 +213,7 @@ impl Config {
                     parsed::MaxConnections::Infinity => None,
                 },
             },
+            data_home: data_home.clone(),
             apps: HashMap::new(), // Handled below.
             bug_report_dir: None, // This is only set from the command line.
         };
@@ -204,6 +239,28 @@ impl Config {
                 bail!("duplicate app name: {}", name);
             }
 
+            let isolate_home = app
+                .isolate_home
+                .or(default_app_settings.isolate_home)
+                .unwrap();
+            let tmp_home = app.tmp_home.or(default_app_settings.tmp_home).unwrap();
+            let home_isolation_mode = match (isolate_home, tmp_home) {
+                (false, true) => bail!("if isolate_home = false, tmp_home must also be false"),
+                (false, false) => HomeIsolationMode::Unisolated,
+                (true, true) => HomeIsolationMode::Tmpfs,
+                (true, false) => {
+                    if let Some(s) = app.shared_home_name {
+                        if !NAME_RE.is_match(&s) {
+                            bail!("invalid shared_home_name: {s}",)
+                        }
+
+                        HomeIsolationMode::Permanent(data_home.join("homes").join(s))
+                    } else {
+                        HomeIsolationMode::Permanent(data_home.join("homes").join(&name))
+                    }
+                }
+            };
+
             let res = AppConfig {
                 description: app.description,
                 command: app.command.into_iter().map(OsString::from).collect(),
@@ -218,6 +275,7 @@ impl Config {
                     .force_1x_scale
                     .or(default_app_settings.force_1x_scale)
                     .unwrap(),
+                home_isolation_mode,
             };
 
             this.apps.insert(name, res);
@@ -236,7 +294,7 @@ impl Config {
 
         for (name, app) in &self.apps {
             if app.command.is_empty() {
-                bail!("empty command for application {:?}", name);
+                bail!("empty command for application {name:?}");
             }
         }
 
@@ -349,6 +407,7 @@ mod test {
             env: HashMap::new(),
             xwayland: true,
             force_1x_scale: false,
+            home_isolation_mode: HomeIsolationMode::Unisolated,
         };
     }
 
@@ -374,6 +433,7 @@ mod test {
             r#"
             [apps.example]
             command = ["echo", "hello"]
+            isolate_home = false
             "#,
         )
         .unwrap();
