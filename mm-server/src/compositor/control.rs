@@ -7,6 +7,7 @@ use crossbeam_channel::Sender;
 use crate::{
     codec::{AudioCodec, VideoCodec},
     color::VideoProfile,
+    compositor::ButtonState,
     pixel_scale::PixelScale,
 };
 
@@ -47,7 +48,7 @@ pub enum ControlMessage {
     Detach(u64),
     UpdateDisplayParams(DisplayParams),
     KeyboardInput {
-        evdev_scancode: u32,
+        key_code: u32,
         state: super::KeyState,
         char: Option<char>,
     },
@@ -59,10 +60,27 @@ pub enum ControlMessage {
         x: f64,
         y: f64,
         button_code: u32,
-        state: super::ButtonState,
+        state: ButtonState,
     },
     PointerAxis(f64, f64),
     PointerAxisDiscrete(f64, f64),
+    // GamepadAvailable(u64),
+    // GamepadUnavailable(u64),
+    GamepadAxis {
+        _id: u64,
+        axis_code: u32,
+        value: f64,
+    },
+    GamepadTrigger {
+        _id: u64,
+        trigger_code: u32,
+        value: f64,
+    },
+    GamepadInput {
+        _id: u64,
+        button_code: u32,
+        state: ButtonState,
+    },
 }
 
 #[derive(Debug, Clone)]

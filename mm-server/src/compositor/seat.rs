@@ -13,12 +13,13 @@ use wayland_protocols::wp::{
 };
 use wayland_server::{
     protocol::{wl_keyboard, wl_pointer, wl_surface},
-    Resource as _,
+    Resource,
 };
 
 use crate::compositor::{
     buffers::BufferBacking,
     oneshot_render::shm_to_png,
+    protocols::wp_game_controller,
     sealed::SealedFile,
     serial::Serial,
     surface::{surface_vector_to_buffer, SurfaceKey, SurfaceRole},
@@ -91,6 +92,8 @@ pub struct Seat {
     pointer_lock: Option<(wl_surface::WlSurface, PointerLock)>,
 
     cursor: Cursor,
+
+    gamepads: HashSet<wp_game_controller::WpGameControllerV1>,
 }
 
 impl Default for Seat {
@@ -116,6 +119,8 @@ impl Default for Seat {
             pointer_lock: None,
 
             cursor: Cursor::default(),
+
+            gamepads: HashSet::default(),
         }
     }
 }
@@ -396,6 +401,14 @@ impl Seat {
                 wl_keyboard.leave(serial.next(), &old_surf);
             }
 
+            for wp_game_controller in self
+                .gamepads
+                .iter()
+                .filter(|ti| ti.id().same_client_as(&old_surf.id()))
+            {
+                wp_game_controller.leave(serial.next(), &old_surf);
+            }
+
             for wp_text_input in self
                 .text_inputs
                 .iter()
@@ -415,6 +428,14 @@ impl Seat {
                 // TODO we're responsible for sending the list of depressed
                 // modifiers. For our use case, this isn't very important.
                 wl_keyboard.modifiers(serial.next(), 0, 0, 0, 0);
+            }
+
+            for wp_game_controller in self
+                .gamepads
+                .iter()
+                .filter(|ti| ti.id().same_client_as(&new_surf.id()))
+            {
+                wp_game_controller.enter(serial.next(), new_surf);
             }
 
             for wp_text_input in self
@@ -554,6 +575,63 @@ impl Seat {
                 *defunct = true;
             }
             _ => (),
+        }
+    }
+
+    pub fn add_gamepad(&mut self, global: wp_game_controller::WpGameControllerV1) {
+        global.name("Generic Remote Controller".to_string()); // TODO: determine from layout
+        global.done();
+
+        self.gamepads.insert(global);
+    }
+
+    pub fn destroy_gamepad(&mut self, global: &wp_game_controller::WpGameControllerV1) {
+        self.gamepads.remove(global);
+    }
+
+    pub fn focused_gamepads(
+        &self,
+    ) -> impl Iterator<Item = &wp_game_controller::WpGameControllerV1> {
+        let client_id = self
+            .keyboard_focus
+            .as_ref()
+            .and_then(|focus| focus.client())
+            .map(|c| c.id());
+
+        self.gamepads
+            .iter()
+            .filter(move |k| k.is_alive() && k.client().map(|c| c.id()) == client_id)
+    }
+
+    pub fn gamepad_axis(&self, scancode: u32, value: f64) {
+        let ts = EPOCH.elapsed().as_micros() as u32;
+
+        for wp_game_controller in self.focused_gamepads() {
+            wp_game_controller.axis(scancode, value, ts);
+            wp_game_controller.frame();
+        }
+    }
+
+    pub fn gamepad_trigger(&self, scancode: u32, value: f64) {
+        let ts = EPOCH.elapsed().as_micros() as u32;
+
+        for wp_game_controller in self.focused_gamepads() {
+            wp_game_controller.trigger(scancode, value, ts);
+            wp_game_controller.frame();
+        }
+    }
+
+    pub fn gamepad_input(&self, scancode: u32, state: ButtonState) {
+        let ts = EPOCH.elapsed().as_micros() as u32;
+
+        let state = match state {
+            ButtonState::Pressed => wp_game_controller::ButtonState::Pressed,
+            ButtonState::Released => wp_game_controller::ButtonState::Released,
+        };
+
+        for wp_game_controller in self.focused_gamepads() {
+            wp_game_controller.button(scancode, state, ts);
+            wp_game_controller.frame();
         }
     }
 }
