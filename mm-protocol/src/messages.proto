@@ -198,6 +198,20 @@ message AudioChannels {
   repeated Channel channels = 1;
 }
 
+// ### Gamepad
+//
+// A gamepad ID and metadata.
+message Gamepad {
+  enum GamepadLayout {
+    GAMEPAD_LAYOUT_UNKNOWN = 0;
+    GAMEPAD_LAYOUT_GENERIC_DUAL_STICK = 1;
+    GAMEPAD_LAYOUT_SONY_DUALSHOCK = 2;
+  }
+
+  uint64 id = 1;            // Required.
+  GamepadLayout layout = 2; // Required.
+}
+
 // ## Errors and exceptions
 
 // ### 001 - Error
@@ -354,6 +368,14 @@ message LaunchSession {
   string application_name = 1;
 
   VirtualDisplayParameters display_params = 10; // Required.
+
+  // Any gamepads that should be available at the start of the session. This is
+  // sometimes important for applications that don't correctly support
+  // hotplugged devices.
+  //
+  // These gamepads should be considered permanently connected, and
+  // GamepadUnavailable events should be ignored for them.
+  repeated Gamepad permanent_gamepads = 20;
 }
 
 // ### 014 - Session Launched
@@ -381,8 +403,6 @@ message UpdateSession {
   uint64 session_id = 1; // Required.
 
   VirtualDisplayParameters display_params = 10;
-
-  // TODO: dynamic conf
 }
 
 // ### 016 - Session Updated
@@ -414,6 +434,9 @@ message SessionList {
 
     // Required. Must include at least the `render_resolution` of the session.
     repeated Size supported_streaming_resolutions = 13;
+
+    // Required if any were set in the original `013 - Launch Session` event.
+    repeated Gamepad permanent_gamepads = 20;
 
     // TODO attachable type?
     // TODO existing attachments?
@@ -1039,19 +1062,9 @@ message RelativePointerMotion {
 // original `030 - Attach` message, indicates that a gamepad is available
 // on the client.
 message GamepadAvailable {
-  // The gamepad button layout.
-  enum GamepadLayout {
-    CONTROLLER_LAYOUT_UNKNOWN = 0;
-    CONTROLLER_LAYOUT_GENERIC_DUAL_STICK = 1;
-    CONTROLLER_LAYOUT_SONY_DUALSHOCK = 2;
-  }
-
-  // Required. A client-provided identifier that should remain stable if the
-  // gamepad is unplugged and replugged.
-  uint64 id = 1;
-
-  // Required.
-  GamepadLayout layout = 2;
+  // Required. The ID should remain stable if the gamepad is unplugged and
+  // replugged.
+  Gamepad gamepad = 1;
 }
 
 // ### 071 - Gamepad Unavailable
@@ -1060,7 +1073,7 @@ message GamepadAvailable {
 // original `030 - Attach` message, indicates that a gamepad is no longer
 // available, for example because it was unplugged.
 message GamepadUnavailable {
-  uint64 id = 1;
+  uint64 id = 1; // Required.
 }
 
 // ### 072 - Gamepad Motion

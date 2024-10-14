@@ -163,6 +163,7 @@ fn list_sessions(state: SharedState, response: &WakingSender<protocol::MessageTy
             session_start: Some(s.started.into()),
             display_params: Some(s.display_params.into()),
             supported_streaming_resolutions: generate_streaming_res(&s.display_params),
+            permanent_gamepads: Vec::new(),
         })
         .collect();
 

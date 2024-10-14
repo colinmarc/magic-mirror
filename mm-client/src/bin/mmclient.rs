@@ -741,11 +741,9 @@ impl App {
             }
             AppEvent::GamepadEvent(gev) if self.attachment_sid.is_some() => {
                 let msg: protocol::MessageType = match gev {
-                    GamepadEvent::Available(id, layout) => protocol::GamepadAvailable {
-                        id,
-                        layout: layout.into(),
+                    GamepadEvent::Available(pad) => {
+                        protocol::GamepadAvailable { gamepad: Some(pad) }.into()
                     }
-                    .into(),
                     GamepadEvent::Unavailable(id) => protocol::GamepadUnavailable { id }.into(),
                     GamepadEvent::Input(id, button, state) => protocol::GamepadInput {
                         gamepad_id: id,
@@ -979,6 +977,7 @@ fn main() -> Result<()> {
     }
 
     let event_loop: EventLoop<AppEvent> = EventLoop::with_user_event().build()?;
+    let proxy = event_loop.create_proxy();
 
     let target = args.app.unwrap();
     let mut matched = find_sessions(sessions, &target);
@@ -1015,10 +1014,21 @@ fn main() -> Result<()> {
         ui_scale: Some(determine_ui_scale(args.ui_scale.unwrap_or(window_ui_scale))),
     };
 
+    // TODO: If any gamepads are plugged at startup, we send them as "permanent"
+    // gamepads. This could be exposed as an option.
+    let initial_gamepads = spawn_gamepad_monitor(proxy.clone())?;
+    let gamepads = initial_gamepads
+        .into_iter()
+        .map(|(id, layout)| protocol::Gamepad {
+            id,
+            layout: layout.into(),
+        })
+        .collect();
+
     let session_id = if args.launch || matched.is_empty() {
         info!("launching a new session for for app {:?}", target);
 
-        let new_sess = match launch_session(&mut conn, &target, desired_params) {
+        let new_sess = match launch_session(&mut conn, &target, desired_params, gamepads) {
             Ok(v) => v,
             Err(e) => {
                 conn.close()?;
@@ -1066,6 +1076,13 @@ fn main() -> Result<()> {
     )?);
     let renderer = Renderer::new(vk.clone(), window.clone(), args.hdr)?;
 
+    let mut conn = conn.bind_event_loop(proxy.clone());
+
+    let audio_stream = audio::AudioStream::new()?;
+    let video_stream = video::VideoStream::new(vk.clone(), proxy.clone());
+
+    let now = time::Instant::now();
+
     debug!("attaching session {:?}", session.session_id);
     let attachment_sid = conn.send(
         protocol::Attach {
@@ -1081,15 +1098,6 @@ fn main() -> Result<()> {
         None,
         false,
     )?;
-
-    let proxy = event_loop.create_proxy();
-    let conn = conn.bind_event_loop(proxy.clone());
-
-    let audio_stream = audio::AudioStream::new()?;
-    let video_stream = video::VideoStream::new(vk.clone(), proxy.clone());
-    spawn_gamepad_monitor(proxy.clone())?;
-
-    let now = time::Instant::now();
 
     let mut flash = Flash::new();
     flash.set_message("connecting...");
@@ -1325,6 +1333,7 @@ fn launch_session(
     conn: &mut Conn,
     app: &str,
     display_params: protocol::VirtualDisplayParameters,
+    permanent_gamepads: Vec<protocol::Gamepad>,
 ) -> Result<protocol::SessionLaunched> {
     info!("launching session for app {:?}", app);
 
@@ -1332,6 +1341,7 @@ fn launch_session(
         protocol::LaunchSession {
             application_name: app.to_string(),
             display_params: Some(display_params),
+            permanent_gamepads,
         },
         INIT_TIMEOUT,
     ) {

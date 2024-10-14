@@ -149,6 +149,7 @@ fn main() -> anyhow::Result<()> {
                 framerate_hz: framerate,
                 ..Default::default()
             }),
+            ..Default::default()
         },
         time::Duration::from_secs(1),
     )? {

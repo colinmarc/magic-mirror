@@ -23,6 +23,7 @@ bytes = "1.5.0"
 cstr = "0.2.11"
 ffmpeg-next = "7"
 ffmpeg-sys-next = "7"
+oneshot = { version = "0.1", default-features = false, features = ["std"] }
 quiche = { version = "0.18.0", features = ["qlog"] }
 ring = "0.16.20"
 tracing = "0.1.37"

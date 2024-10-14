@@ -100,7 +100,7 @@ fn main() -> Result<()> {
     let mut cfg = config::Config::new(args.config.as_ref(), &args.include_apps)
         .context("failed to read config")?;
 
-    preflight_checks(&cfg)?;
+    preflight_checks()?;
 
     // Override with command line flags.
     cfg.bug_report_dir = bug_report_dir.clone();
@@ -182,7 +182,7 @@ fn init_logging(bug_report_dir: Option<impl AsRef<Path>>) -> Result<()> {
     Ok(())
 }
 
-fn preflight_checks(config: &config::Config) -> anyhow::Result<()> {
+fn preflight_checks() -> anyhow::Result<()> {
     match linux_version() {
         Some((major, minor)) if major < 6 => {
             bail!("kernel version {major}.{minor} is too low; 6.x required");
@@ -190,11 +190,6 @@ fn preflight_checks(config: &config::Config) -> anyhow::Result<()> {
         None => warn!("unable to determine linux kernel version!"),
         _ => (),
     }
-
-    std::fs::create_dir_all(&config.data_home).context(format!(
-        "failed to initialize data_home ({})",
-        config.data_home.display(),
-    ))?;
 
     Ok(())
 }

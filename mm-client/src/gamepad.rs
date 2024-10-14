@@ -2,21 +2,22 @@
 //
 // SPDX-License-Identifier: MIT
 
-use std::collections::HashMap;
+use std::{collections::HashMap, time};
 
-use anyhow::anyhow;
-use gilrs::{Event, EventType, Gamepad};
+use anyhow::{anyhow, bail};
+use gilrs::{Event, EventType};
 
 use mm_protocol::{
-    gamepad_available::GamepadLayout,
+    gamepad::GamepadLayout,
     gamepad_input::{GamepadButton, GamepadButtonState},
     gamepad_motion::GamepadAxis,
+    Gamepad,
 };
 use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
 pub enum GamepadEvent {
-    Available(u64, GamepadLayout),
+    Available(Gamepad),
     Unavailable(u64),
     Input(u64, GamepadButton, GamepadButtonState),
     Motion(u64, GamepadAxis, f64),
@@ -102,15 +103,22 @@ impl RemoteGamepad {
     }
 }
 
-pub fn spawn_gamepad_monitor<T>(proxy: winit::event_loop::EventLoopProxy<T>) -> anyhow::Result<()>
+/// Spawns a thread to watch for gamepad events. Returns the initial list of
+/// available gamepads.
+pub fn spawn_gamepad_monitor<T>(
+    proxy: winit::event_loop::EventLoopProxy<T>,
+) -> anyhow::Result<Vec<(u64, GamepadLayout)>>
 where
     T: From<GamepadEvent> + Send,
 {
     let mut gilrs =
         gilrs::Gilrs::new().map_err(|e| anyhow!("failed to create gilrs context: {e:?}"))?;
 
+    let (initial_tx, initial_rx) = oneshot::channel();
+
     std::thread::spawn(move || {
         let mut remote_gamepads = HashMap::new();
+        let mut initial = Vec::new();
 
         for (id, pad) in gilrs.gamepads() {
             let protocol_id = gamepad_id(pad.uuid());
@@ -124,7 +132,11 @@ where
                 },
             );
 
-            let _ = proxy.send_event(GamepadEvent::Available(protocol_id, layout).into());
+            initial.push((protocol_id, layout));
+        }
+
+        if initial_tx.send(initial).is_err() {
+            return;
         }
 
         loop {
@@ -161,7 +173,13 @@ where
                 );
 
                 if proxy
-                    .send_event(GamepadEvent::Available(protocol_id, layout(pad)).into())
+                    .send_event(
+                        GamepadEvent::Available(Gamepad {
+                            id: protocol_id,
+                            layout: layout(pad).into(),
+                        })
+                        .into(),
+                    )
                     .is_err()
                 {
                     break;
@@ -175,7 +193,10 @@ where
         }
     });
 
-    Ok(())
+    match initial_rx.recv_timeout(time::Duration::from_secs(1)) {
+        Ok(initial) => Ok(initial),
+        Err(_) => bail!("gamepad monitor thread panicked"),
+    }
 }
 
 fn handle_gilrs_event<T>(
@@ -255,10 +276,10 @@ fn gamepad_id(uuid: [u8; 16]) -> u64 {
     u64::from_ne_bytes(last_64)
 }
 
-fn layout(pad: Gamepad) -> GamepadLayout {
+fn layout(pad: gilrs::Gamepad) -> GamepadLayout {
     match pad.vendor_id() {
-        Some(0x54c) => GamepadLayout::ControllerLayoutSonyDualshock,
-        _ => GamepadLayout::ControllerLayoutGenericDualStick,
+        Some(0x54c) => GamepadLayout::SonyDualshock,
+        _ => GamepadLayout::GenericDualStick,
     }
 }
 
