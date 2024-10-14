@@ -11,6 +11,7 @@ use std::{
 use anyhow::{anyhow, bail, Context};
 use crossbeam_channel as crossbeam;
 use lazy_static::lazy_static;
+use mm_protocol as protocol;
 use pathsearch::find_executable_in_path;
 use tracing::{debug_span, info};
 
@@ -18,7 +19,7 @@ use crate::{
     codec::probe_codec,
     compositor::{
         AudioStreamParams, Compositor, CompositorEvent, ControlMessage, DisplayParams,
-        VideoStreamParams,
+        GamepadLayout, VideoStreamParams,
     },
 };
 use crate::{vulkan::VkContext, waking_sender::WakingSender};
@@ -32,6 +33,7 @@ pub struct Session {
     pub application_name: String,
     pub started: time::SystemTime,
     pub detached_since: Option<time::Instant>,
+    pub permanent_gamepads: Vec<protocol::Gamepad>,
     pub defunct: bool,
 
     comp_thread_handle: std::thread::JoinHandle<anyhow::Result<()>>,
@@ -57,6 +59,7 @@ impl Session {
         application_name: &str,
         application_config: &super::config::AppConfig,
         display_params: DisplayParams,
+        permanent_gamepads: Vec<protocol::Gamepad>,
         bug_report_dir: Option<PathBuf>,
     ) -> anyhow::Result<Self> {
         let id = generate_id();
@@ -78,6 +81,11 @@ impl Session {
         let vk_clone = vk.clone();
         let app_name = application_name.to_owned();
         let app_cfg = application_config.clone();
+        let gamepads = permanent_gamepads
+            .iter()
+            .map(|pad| (pad.id, GamepadLayout::GenericDualStick)) // TODO layout.
+            .collect();
+
         let bug_report_dir_clone = bug_report_dir.clone();
         let comp_thread_handle = std::thread::spawn(move || {
             tracy_client::set_thread_name!("compositor");
@@ -89,6 +97,7 @@ impl Session {
                 vk_clone,
                 app_cfg,
                 display_params,
+                gamepads,
                 bug_report_dir_clone,
                 ready_send,
             )
@@ -112,6 +121,7 @@ impl Session {
             id,
             application_name: application_name.to_string(),
             display_params,
+            permanent_gamepads,
             started: time::SystemTime::now(),
             defunct: false,
             detached_since: None,

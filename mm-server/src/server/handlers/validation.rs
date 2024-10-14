@@ -8,7 +8,7 @@ use tracing::debug;
 use crate::{
     codec::{AudioCodec, VideoCodec},
     color::VideoProfile,
-    compositor::{AudioStreamParams, DisplayParams, VideoStreamParams},
+    compositor::{AudioStreamParams, DisplayParams, GamepadLayout, VideoStreamParams},
     pixel_scale::PixelScale,
     waking_sender::WakingSender,
 };
@@ -185,6 +185,33 @@ pub fn validate_channels(channels: Option<protocol::AudioChannels>) -> Result<u3
             }
         }
         None => Ok(2), // Default to stereo.
+    }
+}
+
+pub fn validate_gamepad(gamepad: Option<protocol::Gamepad>) -> Result<(u64, GamepadLayout)> {
+    let Some(gamepad) = gamepad else {
+        return Err(ValidationError::Invalid("gamepad is required".into()));
+    };
+
+    let id = validate_gamepad_id(gamepad.id)?;
+    let layout = validate_gamepad_layout(gamepad.layout)?;
+    Ok((id, layout))
+}
+
+pub fn validate_gamepad_id(id: u64) -> Result<u64> {
+    if id == 0 {
+        Err(ValidationError::Invalid("id must be non-zero".into()))
+    } else {
+        Ok(id)
+    }
+}
+
+pub fn validate_gamepad_layout(layout: i32) -> Result<GamepadLayout> {
+    match layout.try_into() {
+        Err(_) | Ok(protocol::gamepad::GamepadLayout::Unknown) => {
+            Err(ValidationError::Invalid("invalid gamepad layout".into()))
+        }
+        Ok(_) => Ok(GamepadLayout::GenericDualStick), // TODO
     }
 }
 
