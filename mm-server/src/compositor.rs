@@ -8,6 +8,7 @@ mod child;
 mod control;
 mod dispatch;
 mod handle;
+mod input;
 mod oneshot_render;
 mod output;
 mod protocols;
@@ -63,6 +64,7 @@ use crate::{
 use child::*;
 pub use control::*;
 pub use handle::*;
+pub use input::GamepadLayout;
 use protocols::*;
 pub use seat::{ButtonState, KeyState};
 
@@ -120,6 +122,8 @@ pub struct State {
     output_proxies: Vec<wl_output::WlOutput>,
 
     default_seat: seat::Seat,
+    input_manager: input::InputDeviceManager,
+    gamepads: HashMap<u64, input::GamepadHandle>,
 
     app_config: AppConfig,
     display_params: DisplayParams,
@@ -174,6 +178,7 @@ impl Compositor {
         vk: Arc<VkContext>,
         app_config: AppConfig,
         display_params: DisplayParams,
+        permanent_gamepads: Vec<(u64, GamepadLayout)>,
         bug_report_dir: Option<PathBuf>,
         ready_send: oneshot::Sender<WakingSender<ControlMessage>>,
     ) -> anyhow::Result<()> {
@@ -221,6 +226,15 @@ impl Compositor {
 
         let cached_dmabuf_feedback = buffers::CachedDmabufFeedback::new(vk.clone())?;
 
+        // Set up input emulation (this is just for gamepads).
+        let mut input_manager = input::InputDeviceManager::new(&mut container)?;
+        let mut gamepads = HashMap::new();
+
+        for (pad_id, layout) in permanent_gamepads {
+            let dev = input_manager.plug_gamepad(pad_id, layout, true)?;
+            gamepads.insert(pad_id, dev);
+        }
+
         let state = State {
             serial: serial::Serial::new(),
 
@@ -236,6 +250,8 @@ impl Compositor {
             output_proxies: Vec::new(),
 
             default_seat: seat::Seat::default(),
+            input_manager,
+            gamepads,
 
             app_config: app_config.clone(),
             display_params,
@@ -312,7 +328,9 @@ impl Compositor {
 
         // Spawn the client with a pipe as stdout/stderr.
         let (pipe_send, mut pipe_recv) = mio::unix::pipe::new()?;
-        container.set_stdio(pipe_send)?;
+        container.set_stdout(&pipe_send)?;
+        container.set_stderr(&pipe_send)?;
+        drop(pipe_send);
 
         // Set the wayland socket and X11 sockets. The wayland socket is a
         // relative path inside XDG_RUNTIME_DIR. The X11 socket is special
@@ -576,6 +594,11 @@ impl Compositor {
 
         // Send pending pointer frames.
         self.state.default_seat.pointer_frame();
+
+        // Send pending controller SYN_REPORT events.
+        for (_, dev) in self.state.gamepads.iter_mut() {
+            dev.frame()
+        }
 
         // Release any unused buffers.
         self.state.release_buffers()?;
@@ -877,11 +900,11 @@ impl Compositor {
                 self.state.new_display_params = Some(params);
             }
             ControlMessage::KeyboardInput {
-                evdev_scancode,
+                key_code,
                 char,
                 state,
             } => {
-                trace!(evdev_scancode, ?char, ?state, "keyboard input");
+                trace!(key_code, ?char, ?state, "keyboard input");
 
                 // Attempt to send the char via text-input, then fall back to
                 // sending the keypress.
@@ -900,18 +923,16 @@ impl Compositor {
                         if state == KeyState::Repeat {
                             self.state.default_seat.keyboard_input(
                                 &self.state.serial,
-                                evdev_scancode,
+                                key_code,
                                 KeyState::Released,
                             );
 
                             state = KeyState::Pressed
                         }
 
-                        self.state.default_seat.keyboard_input(
-                            &self.state.serial,
-                            evdev_scancode,
-                            state,
-                        );
+                        self.state
+                            .default_seat
+                            .keyboard_input(&self.state.serial, key_code, state);
                     }
                 }
             }
@@ -986,6 +1007,54 @@ impl Compositor {
             }
             ControlMessage::PointerLeft => {
                 self.state.default_seat.lift_pointer(&self.state.serial);
+            }
+            ControlMessage::GamepadAvailable(id) => {
+                if !self.state.gamepads.contains_key(&id) {
+                    self.state.gamepads.insert(
+                        id,
+                        self.state.input_manager.plug_gamepad(
+                            id,
+                            input::GamepadLayout::GenericDualStick,
+                            false,
+                        )?,
+                    );
+                }
+            }
+            ControlMessage::GamepadUnavailable(id) => {
+                use hashbrown::hash_map::Entry;
+                match self.state.gamepads.entry(id) {
+                    Entry::Occupied(v) if !v.get().permanent => {
+                        v.remove();
+                    }
+                    _ => (),
+                }
+            }
+            ControlMessage::GamepadAxis {
+                id,
+                axis_code,
+                value,
+            } => {
+                if let Some(gamepad) = self.state.gamepads.get_mut(&id) {
+                    gamepad.axis(axis_code, value);
+                }
+            }
+            ControlMessage::GamepadTrigger {
+                id,
+                trigger_code,
+                value,
+            } => {
+                if let Some(gamepad) = self.state.gamepads.get_mut(&id) {
+                    gamepad.trigger(trigger_code, value);
+                }
+            }
+            ControlMessage::GamepadInput {
+                id,
+                button_code,
+                state,
+            } => {
+                if let Some(gamepad) = self.state.gamepads.get_mut(&id) {
+                    gamepad.input(button_code, state);
+                }
             }
             // Handled above.
             ControlMessage::Stop | ControlMessage::Attach { .. } => unreachable!(),
