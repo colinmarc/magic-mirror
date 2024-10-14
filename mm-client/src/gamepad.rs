@@ -13,7 +13,7 @@ use mm_protocol::{
     gamepad_motion::GamepadAxis,
     Gamepad,
 };
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 #[derive(Debug, Clone)]
 pub enum GamepadEvent {
@@ -144,6 +144,8 @@ where
                 continue;
             };
 
+            trace!(?id, ?ev, "gamepad event");
+
             if let EventType::Disconnected = ev {
                 if let Some(pad) = remote_gamepads.remove(&id) {
                     if proxy
@@ -214,7 +216,7 @@ where
         EventType::ButtonReleased(button, _) => {
             input_event(pad.id, button, GamepadButtonState::Released)
         }
-        EventType::AxisChanged(axis, value, _) => {
+        EventType::AxisChanged(axis, mut value, _) => {
             // Some gamepads treat the dpad as an axis. The protocol
             // treats it as a bunch of buttons.
             if matches!(axis, gilrs::Axis::DPadX | gilrs::Axis::DPadY) {
@@ -226,6 +228,11 @@ where
                 debug!(?ev, "skipping unknown axis event");
                 return Ok(());
             };
+
+            // Gilrs treats 1.0 as up.
+            if matches!(axis, GamepadAxis::LeftY | GamepadAxis::RightY) {
+                value *= -1.0;
+            }
 
             Some(GamepadEvent::Motion(pad.id, axis, value as _))
         }
@@ -239,7 +246,7 @@ where
                 )),
                 gilrs::Button::RightTrigger2 => Some(GamepadEvent::Motion(
                     pad.id,
-                    GamepadAxis::LeftTrigger,
+                    GamepadAxis::RightTrigger,
                     value.max(0.0) as _,
                 )),
                 _ => None,
