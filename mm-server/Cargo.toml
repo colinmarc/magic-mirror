@@ -33,7 +33,7 @@ boring = "3"
 rand = "0.8.5"
 ring = "0.16.20"
 rustix = { version = "0.38", default-features = false, features = ["mm", "mount", "pipe", "time", "thread", "stdio"] }
-southpaw = { path = "../../southpaw" }
+southpaw = { git = "https://github.com/colinmarc/southpaw", rev = "ff78fa6ce7e82c8afa5f7e365194ac083ce743b3" }
 thiserror = "1.0.48"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.17", features = ["env-filter"] }
@@ -84,7 +84,7 @@ rev = "92084df65f52aa15b704279fb6d8d26a3ee71809"
 
 [dependencies.fuser]
 git = "https://github.com/colinmarc/fuser"
-rev = "1e22afdb868a86afd20ce598aec6e634a9fdc603"
+rev = "643facdc1bcc9a3b11d7a88ebfaaaa045c3596c1"
 default-features = false
 
 [dependencies.pulseaudio]

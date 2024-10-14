@@ -909,9 +909,6 @@ fn axis_to_evdev(axis: protocol::gamepad_motion::GamepadAxis) -> Option<(u32, bo
 fn gamepad_button_to_evdev(button: protocol::gamepad_input::GamepadButton) -> Option<u32> {
     use protocol::gamepad_input::GamepadButton;
 
-    // TODO: My Dualsense actually reports Dpad events as an axis (ABS_HAT0X).
-    // Otherwise, this simulates a Sony controller.
-
     match button {
         GamepadButton::DpadLeft => Some(0x222),      // BTN_DPAD_LEFT
         GamepadButton::DpadRight => Some(0x223),     // BTN_DPAD_RIGHT

@@ -12,7 +12,7 @@ use fuser as fuse;
 use murmur3::murmur3_32 as murmur3;
 use southpaw::{
     sys::{EV_ABS, EV_KEY},
-    AbsAxis, AbsInfo, InputEvent, KeyCode, Scancode,
+    AbsAxis, AbsInfo, InputEvent, KeyCode,
 };
 use tracing::{debug, error};
 
@@ -36,7 +36,6 @@ pub struct InputDeviceManager {
 }
 
 struct DeviceState {
-    id: u64,
     short_id: u32, // Used by udevfs.
     counter: u16,
     plugged: time::SystemTime,
@@ -72,16 +71,34 @@ impl GamepadHandle {
     }
 
     pub(crate) fn trigger(&mut self, trigger_code: u32, value: f64) {
-        // todo!()
+        let value = value.clamp(0.0, 1.0) * 256.0;
+        self.ev_buffer.push(InputEvent::new(
+            EV_ABS,
+            trigger_code as u16,
+            value.floor() as i32,
+        ))
     }
 
     pub(crate) fn input(&mut self, button_code: u32, state: super::ButtonState) {
-        // TODO: the DualSense sends D-pad buttons as ABS_HAT0{X,Y}.
-
         let value = match state {
             super::ButtonState::Pressed => 1,
             super::ButtonState::Released => 0,
         };
+
+        // The DualSense sends D-pad buttons as ABS_HAT0{X,Y}.
+        let key_code = southpaw::KeyCode::try_from(button_code as u16);
+        if let Some((axis, direction)) = match key_code {
+            Ok(KeyCode::BtnDpadUp) => Some((AbsAxis::HAT0Y, -1)),
+            Ok(KeyCode::BtnDpadDown) => Some((AbsAxis::HAT0Y, 1)),
+            Ok(KeyCode::BtnDpadLeft) => Some((AbsAxis::HAT0X, -1)),
+            Ok(KeyCode::BtnDpadRight) => Some((AbsAxis::HAT0X, 1)),
+            _ => None,
+        } {
+            // Simulate a press and release, each in a frame.
+            self.ev_buffer
+                .push(InputEvent::new(EV_ABS, axis, value * direction));
+            return;
+        }
 
         self.ev_buffer
             .push(InputEvent::new(EV_KEY, button_code as u16, value));
@@ -114,7 +131,7 @@ impl InputDeviceManager {
             let mode = 0o755 | rustix::fs::FileType::Directory.as_raw_mode();
 
             let device_fd = c.fuse_mount(udevfs_path_clone, "udevfs", mode)?;
-            let mut session = fuse::Session::from_fd(device_fd, udevfs, fuse::SessionACL::Owner);
+            let mut session = fuse::Session::from_fd(udevfs, device_fd, fuse::SessionACL::Owner);
             std::thread::spawn(move || session.run());
 
             let device_fd = c.fuse_mount(southpaw_path_clone, "southpaw", mode)?;
@@ -189,24 +206,19 @@ impl InputDeviceManager {
                 KeyCode::BtnMode,
                 KeyCode::BtnThumbl,
                 KeyCode::BtnThumbr,
-                // Scancode::AbsoluteAxis(AbsAxis::X),
-                // Scancode::AbsoluteAxis(AbsAxis::Y),
-                // Scancode::AbsoluteAxis(AbsAxis::RX),
-                // Scancode::AbsoluteAxis(AbsAxis::RY),
-                // Scancode::AbsoluteAxis(AbsAxis::Z),
-                // Scancode::AbsoluteAxis(AbsAxis::RZ),
-                // Scancode::AbsoluteAxis(AbsAxis::HAT0X),
-                // Scancode::AbsoluteAxis(AbsAxis::HAT0Y),
             ])
             .supported_absolute_axis(AbsAxis::X, xy_absinfo)
             .supported_absolute_axis(AbsAxis::Y, xy_absinfo)
             .supported_absolute_axis(AbsAxis::RX, xy_absinfo)
             .supported_absolute_axis(AbsAxis::RY, xy_absinfo)
+            .supported_absolute_axis(AbsAxis::Z, trigger_absinfo)
+            .supported_absolute_axis(AbsAxis::RZ, trigger_absinfo)
+            .supported_absolute_axis(AbsAxis::HAT0X, dpad_absinfo)
+            .supported_absolute_axis(AbsAxis::HAT0Y, dpad_absinfo)
             .add_to_tree(&mut self.southpaw, &devname)?;
 
         let short_id = murmur3(&mut Cursor::new(id.to_ne_bytes()), 0).unwrap();
         guard.devices.push(DeviceState {
-            id,
             short_id,
             counter,
             devname,
@@ -288,20 +300,6 @@ mod test {
             output,
             "/sys/devices/virtual/input/event1\n/sys/devices/virtual/input/event2\n"
         );
-        Ok(())
-    }
-
-    #[test_log::test]
-    fn gilrs_gamepad_info() -> anyhow::Result<()> {
-        let output = run_in_container_with_gamepads([
-            "/home/colinmarc/src/gilrs/target/debug/examples/gamepad_info",
-        ])?;
-
-        pretty_assertions::assert_eq!(
-            output,
-            "/sys/devices/virtual/input/event1\n/sys/devices/virtual/input/event2\n"
-        );
-
         Ok(())
     }
 }

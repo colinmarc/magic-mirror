@@ -766,7 +766,7 @@ dependencies = [
 [[package]]
 name = "fuser"
 version = "0.14.0"
-source = "git+https://github.com/colinmarc/fuser?rev=1e22afdb868a86afd20ce598aec6e634a9fdc603#1e22afdb868a86afd20ce598aec6e634a9fdc603"
+source = "git+https://github.com/colinmarc/fuser?rev=643facdc1bcc9a3b11d7a88ebfaaaa045c3596c1#643facdc1bcc9a3b11d7a88ebfaaaa045c3596c1"
 dependencies = [
  "libc",
  "log",
@@ -1934,7 +1934,8 @@ dependencies = [
 
 [[package]]
 name = "southpaw"
-version = "0.1.0"
+version = "0.1.1"
+source = "git+https://github.com/colinmarc/southpaw?rev=ff78fa6ce7e82c8afa5f7e365194ac083ce743b3#ff78fa6ce7e82c8afa5f7e365194ac083ce743b3"
 dependencies = [
  "bindgen 0.70.1",
  "bit-vec",
