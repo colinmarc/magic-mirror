@@ -22,11 +22,12 @@ jobs:
           fetch-tags: true
 
       - uses: swatinem/rust-cache@v2
-      - run: cargo install git-cliff@^2.2 cargo-edit@^0.12
+      - run: cargo install git-cliff@^2.6 cargo-edit@^0.12
 
       - name: determine version
         run: |
           echo "COMPONENT=${{ matrix.component }}" | tee -a "$GITHUB_ENV"
+          echo "CURRENT_VERSION=$( git tag | grep "${{ matrix.component }}" | tail -1 )" | tee -a "$GITHUB_ENV"
 
           comp_dir="mm-${{ matrix.component }}"
           echo "COMPONENT_DIR=$comp_dir" | tee -a "$GITHUB_ENV"
@@ -40,27 +41,27 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: replace version in files
-        if: ${{ env.BUMPED_VERSION != '' }}
+        if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
         run: |
           git ls-files | grep -v CHANGELOG |\
             xargs sed -i -E "s/mm$COMPONENT-v[0-9]+\.[0-9]+\.[0-9]+/$BUMPED_VERSION/g"
 
       - name: replace version in Cargo.toml
-        if: ${{ env.BUMPED_VERSION != '' }}
+        if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
         run: (cd $COMPONENT_DIR && cargo set-version --offline $BUMPED_VERSION_SHORT)
 
       - name: cargo update
-        if: ${{ env.BUMPED_VERSION != '' }}
+        if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
         run: (cd $COMPONENT_DIR && cargo update $COMPONENT_DIR)
 
       - name: update BUSL change date
-        if: ${{ env.BUMPED_VERSION != '' && matrix.component == 'server' }}
+        if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION && matrix.component == 'server' }}
         run: |
           change_date=$(date -d "4 years hence" +%Y-%m-01) # Round down to the 1st of the month
           sed -i -E "/Change/s/[0-9]{4}-[0-9]{2}-[0-9]{2}/$change_date/" LICENSES/BUSL-1.1.txt
 
       - name: update CHANGELOG.md
-        if: ${{ env.BUMPED_VERSION != '' }}
+        if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
         run: |
           git cliff -c .github/workflows/cliff.toml \
             --include-path "$COMPONENT_DIR/**/*" \
@@ -69,7 +70,7 @@ jobs:
             -p CHANGELOG.md
 
       - name: generate PR body
-        if: ${{ env.BUMPED_VERSION != '' }}
+        if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
         run: |
           git cliff -c .github/workflows/cliff.toml \
             --include-path "$COMPONENT_DIR/**/*" \
@@ -77,7 +78,7 @@ jobs:
             -t "$BUMPED_VERSION" -u > "$RUNNER_TEMP/pr-body.txt"
 
       - name: open PR
-        if: ${{ env.BUMPED_VERSION != '' }}
+        if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
         id: cpr
         uses: peter-evans/create-pull-request@6d6857d36972b65feb161a90e484f2984215f83e
         with:
