@@ -15,12 +15,12 @@ use pathsearch::find_executable_in_path;
 use tracing::{debug, trace};
 pub use xwm::*;
 
-use crate::compositor::ClientState;
+use crate::compositor::{ClientState, Container, HomeIsolationMode};
 
 pub struct XWayland {
     pub display_socket: PathBuf,
     pub displayfd_recv: mio::unix::pipe::Receiver,
-    pub child: unshare::Child,
+    pub child: super::child::ChildHandle,
     pub output: std::io::BufReader<mio::unix::pipe::Receiver>,
 
     xwm_socket: Option<mio::net::UnixStream>,
@@ -38,8 +38,9 @@ impl XWayland {
         let (output_send, output_recv) = mio::unix::pipe::new()?;
 
         // These get dropped when we return, closing the write side (in this process)
-        let stdout = unshare::Stdio::dup_file(&output_send)?;
-        let stderr = unshare::Stdio::dup_file(&output_send)?;
+        let stdout = output_send.as_fd().try_clone_to_owned()?;
+        let stderr = output_send.as_fd().try_clone_to_owned()?;
+        drop(output_send);
 
         let (xwm_xwayland, xwm_compositor) = mio::net::UnixStream::pair()?;
         let (wayland_xwayland, wayland_compositor) = mio::net::UnixStream::pair()?;
@@ -56,43 +57,36 @@ impl XWayland {
 
         let socket = mio::net::UnixListener::bind(&socket_path)?;
 
-        let exe = find_executable_in_path("Xwayland").ok_or(anyhow!("Xwayland not in PATH"))?;
-        let mut command = unshare::Command::new(exe);
-        command
-            .stdout(stdout)
-            .stderr(stderr)
-            .arg("-verbose")
-            .arg("-rootless")
-            .arg("-terminate")
-            .arg("-force-xrandr-emulation")
-            .arg("-wm")
-            .arg(xwm_xwayland.as_raw_fd().to_string())
-            .arg("-displayfd")
-            .arg(displayfd_send.as_raw_fd().to_string())
-            .arg("-listenfd")
-            .arg(socket.as_raw_fd().to_string());
+        let exe = find_executable_in_path("Xwayland")
+            .ok_or(anyhow!("Xwayland not in PATH"))?
+            .as_os_str()
+            .to_owned();
+        let args = vec![
+            exe,
+            "-verbose".into(),
+            "-rootless".into(),
+            "-terminate".into(),
+            "-force-xrandr-emulation".into(),
+            "-wm".into(),
+            xwm_xwayland.as_raw_fd().to_string().into(),
+            "-displayfd".into(),
+            displayfd_send.as_raw_fd().to_string().into(),
+            "-listenfd".into(),
+            socket.as_raw_fd().to_string().into(),
+        ];
 
-        // Setup the environment; clear everything except PATH and XDG_RUNTIME_DIR.
-        command.env_clear();
-        for (key, value) in std::env::vars_os() {
-            if key.to_str() == Some("PATH") {
-                command.env(key, value);
-                continue;
-            }
-        }
+        let mut container = Container::new(args, HomeIsolationMode::Tmpfs)?;
 
-        command.env("XDG_RUNTIME_DIR", xdg_runtime_dir.as_ref());
-        command.env(
+        container.set_env(
             "WAYLAND_SOCKET",
             format!("{}", wayland_xwayland.as_raw_fd()),
         );
 
-        unsafe {
-            command.pre_exec(move || {
-                // Creates a new process group. This prevents SIGINT sent to
-                // mmserver from reaching Xwayland.
-                rustix::process::setsid()?;
+        container.set_stdout(stdout)?;
+        container.set_stderr(stderr)?;
 
+        unsafe {
+            container.pre_exec(move || {
                 // unset the CLOEXEC flag from the sockets we need to pass
                 // to xwayland.
                 unset_cloexec(&wayland_xwayland)?;
@@ -104,12 +98,8 @@ impl XWayland {
             });
         }
 
-        let child = match command.spawn() {
-            Ok(child) => child,
-            Err(e) => bail!("failed to spawn Xwayland: {:#}", e),
-        };
-
-        debug!(x11_socket = ?socket_path, pid = child.id(), "spawned Xwayland instance");
+        let child = container.spawn().context("failed to spawn XWayland")?;
+        debug!(x11_socket = ?socket_path, "spawned Xwayland instance");
 
         // Insert the client into the display handle. The order is important
         // here; XWayland never starts up at all unless it can roundtrip with

@@ -70,7 +70,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-tracy = { version = "0.11", default-features = false }
 tracy-client = { version = "0.17", default-features = false }
 uds = "0.4"
-unshare = "0.7"
 uuid = "1"
 wayland-protocols = { version = "0.32", features = ["server", "staging", "unstable"] }
 wayland-scanner = "0.31"

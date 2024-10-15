@@ -214,7 +214,15 @@ impl Compositor {
         create_global::<xwayland_shell_v1::XwaylandShellV1>(&dh, 1);
         create_global::<wl_drm::WlDrm>(&dh, 2);
 
-        let mut container = Container::new(app_config.clone()).context("initializing container")?;
+        let mut container = Container::new(
+            app_config.command.clone(),
+            app_config.home_isolation_mode.clone().into(),
+        )
+        .context("initializing container")?;
+
+        for (k, v) in &app_config.env {
+            container.set_env(k, v);
+        }
 
         let poll = mio::Poll::new()?;
         let waker = Arc::new(mio::Waker::new(poll.registry(), WAKER)?);
@@ -300,11 +308,9 @@ impl Compositor {
                 None
             };
 
-            let mut xwayland = xwayland::XWayland::spawn(
-                &mut display.handle(),
-                container.extern_run_path().as_os_str(),
-            )
-            .context("spawning Xwayland")?;
+            let mut xwayland =
+                xwayland::XWayland::spawn(&mut display.handle(), container.extern_run_path())
+                    .context("spawning Xwayland")?;
 
             // Xwayland writes to this pipe when it's ready.
             poll.registry().register(
@@ -500,11 +506,7 @@ impl Compositor {
                         }
                     }
                     XWAYLAND if event.is_read_closed() => {
-                        let exit = self.xwayland.as_mut().unwrap().child.wait()?;
-                        bail!(
-                            "Xwayland exited unexpectedly with status {}",
-                            exit.code().unwrap_or_default()
-                        );
+                        self.xwayland.as_mut().unwrap().child.wait()?;
                     }
                     XWAYLAND if event.is_readable() => {
                         dump_child_output(

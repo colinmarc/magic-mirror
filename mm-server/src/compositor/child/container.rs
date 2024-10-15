@@ -31,9 +31,24 @@ use rustix::{
 };
 use tracing::debug;
 
-use crate::config::{self, AppConfig};
-
 mod ipc;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeIsolationMode {
+    Unisolated,
+    Tmpfs,
+    Permanent(PathBuf),
+}
+
+impl From<crate::config::HomeIsolationMode> for HomeIsolationMode {
+    fn from(value: crate::config::HomeIsolationMode) -> Self {
+        match value {
+            crate::config::HomeIsolationMode::Unisolated => Self::Unisolated,
+            crate::config::HomeIsolationMode::Tmpfs => Self::Tmpfs,
+            crate::config::HomeIsolationMode::Permanent(p) => Self::Permanent(p),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct DevBindMount {
@@ -174,18 +189,15 @@ pub struct Container {
 }
 
 impl Container {
-    pub fn new(app_config: AppConfig) -> anyhow::Result<Self> {
-        let mut args = app_config.command.clone();
+    pub fn new(
+        mut args: Vec<OsString>,
+        home_isolation_mode: HomeIsolationMode,
+    ) -> anyhow::Result<Self> {
         let exe = args.remove(0);
         let exe_path =
             find_executable_in_path(&exe).ok_or(anyhow!("command {:?} not in PATH", &exe))?;
 
-        let mut envs: Vec<CString> = app_config
-            .env
-            .clone()
-            .into_iter()
-            .map(|(k, v)| make_putenv(k, v))
-            .collect();
+        let mut envs = Vec::new();
 
         let mut child_cmd = Command::new(exe_path);
         child_cmd.current_dir("/");
@@ -210,11 +222,11 @@ impl Container {
         let intern_home_path: OsString = std::env::var_os("HOME").unwrap_or("/home/mm".into());
         envs.push(make_putenv("HOME", intern_home_path.clone()));
 
-        debug!(home_mode = ?app_config.home_isolation_mode, "using home mode");
-        let (extern_home_path, clear_home) = match app_config.home_isolation_mode {
-            config::HomeIsolationMode::Unisolated => (None, false),
-            config::HomeIsolationMode::Tmpfs => (None, true),
-            config::HomeIsolationMode::Permanent(path) => {
+        debug!(home_mode = ?home_isolation_mode, "using home mode");
+        let (extern_home_path, clear_home) = match home_isolation_mode {
+            HomeIsolationMode::Unisolated => (None, false),
+            HomeIsolationMode::Tmpfs => (None, true),
+            HomeIsolationMode::Permanent(path) => {
                 std::fs::create_dir_all(&path).context(format!(
                     "failed to create home directory {}",
                     path.display()
@@ -268,6 +280,10 @@ impl Container {
         f: impl FnOnce(&mut super::ChildHandle) -> anyhow::Result<()> + 'static,
     ) {
         self.setup_hooks.push(Box::new(f))
+    }
+
+    pub unsafe fn pre_exec(&mut self, f: impl FnMut() -> io::Result<()> + Send + Sync + 'static) {
+        self.child_cmd.pre_exec(f);
     }
 
     pub fn set_env<K, V>(&mut self, key: K, val: V)
@@ -841,23 +857,12 @@ mod test {
 
     use rustix::pipe::{pipe_with, PipeFlags};
 
-    use crate::{
-        compositor::Container,
-        config::{AppConfig, HomeIsolationMode},
-    };
+    use crate::compositor::{child::container::HomeIsolationMode, Container};
 
     #[test_log::test]
     fn echo() -> anyhow::Result<()> {
-        let app_config = AppConfig {
-            description: None,
-            command: vec!["echo".to_owned().into(), "done".to_owned().into()],
-            env: Default::default(),
-            xwayland: false,
-            force_1x_scale: false,
-            home_isolation_mode: HomeIsolationMode::Unisolated,
-        };
-
-        let mut container = Container::new(app_config)?;
+        let mut container =
+            Container::new(vec!["echo".into(), "done".into()], HomeIsolationMode::Tmpfs)?;
         let (pipe_rx, pipe_tx) = pipe_with(PipeFlags::CLOEXEC)?;
         container.set_stdout(pipe_tx)?;
 
