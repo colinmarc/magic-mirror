@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{collections::HashMap, path::PathBuf, str::FromStr as _, sync::Arc, time};
+use std::{collections::BTreeMap, path::PathBuf, str::FromStr as _, sync::Arc, time};
 
 use fuser as fuse;
 use libc::EBADF;
@@ -125,14 +125,14 @@ impl TryFrom<u64> for DeviceInode {
 ///     device.
 pub struct UdevFs {
     state: Arc<Mutex<super::InputManagerState>>,
-    static_inodes: HashMap<u64, StaticEntry>, // Indexed by inode.
+    static_inodes: BTreeMap<u64, StaticEntry>, // Indexed by inode.
 }
 
 impl UdevFs {
     pub fn new(state: Arc<Mutex<super::InputManagerState>>) -> Self {
         let ctime = time::SystemTime::now();
 
-        let mut static_inodes: HashMap<u64, StaticEntry> = HashMap::new();
+        let mut static_inodes: BTreeMap<u64, StaticEntry> = BTreeMap::new();
 
         for (idx, entry) in STATIC_DIRS.iter().enumerate() {
             let mut relpath = PathBuf::from_str(entry).unwrap();

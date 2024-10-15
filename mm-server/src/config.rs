@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     ffi::{OsStr, OsString},
     net::ToSocketAddrs,
     num::NonZeroU32,
@@ -23,7 +23,7 @@ lazy_static! {
 
 /// Serde representations of the configuration files.
 mod parsed {
-    use std::{collections::HashMap, num::NonZeroU32, path::PathBuf};
+    use std::{collections::BTreeMap, num::NonZeroU32, path::PathBuf};
 
     use converge::Converge;
     use serde::Deserialize;
@@ -65,7 +65,7 @@ mod parsed {
     #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
     pub(super) struct Config {
         pub(super) include_apps: Option<Vec<PathBuf>>,
-        pub(super) apps: Option<HashMap<String, AppConfig>>,
+        pub(super) apps: Option<BTreeMap<String, AppConfig>>,
 
         pub(super) data_home: Option<PathBuf>,
 
@@ -100,7 +100,7 @@ mod parsed {
     pub(super) struct AppConfig {
         pub(super) description: Option<String>,
         pub(super) command: Vec<String>,
-        pub(super) environment: Option<HashMap<String, String>>,
+        pub(super) environment: Option<BTreeMap<String, String>>,
         pub(super) xwayland: Option<bool>,
         pub(super) force_1x_scale: Option<bool>,
         pub(super) isolate_home: Option<bool>,
@@ -112,7 +112,7 @@ mod parsed {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     pub server: ServerConfig,
-    pub apps: HashMap<String, AppConfig>,
+    pub apps: BTreeMap<String, AppConfig>,
     pub data_home: PathBuf,
 
     pub bug_report_dir: Option<PathBuf>,
@@ -132,7 +132,7 @@ pub struct ServerConfig {
 pub struct AppConfig {
     pub description: Option<String>,
     pub command: Vec<OsString>,
-    pub env: HashMap<OsString, OsString>,
+    pub env: BTreeMap<OsString, OsString>,
     pub xwayland: bool,
     pub force_1x_scale: bool,
     pub home_isolation_mode: HomeIsolationMode,
@@ -218,8 +218,8 @@ impl Config {
                 },
             },
             data_home: data_home.clone(),
-            apps: HashMap::new(), // Handled below.
-            bug_report_dir: None, // This is only set from the command line.
+            apps: BTreeMap::new(), // Handled below.
+            bug_report_dir: None,  // This is only set from the command line.
         };
 
         // Collect additional app definitions from app_dirs.
@@ -409,7 +409,7 @@ mod test {
         static ref EXAMPLE_APP: AppConfig = AppConfig {
             description: None,
             command: vec!["echo".to_owned().into(), "hello".to_owned().into()],
-            env: HashMap::new(),
+            env: Default::default(),
             xwayland: true,
             force_1x_scale: false,
             home_isolation_mode: HomeIsolationMode::Unisolated,

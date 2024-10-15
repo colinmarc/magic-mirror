@@ -16,6 +16,8 @@ pub type SharedState = Arc<Mutex<ServerState>>;
 const DEFAULT_SESSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 pub struct ServerState {
+    // TODO: we'd rather use a BTreeMap, but we want
+    // hash_brown::HashMap::extract_if.
     pub sessions: HashMap<u64, Session>,
     pub cfg: Config,
     pub vk: Arc<VkContext>,

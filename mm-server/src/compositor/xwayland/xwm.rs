@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     os::fd::{AsFd as _, BorrowedFd},
 };
 
@@ -116,8 +116,8 @@ pub struct Xwm {
     client_list: Vec<u32>,
     client_list_stacking: Vec<u32>,
 
-    pub xwindows: HashMap<u32, XWindow>,
-    pub serials: HashMap<u64, u32>,
+    pub xwindows: BTreeMap<u32, XWindow>,
+    pub serials: BTreeMap<u64, u32>,
 }
 
 impl Xwm {
@@ -219,8 +219,8 @@ impl Xwm {
             client_list: Vec::new(),
             client_list_stacking: Vec::new(),
 
-            xwindows: HashMap::new(),
-            serials: HashMap::new(),
+            xwindows: BTreeMap::new(),
+            serials: BTreeMap::new(),
         })
     }
 

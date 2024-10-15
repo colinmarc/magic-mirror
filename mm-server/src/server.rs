@@ -5,7 +5,7 @@
 mod handlers;
 mod sendmmsg;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -14,6 +14,7 @@ use anyhow::bail;
 use anyhow::Context;
 use bytes::{Buf, Bytes, BytesMut};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
+use hashbrown::HashMap;
 use mm_protocol as protocol;
 use protocol::error::ErrorCode;
 use ring::rand::{self, SecureRandom};
@@ -69,9 +70,9 @@ pub struct ClientConnection {
     conn: quiche::Connection,
     timer: mio_timerfd::TimerFd,
     timeout_token: mio::Token,
-    partial_reads: HashMap<u64, BytesMut>,
-    partial_writes: HashMap<u64, Bytes>,
-    in_flight: HashMap<u64, StreamWorker>,
+    partial_reads: BTreeMap<u64, BytesMut>,
+    partial_writes: BTreeMap<u64, Bytes>,
+    in_flight: BTreeMap<u64, StreamWorker>,
     dgram_recv: Receiver<protocol::MessageType>,
     dgram_send: WakingSender<protocol::MessageType>,
 }
@@ -448,7 +449,7 @@ impl Server {
                     mio::Interest::READABLE,
                 )?;
 
-                let streams = HashMap::new();
+                let streams = BTreeMap::new();
 
                 let (dgram_send, dgram_recv) = crossbeam_channel::unbounded();
                 let dgram_send = WakingSender::new(self.waker.clone(), dgram_send);
@@ -460,8 +461,8 @@ impl Server {
                     timer,
                     timeout_token,
                     in_flight: streams,
-                    partial_reads: HashMap::new(),
-                    partial_writes: HashMap::new(),
+                    partial_reads: BTreeMap::new(),
+                    partial_writes: BTreeMap::new(),
                     dgram_recv,
                     dgram_send,
                 };
@@ -723,7 +724,7 @@ impl ClientConnection {
 
     /// Flushes previous partial writes.
     fn flush_partial_write(&mut self, sid: u64) -> anyhow::Result<bool> {
-        use std::collections::hash_map::Entry;
+        use std::collections::btree_map::Entry;
 
         match self.partial_writes.entry(sid) {
             Entry::Vacant(_) => Ok(true),

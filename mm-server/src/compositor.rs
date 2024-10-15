@@ -22,6 +22,7 @@ mod video;
 mod xwayland;
 
 use std::{
+    collections::BTreeMap,
     ffi::{OsStr, OsString},
     fs::File,
     io::{BufRead, BufReader},
@@ -36,7 +37,6 @@ use child::*;
 pub use control::*;
 use crossbeam_channel as crossbeam;
 pub use handle::*;
-use hashbrown::HashMap;
 pub use input::GamepadLayout;
 use lazy_static::lazy_static;
 use protocols::*;
@@ -121,7 +121,7 @@ pub struct State {
 
     default_seat: seat::Seat,
     input_manager: input::InputDeviceManager,
-    gamepads: HashMap<u64, input::GamepadHandle>,
+    gamepads: BTreeMap<u64, input::GamepadHandle>,
 
     app_config: AppConfig,
     display_params: DisplayParams,
@@ -138,7 +138,7 @@ pub struct State {
     audio_pipeline: audio::EncodePipeline,
 
     xwm: Option<xwayland::Xwm>,
-    xwayland_surface_lookup: HashMap<u64, surface::SurfaceKey>,
+    xwayland_surface_lookup: BTreeMap<u64, surface::SurfaceKey>,
 
     // At the bottom for drop order.
     vk: Arc<VkContext>,
@@ -226,7 +226,7 @@ impl Compositor {
 
         // Set up input emulation (this is just for gamepads).
         let mut input_manager = input::InputDeviceManager::new(&mut container)?;
-        let mut gamepads = HashMap::new();
+        let mut gamepads = BTreeMap::new();
 
         for (pad_id, layout) in permanent_gamepads {
             let dev = input_manager.plug_gamepad(pad_id, layout, true)?;
@@ -265,7 +265,7 @@ impl Compositor {
             audio_pipeline,
 
             xwm: None,
-            xwayland_surface_lookup: HashMap::default(),
+            xwayland_surface_lookup: BTreeMap::default(),
 
             vk,
         };
@@ -1007,19 +1007,17 @@ impl Compositor {
                 self.state.default_seat.lift_pointer(&self.state.serial);
             }
             ControlMessage::GamepadAvailable(id) => {
-                if !self.state.gamepads.contains_key(&id) {
-                    self.state.gamepads.insert(
+                use std::collections::btree_map::Entry;
+                if let Entry::Vacant(e) = self.state.gamepads.entry(id) {
+                    e.insert(self.state.input_manager.plug_gamepad(
                         id,
-                        self.state.input_manager.plug_gamepad(
-                            id,
-                            input::GamepadLayout::GenericDualStick,
-                            false,
-                        )?,
-                    );
+                        input::GamepadLayout::GenericDualStick,
+                        false,
+                    )?);
                 }
             }
             ControlMessage::GamepadUnavailable(id) => {
-                use hashbrown::hash_map::Entry;
+                use std::collections::btree_map::Entry;
                 match self.state.gamepads.entry(id) {
                     Entry::Occupied(v) if !v.get().permanent => {
                         v.remove();
