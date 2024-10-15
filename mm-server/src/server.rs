@@ -105,7 +105,7 @@ impl Server {
             }
         };
 
-        config.set_application_protos(&[b"mm00"])?;
+        config.set_application_protos(&[protocol::ALPN_PROTOCOL_VERSION])?;
         config.set_max_idle_timeout(10_000);
         config.set_initial_max_data(65536);
         config.set_initial_max_stream_data_bidi_remote(65536);

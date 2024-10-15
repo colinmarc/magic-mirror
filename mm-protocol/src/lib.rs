@@ -34,7 +34,12 @@ pub enum ProtocolError {
     InvalidMessageType(u32, usize),
 }
 
+/// The maximum size of a single message. Note that a lower limit may apply to
+/// messages sent as datagrams, based on the connection MTU and QUIC's overhead.
 pub const MAX_MESSAGE_SIZE: usize = 65535;
+
+/// The current protocol version.
+pub const ALPN_PROTOCOL_VERSION: &[u8] = b"mm00";
 
 // This is a very simplified version of the enum_dispatch macro.
 macro_rules! message_types {
