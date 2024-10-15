@@ -1183,6 +1183,7 @@ dependencies = [
  "octets",
  "oneshot",
  "opus",
+ "parking_lot",
  "paste",
  "pathsearch",
  "pretty_assertions",

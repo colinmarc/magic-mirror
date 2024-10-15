@@ -2,10 +2,7 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{
-    path::Path,
-    sync::{Arc, Mutex},
-};
+use std::{path::Path, sync::Arc};
 
 use super::{AudioStreamParams, CompositorEvent, CompositorHandle};
 use crate::waking_sender::WakingSender;
@@ -14,6 +11,7 @@ mod pulse;
 use anyhow::Context as _;
 use bytes::BytesMut;
 use crossbeam_channel as crossbeam;
+use parking_lot::Mutex;
 use pulse::PulseServer;
 use tracing::error;
 
@@ -124,7 +122,7 @@ impl EncodePipeline {
             .name("audio encode".into())
             .spawn(move || {
                 // Lock the receiver until the encoder thread exits.
-                let unencoded_rx = unencoded_rx.lock().unwrap();
+                let unencoded_rx = unencoded_rx.lock();
 
                 let mut buf = BytesMut::new();
                 let mut seq = 0;

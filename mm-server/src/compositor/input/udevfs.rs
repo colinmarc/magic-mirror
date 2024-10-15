@@ -2,17 +2,12 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-    str::FromStr as _,
-    sync::{Arc, Mutex},
-    time,
-};
+use std::{collections::HashMap, path::PathBuf, str::FromStr as _, sync::Arc, time};
 
 use fuser as fuse;
 use libc::EBADF;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
+use parking_lot::Mutex;
 use tracing::{debug, warn};
 
 use super::DeviceState;
@@ -195,7 +190,7 @@ impl fuse::Filesystem for UdevFs {
         };
 
         if parent == SYS_DEVICES_VIRTUAL_INPUT {
-            let guard = self.state.lock().unwrap();
+            let guard = self.state.lock();
             for dev in &guard.devices {
                 if name == dev.devname {
                     let ino = DeviceInode::make(dev.short_id, InodeType::InputDir);
@@ -206,7 +201,7 @@ impl fuse::Filesystem for UdevFs {
         }
 
         if parent == SYS_CLASS_INPUT {
-            let guard = self.state.lock().unwrap();
+            let guard = self.state.lock();
             for dev in &guard.devices {
                 if name == dev.devname {
                     let ino = DeviceInode::make(dev.short_id, InodeType::InputSymlink);
@@ -217,7 +212,7 @@ impl fuse::Filesystem for UdevFs {
         }
 
         if parent == UDEV_DATA {
-            let guard = self.state.lock().unwrap();
+            let guard = self.state.lock();
             for dev in &guard.devices {
                 if name == format!("c13:{}", dev.counter) {
                     let ino = DeviceInode::make(dev.short_id, InodeType::DataFile);
@@ -247,7 +242,7 @@ impl fuse::Filesystem for UdevFs {
             return;
         };
 
-        let guard = self.state.lock().unwrap();
+        let guard = self.state.lock();
         let Some(dev) = guard.find_device(short_id) else {
             reply.error(ENOENT);
             return;
@@ -299,7 +294,7 @@ impl fuse::Filesystem for UdevFs {
             return;
         };
 
-        let guard = self.state.lock().unwrap();
+        let guard = self.state.lock();
         let Some(dev) = guard.find_device(short_id) else {
             reply.error(ENOENT);
             return;
@@ -329,7 +324,7 @@ impl fuse::Filesystem for UdevFs {
             return;
         };
 
-        let guard = self.state.lock().unwrap();
+        let guard = self.state.lock();
         let Some(dev) = guard.find_device(short_id) else {
             reply.error(ENOENT);
             return;
@@ -371,7 +366,7 @@ impl fuse::Filesystem for UdevFs {
             return;
         };
 
-        let guard = self.state.lock().unwrap();
+        let guard = self.state.lock();
         let Some(dev) = guard.find_device(short_id) else {
             reply.error(ENOENT);
             return;
@@ -400,7 +395,7 @@ impl fuse::Filesystem for UdevFs {
         }
 
         if ino == SYS_CLASS_INPUT {
-            let guard = self.state.lock().unwrap();
+            let guard = self.state.lock();
 
             for (
                 idx,
