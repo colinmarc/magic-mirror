@@ -2,10 +2,9 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::time;
+use std::{collections::BTreeMap, time};
 
 use crossbeam_channel::{select, Receiver};
-use hashbrown::HashMap;
 use mm_protocol as protocol;
 use protocol::error::ErrorCode;
 use tracing::{debug, debug_span, error, trace};
@@ -387,7 +386,7 @@ fn attach(
     let mut pointer_lock = None;
 
     let mut debug_outputs = if bug_report_dir.is_some() {
-        Some(HashMap::<u64, std::fs::File>::new())
+        Some(BTreeMap::<u64, std::fs::File>::new())
     } else {
         None
     };

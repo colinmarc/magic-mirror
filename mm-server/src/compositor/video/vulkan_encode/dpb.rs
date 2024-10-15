@@ -2,10 +2,9 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use ash::vk;
-use hashbrown::HashMap;
 
 use crate::vulkan::*;
 
@@ -22,7 +21,7 @@ pub struct DpbPicture {
 pub struct DpbPool {
     _store: Vec<VkImage>,
     slots: Vec<DpbPicture>,
-    ids: HashMap<u32, usize>,
+    ids: BTreeMap<u32, usize>,
 }
 
 impl DpbPool {
@@ -58,7 +57,7 @@ impl DpbPool {
         Ok(Self {
             _store: vec![image],
             slots,
-            ids: HashMap::new(),
+            ids: BTreeMap::new(),
         })
     }
 
@@ -93,7 +92,7 @@ impl DpbPool {
         Ok(Self {
             _store: store,
             slots,
-            ids: HashMap::new(),
+            ids: BTreeMap::new(),
         })
     }
 

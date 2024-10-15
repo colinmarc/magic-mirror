@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     ffi::{CStr, CString},
     io::{prelude::*, Cursor},
     path::Path,
@@ -15,7 +15,6 @@ use anyhow::{bail, Context};
 use bytes::BytesMut;
 use crossbeam_channel as crossbeam;
 use cstr::cstr;
-use hashbrown::HashMap;
 use mio::net::UnixListener;
 use pulseaudio::protocol::{self as pulse, ClientInfoList};
 use tracing::{debug, error, trace, warn};
@@ -62,7 +61,7 @@ struct Client {
     protocol_version: u16,
     props: Option<pulse::Props>,
     incoming: BytesMut,
-    playback_streams: HashMap<u32, PlaybackStream>,
+    playback_streams: BTreeMap<u32, PlaybackStream>,
 }
 
 struct ServerState {
@@ -82,7 +81,7 @@ pub struct PulseServer {
     unencoded_tx: crossbeam::Sender<EncodeFrame>,
     done_rx: crossbeam::Receiver<EncodeFrame>,
 
-    clients: HashMap<mio::Token, Client>,
+    clients: BTreeMap<mio::Token, Client>,
     server_state: ServerState,
 }
 
@@ -188,7 +187,7 @@ impl PulseServer {
                 unencoded_tx,
                 done_rx,
                 close_rx,
-                clients: HashMap::new(),
+                clients: BTreeMap::new(),
                 server_state: ServerState {
                     server_info,
                     cards: vec![], // vec![dummy_card],
@@ -258,7 +257,7 @@ impl PulseServer {
                                 protocol_version: pulse::MAX_VERSION,
                                 props: None,
                                 incoming: BytesMut::new(),
-                                playback_streams: HashMap::new(),
+                                playback_streams: BTreeMap::new(),
                             },
                         );
                     }

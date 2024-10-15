@@ -825,7 +825,7 @@ fn sync_barrier(barrier: &ipc::EventfdBarrier) -> rustix::io::Result<()> {
 
 #[cfg(test)]
 mod test {
-    use std::{collections::HashMap, fs::File, io::Read as _};
+    use std::{fs::File, io::Read as _};
 
     use rustix::pipe::{pipe_with, PipeFlags};
 
@@ -839,7 +839,7 @@ mod test {
         let app_config = AppConfig {
             description: None,
             command: vec!["echo".to_owned().into(), "done".to_owned().into()],
-            env: HashMap::new(),
+            env: Default::default(),
             xwayland: false,
             force_1x_scale: false,
             home_isolation_mode: HomeIsolationMode::Unisolated,

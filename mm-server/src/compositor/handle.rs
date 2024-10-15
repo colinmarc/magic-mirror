@@ -2,16 +2,18 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::sync::{Arc, RwLock};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, RwLock},
+};
 
 use crossbeam_channel as crossbeam;
-use hashbrown::HashMap;
 
 use super::CompositorEvent;
 
 #[derive(Debug, Clone)]
 struct Inner {
-    attachments: HashMap<u64, crossbeam::Sender<CompositorEvent>>,
+    attachments: BTreeMap<u64, crossbeam::Sender<CompositorEvent>>,
 }
 
 #[derive(Debug, Clone)]
@@ -21,7 +23,7 @@ impl CompositorHandle {
     pub fn new(waker: Arc<mio::Waker>) -> Self {
         Self(
             Arc::new(RwLock::new(Inner {
-                attachments: HashMap::new(),
+                attachments: BTreeMap::new(),
             })),
             waker,
         )
@@ -52,7 +54,7 @@ impl CompositorHandle {
 
     pub fn kick_clients(&self) {
         let attachments = &mut self.0.write().unwrap().attachments;
-        for (_, sender) in attachments.drain() {
+        for (_, sender) in std::mem::take(attachments) {
             sender.send(CompositorEvent::Shutdown).ok();
         }
     }
