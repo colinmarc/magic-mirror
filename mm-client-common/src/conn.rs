@@ -105,7 +105,7 @@ impl Conn {
             config.verify_peer(false);
         }
 
-        config.set_application_protos(&[b"mm00"])?;
+        config.set_application_protos(&[protocol::ALPN_PROTOCOL_VERSION])?;
 
         config.set_max_idle_timeout(60_000);
         config.set_max_recv_udp_payload_size(MAX_QUIC_PACKET_SIZE);
