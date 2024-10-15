@@ -32,7 +32,9 @@ jobs:
             mm-protocol
 
       - name: server tests
-        run: (cd mm-server && cargo test)
+        run: |
+          export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E'
+          (cd mm-server && cargo test)
       - name: protocol tests
         run: (cd mm-protocol && cargo test)
       - name: client tests
