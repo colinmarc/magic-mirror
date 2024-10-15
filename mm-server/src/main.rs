@@ -16,13 +16,14 @@ mod waking_sender;
 use std::{
     os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 #[cfg(feature = "ffmpeg_encode")]
 use ffmpeg_sys_next as ffmpeg_sys;
+use parking_lot::Mutex;
 use tracing::{debug, info, warn};
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter, Layer};
 
@@ -155,7 +156,7 @@ fn init_logging(bug_report_dir: Option<impl AsRef<Path>>) -> Result<()> {
 
         let trace_log = tracing_subscriber::fmt::layer()
             .with_ansi(false)
-            .with_writer(Mutex::new(file))
+            .with_writer(std::sync::Mutex::new(file))
             .with_filter(trace_filter);
 
         Some(trace_log)

@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use hashbrown::HashMap; // For stable extract_if.
+use hashbrown::HashMap;
+use parking_lot::Mutex;
 use tracing::{error, info};
 
 use crate::config::Config;

@@ -86,7 +86,6 @@ pub fn dispatch(
 fn list_applications(state: SharedState, response: &WakingSender<protocol::MessageType>) {
     let apps = state
         .lock()
-        .unwrap()
         .cfg
         .apps
         .iter()
@@ -114,7 +113,7 @@ fn launch_session(
     };
 
     // Tracy gets confused if we have multiple sessions going.
-    let guard = state.lock().unwrap();
+    let guard = state.lock();
     if cfg!(feature = "tracy") && !guard.sessions.is_empty() {
         send_err(
             response,
@@ -166,7 +165,7 @@ fn launch_session(
     };
 
     let id = session.id;
-    state.lock().unwrap().sessions.insert(id, session);
+    state.lock().sessions.insert(id, session);
 
     // XXX: The protocol allows us to support superresolution here, but we don't
     // know how to downscale before encoding (yet).
@@ -181,7 +180,6 @@ fn launch_session(
 fn list_sessions(state: SharedState, response: &WakingSender<protocol::MessageType>) {
     let sessions = state
         .lock()
-        .unwrap()
         .sessions
         .values()
         .map(|s| protocol::session_list::Session {
@@ -211,7 +209,7 @@ fn update_session(
         }
     };
 
-    let mut state = state.lock().unwrap();
+    let mut state = state.lock();
 
     let session = match state.sessions.get_mut(&msg.session_id) {
         Some(s) => s,
@@ -247,7 +245,7 @@ fn end_session(
     session_id: u64,
     response: &WakingSender<protocol::MessageType>,
 ) {
-    let session = match state.lock().unwrap().sessions.remove(&session_id) {
+    let session = match state.lock().sessions.remove(&session_id) {
         Some(s) => s,
         None => {
             send_err(response, ErrorCode::ErrorSessionNotFound, None);
@@ -291,7 +289,7 @@ fn attach(
     };
 
     let (handle, display_params, bug_report_dir) = {
-        let mut state = state.lock().unwrap();
+        let mut state = state.lock();
 
         let session = match state.sessions.get_mut(&session_id) {
             Some(s) => s,
@@ -340,7 +338,7 @@ fn attach(
 
     let handle = scopeguard::guard(handle, |h| {
         debug!("detaching from session");
-        if let Some(s) = state.lock().unwrap().sessions.get_mut(&session_id) {
+        if let Some(s) = state.lock().sessions.get_mut(&session_id) {
             s.detach(h).ok();
         };
     });
@@ -600,7 +598,7 @@ fn attach(
                 match event {
                     Ok(CompositorEvent::Shutdown) => {
                         // The session ended, probably because the app exited.
-                        state.lock().unwrap().sessions.remove(&session_id);
+                        state.lock().sessions.remove(&session_id);
 
                         outgoing.send(protocol::SessionEnded {}.into()).ok();
                         return;
@@ -724,7 +722,7 @@ fn attach(
                     Err(e) => {
                         // Mark the session defunct. It'll get GC'd.
                         error!("error in attach handler: {:#}", e);
-                        if let Some(s) = state.lock().unwrap().sessions.get_mut(&session_id) {
+                        if let Some(s) = state.lock().sessions.get_mut(&session_id) {
                             s.defunct = true;
                         };
 

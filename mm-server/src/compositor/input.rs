@@ -2,14 +2,11 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{
-    io::Cursor,
-    sync::{Arc, Mutex},
-    time,
-};
+use std::{io::Cursor, sync::Arc, time};
 
 use fuser as fuse;
 use murmur3::murmur3_32 as murmur3;
+use parking_lot::Mutex;
 use southpaw::{
     sys::{EV_ABS, EV_KEY},
     AbsAxis, AbsInfo, InputEvent, KeyCode,
@@ -162,7 +159,7 @@ impl InputDeviceManager {
     ) -> anyhow::Result<GamepadHandle> {
         debug!(id, ?_layout, "gamepad plugged");
 
-        let mut guard = self.state.lock().unwrap();
+        let mut guard = self.state.lock();
 
         guard.counter += 1;
         let counter = guard.counter;

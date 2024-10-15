@@ -202,7 +202,7 @@ impl Server {
             }
 
             // Garbage-collect dead sessions.
-            self.state.lock().unwrap().tick()?;
+            self.state.lock().tick()?;
 
             // Garbage-collect closed clients.
             self.clients.retain(|_, c| {

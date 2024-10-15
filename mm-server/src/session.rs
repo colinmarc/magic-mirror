@@ -2,16 +2,13 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    time,
-};
+use std::{path::PathBuf, sync::Arc, time};
 
 use anyhow::{anyhow, bail, Context};
 use crossbeam_channel as crossbeam;
 use lazy_static::lazy_static;
 use mm_protocol as protocol;
+use parking_lot::Mutex;
 use pathsearch::find_executable_in_path;
 use tracing::{debug_span, info};
 
@@ -257,5 +254,5 @@ lazy_static! {
 }
 
 fn generate_id() -> u64 {
-    ID_GENERATOR.lock().unwrap().next_int()
+    ID_GENERATOR.lock().next_int()
 }
