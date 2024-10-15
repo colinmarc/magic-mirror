@@ -485,7 +485,7 @@ fn conn_reactor(
 
     loop {
         let now = time::Instant::now();
-        if deadline > now {
+        if deadline < now {
             deadline = now + time::Duration::from_secs(1);
 
             // Check roundtrip deadlines.
