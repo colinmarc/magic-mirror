@@ -5,23 +5,23 @@
 mod handlers;
 mod sendmmsg;
 
+use std::collections::{HashMap, VecDeque};
+use std::net::SocketAddr;
+use std::sync::Arc;
+
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use bytes::{Buf, Bytes, BytesMut};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
+use mm_protocol as protocol;
 use protocol::error::ErrorCode;
 use ring::rand::{self, SecureRandom};
-use std::collections::{HashMap, VecDeque};
-use std::net::SocketAddr;
-use std::sync::Arc;
 use tracing::debug_span;
 use tracing::trace;
 use tracing::trace_span;
 use tracing::warn;
 use tracing::{debug, error};
-
-use mm_protocol as protocol;
 
 use crate::state::SharedState;
 use crate::waking_sender::WakingOneshot;

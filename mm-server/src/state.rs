@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use crate::config::Config;
-use hashbrown::HashMap; // For stable extract_if.
 use std::sync::{Arc, Mutex};
+
+use hashbrown::HashMap; // For stable extract_if.
 use tracing::{error, info};
 
+use crate::config::Config;
 use crate::{session::Session, vulkan::VkContext};
 
 pub type SharedState = Arc<Mutex<ServerState>>;

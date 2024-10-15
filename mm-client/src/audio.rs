@@ -10,13 +10,12 @@ use std::{
 };
 
 use anyhow::{bail, Context as _};
+use buffer::PlaybackBuffer;
 use cpal::traits::{DeviceTrait as _, HostTrait as _, StreamTrait};
 use crossbeam_channel as crossbeam;
 use dasp::Signal;
-use tracing::{debug, error, info, trace};
-
-use buffer::PlaybackBuffer;
 use mm_client_common as client;
+use tracing::{debug, error, info, trace};
 
 trait DecodePacket<T> {
     fn decode(&mut self, input: &[u8], output: &mut [T]) -> anyhow::Result<usize>;

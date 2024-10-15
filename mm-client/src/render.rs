@@ -4,12 +4,13 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+use std::sync::Arc;
+use std::time;
+
 use anyhow::{anyhow, Context, Result};
 use ash::vk;
 use cstr::cstr;
 use imgui_rs_vulkan_renderer as imgui_vulkan;
-use std::sync::Arc;
-use std::time;
 use tracing::debug;
 use tracing::instrument;
 use tracing::trace;

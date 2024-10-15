@@ -61,7 +61,8 @@ impl Stats {
         inner.video_bytes += len as u64;
     }
 
-    /// Tracks the size of the frame and the time it took to receive all its chunks. Should be called whenever a frame is complete.
+    /// Tracks the size of the frame and the time it took to receive all its
+    /// chunks. Should be called whenever a frame is complete.
     pub fn full_frame_received(&self, stream_seq: u64, seq: u64, len: usize) {
         let now = time::Instant::now();
         let mut inner = self.inner.write().unwrap();
@@ -72,7 +73,8 @@ impl Stats {
         }
     }
 
-    /// Tracks the total frame time. Should be called right before the frame is rendered.
+    /// Tracks the total frame time. Should be called right before the frame is
+    /// rendered.
     pub fn frame_rendered(&self, stream_seq: u64, seq: u64) {
         let now = time::Instant::now();
         let mut inner = self.inner.write().unwrap();

@@ -13,14 +13,12 @@ use bytes::Bytes;
 use crossbeam_channel as crossbeam;
 use tracing::{error, trace};
 
+use self::gop_structure::HierarchicalP;
+use super::begin_cb;
 use crate::codec::VideoCodec;
 use crate::compositor::{CompositorEvent, CompositorHandle, VideoStreamParams, EPOCH};
 use crate::vulkan::video::VideoQueueExt;
 use crate::vulkan::*;
-
-use self::gop_structure::HierarchicalP;
-
-use super::begin_cb;
 
 mod dpb;
 mod gop_structure;

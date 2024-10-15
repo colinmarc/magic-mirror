@@ -10,14 +10,6 @@ mod ffmpeg;
 
 use std::sync::Arc;
 
-use crate::{
-    codec::VideoCodec,
-    compositor::{
-        video::format_is_semiplanar, CompositorEvent, CompositorHandle, VideoStreamParams, EPOCH,
-    },
-    vulkan::*,
-};
-
 use anyhow::{bail, Context};
 use ash::vk;
 use bytes::BytesMut;
@@ -25,6 +17,13 @@ use crossbeam_channel as crossbeam;
 use tracing::{error, instrument, trace, trace_span};
 
 use super::{begin_cb, timebase::Timebase};
+use crate::{
+    codec::VideoCodec,
+    compositor::{
+        video::format_is_semiplanar, CompositorEvent, CompositorHandle, VideoStreamParams, EPOCH,
+    },
+    vulkan::*,
+};
 
 const DEFAULT_INPUT_FORMAT: vk::Format = vk::Format::G8_B8_R8_3PLANE_420_UNORM;
 

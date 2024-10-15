@@ -21,7 +21,26 @@ mod surface;
 mod video;
 mod xwayland;
 
+use std::{
+    ffi::{OsStr, OsString},
+    fs::File,
+    io::{BufRead, BufReader},
+    os::fd::AsRawFd,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time,
+};
+
 use anyhow::{bail, Context as _};
+use child::*;
+pub use control::*;
+use crossbeam_channel as crossbeam;
+pub use handle::*;
+use hashbrown::HashMap;
+pub use input::GamepadLayout;
+use lazy_static::lazy_static;
+use protocols::*;
+pub use seat::{ButtonState, KeyState};
 use slotmap::SlotMap;
 use tracing::{debug, trace, trace_span};
 use wayland_protocols::{
@@ -40,33 +59,12 @@ use wayland_server::{
     Resource as _,
 };
 
-use std::{
-    ffi::{OsStr, OsString},
-    fs::File,
-    io::{BufRead, BufReader},
-    os::fd::AsRawFd,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time,
-};
-
-use crossbeam_channel as crossbeam;
-use hashbrown::HashMap;
-use lazy_static::lazy_static;
-
 use crate::{
     config::AppConfig,
     pixel_scale::PixelScale,
     vulkan::{VkContext, VkTimelinePoint},
     waking_sender::WakingSender,
 };
-
-use child::*;
-pub use control::*;
-pub use handle::*;
-pub use input::GamepadLayout;
-use protocols::*;
-pub use seat::{ButtonState, KeyState};
 
 lazy_static! {
     static ref EPOCH: std::time::Instant = std::time::Instant::now();

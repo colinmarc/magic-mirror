@@ -949,7 +949,8 @@ fn configure_buffer(attr: &mut pulse::stream::BufferAttr, spec: &pulse::SampleSp
             .max(len_10ms / 2);
     }
 
-    // Target length should be a multiple of the minimum request length, and by default 20ms of audio.
+    // Target length should be a multiple of the minimum request length, and by
+    // default 20ms of audio.
     if attr.target_length == u32::MAX {
         attr.target_length = (len_10ms * 2)
             .next_multiple_of(attr.minimum_request_length)

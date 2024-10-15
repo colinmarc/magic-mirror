@@ -10,7 +10,8 @@ where
 {
     /// A queue of audio frames.
     samples: VecDeque<F>,
-    /// The PTS and packet length (in frames) for each packet. Kept in sync with `samples`.
+    /// The PTS and packet length (in frames) for each packet. Kept in sync with
+    /// `samples`.
     pts: VecDeque<(u64, usize)>,
 }
 

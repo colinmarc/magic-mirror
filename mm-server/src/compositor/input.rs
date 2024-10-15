@@ -239,12 +239,11 @@ mod test {
 
     use rustix::pipe::{pipe_with, PipeFlags};
 
+    use super::{GamepadLayout, InputDeviceManager};
     use crate::{
         compositor::Container,
         config::{AppConfig, HomeIsolationMode},
     };
-
-    use super::{GamepadLayout, InputDeviceManager};
 
     fn run_in_container_with_gamepads<T>(cmd: impl AsRef<[T]>) -> anyhow::Result<String>
     where

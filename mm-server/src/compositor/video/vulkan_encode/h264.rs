@@ -14,14 +14,13 @@ use ash::vk::native::{
 use bytes::Bytes;
 use tracing::{debug, trace};
 
+use super::gop_structure::HierarchicalP;
+use super::rate_control::RateControlMode;
 use crate::{
     color::VideoProfile,
     compositor::{CompositorHandle, VideoStreamParams},
     vulkan::*,
 };
-
-use super::gop_structure::HierarchicalP;
-use super::rate_control::RateControlMode;
 
 vk_chain! {
     pub struct H264EncodeProfile<'a> {
@@ -104,7 +103,8 @@ impl H264Encoder {
         trace!("h264 capabilities: {:#?}", caps.h264_caps);
 
         // unsafe {
-        //     let get_info = vk::PhysicalDeviceVideoEncodeQualityLevelInfoKHR::default()
+        //     let get_info =
+        // vk::PhysicalDeviceVideoEncodeQualityLevelInfoKHR::default()
         //         .video_profile(&profile.profile_info)
         //         .quality_level(quality_level);
 
@@ -356,7 +356,8 @@ impl H264Encoder {
             .virtual_buffer_size_in_ms(vbv_size)
             .layers(&rc_layers);
 
-        // Doesn't have a push_next method, because we're supposed to call it on the parent struct.
+        // Doesn't have a push_next method, because we're supposed to call it on the
+        // parent struct.
         rc_info.p_next = <*mut _>::cast(&mut h264_rc_info);
 
         let weight_table: vk::native::StdVideoEncodeH264WeightTable = std::mem::zeroed();

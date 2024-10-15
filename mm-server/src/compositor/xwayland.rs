@@ -3,10 +3,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 mod xwm;
-use anyhow::{anyhow, bail, Context as _};
-use pathsearch::find_executable_in_path;
-pub use xwm::*;
-
 use std::{
     io::Read as _,
     os::fd::{AsFd, AsRawFd as _},
@@ -14,7 +10,10 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::{anyhow, bail, Context as _};
+use pathsearch::find_executable_in_path;
 use tracing::{debug, trace};
+pub use xwm::*;
 
 use crate::compositor::ClientState;
 

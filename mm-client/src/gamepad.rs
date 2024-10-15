@@ -6,7 +6,6 @@ use std::{collections::HashMap, time};
 
 use anyhow::{anyhow, bail};
 use gilrs::{Event, EventType};
-
 use mm_client_common::input::{
     Gamepad, GamepadAxis, GamepadButton, GamepadButtonState, GamepadLayout,
 };

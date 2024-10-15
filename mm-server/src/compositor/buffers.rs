@@ -13,6 +13,7 @@ use anyhow::bail;
 use ash::vk;
 use drm_fourcc::DrmModifier;
 use hashbrown::HashSet;
+pub use modifiers::*;
 use tracing::trace;
 use wayland_server::{protocol::wl_buffer, Resource as _};
 
@@ -23,7 +24,6 @@ use crate::{
         create_image_view, select_memory_type, VkContext, VkHostBuffer, VkImage, VkTimelinePoint,
     },
 };
-pub use modifiers::*;
 
 slotmap::new_key_type! { pub struct BufferKey; }
 
@@ -34,7 +34,8 @@ pub struct Buffer {
     /// The client is waiting for us to release this buffer.
     pub needs_release: bool,
 
-    /// If set, we should wait on this timeline point before releasing the buffer.
+    /// If set, we should wait on this timeline point before releasing the
+    /// buffer.
     pub release_wait: Option<VkTimelinePoint>,
 
     /// Next time we release this buffer, we should destroy it as well.
@@ -236,7 +237,8 @@ pub fn import_dmabuf_buffer(
         "importing dmabuf texture"
     );
 
-    // Vulkan wants to own the file descriptor, so we create a dup'd one just for the driver.
+    // Vulkan wants to own the file descriptor, so we create a dup'd one just for
+    // the driver.
     let vk_fd = fd.as_fd().try_clone_to_owned()?;
 
     let image = {
@@ -380,8 +382,9 @@ pub fn validate_buffer_parameters(
 
 #[allow(dead_code)]
 mod ioctl {
-    use rustix::{io::Errno, ioctl::Opcode};
     use std::{ffi::c_void, os::fd::RawFd};
+
+    use rustix::{io::Errno, ioctl::Opcode};
 
     pub(super) const DMA_BUF_SYNC_READ: u32 = 1 << 0;
     pub(super) const DMA_BUF_SYNC_WRITE: u32 = 1 << 1;

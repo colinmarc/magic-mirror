@@ -13,12 +13,11 @@ use wayland_protocols::wp::linux_dmabuf::zv1::server::{
 };
 use wayland_server::{protocol::wl_buffer, Resource as _, WEnum};
 
+use super::make_u64;
 use crate::compositor::{
     buffers::{fourcc_bpp, import_dmabuf_buffer, validate_buffer_parameters, PlaneMetadata},
     State,
 };
-
-use super::make_u64;
 
 impl wayland_server::GlobalDispatch<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, ()> for State {
     fn bind(

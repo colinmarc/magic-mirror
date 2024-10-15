@@ -14,22 +14,19 @@ mod timebase;
 mod vulkan_encode;
 
 use cpu_encode::CpuEncoder;
-
 use tracing::{error, instrument, trace, warn};
-
-use crate::{
-    codec::VideoCodec,
-    color::{ColorSpace, VideoProfile},
-    vulkan::*,
-};
+use vulkan_encode::VulkanEncoder;
 
 use super::{
     buffers::{Buffer, BufferBacking},
     surface::SurfaceConfiguration,
     CompositorHandle, DisplayParams, VideoStreamParams,
 };
-
-use vulkan_encode::VulkanEncoder;
+use crate::{
+    codec::VideoCodec,
+    color::{ColorSpace, VideoProfile},
+    vulkan::*,
+};
 
 pub enum Encoder {
     Cpu(CpuEncoder),
@@ -225,7 +222,8 @@ impl EncodePipeline {
             frame.render_span = Some(ctx.span(tracy_client::span_location!())?);
         }
 
-        // Wait for the frame to no longer be in flight, and then establish new timeline points.
+        // Wait for the frame to no longer be in flight, and then establish new timeline
+        // points.
         frame.tp_clear.wait()?;
         frame.tp_staging_done += 10;
         frame.tp_render_done = &frame.tp_staging_done + 1;

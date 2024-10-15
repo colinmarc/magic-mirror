@@ -45,8 +45,9 @@ impl State {
         self.surface_stack.push(id);
     }
 
-    /// Removes any configuration and attached buffer from a surface. This happens if a nil buffer
-    /// is committed or the role object is destroyed by the client.
+    /// Removes any configuration and attached buffer from a surface. This
+    /// happens if a nil buffer is committed or the role object is destroyed
+    /// by the client.
     pub fn unmap_surface(&mut self, id: SurfaceKey) {
         let surface = &mut self.surfaces[id];
         trace!(?surface, "surface unmapped");

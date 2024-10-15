@@ -170,7 +170,8 @@ impl VkDeviceInfo {
             }
         }
 
-        // We want HOST_CACHED | HOST_COHERENT, but we can make do with just HOST_VISIBLE.
+        // We want HOST_CACHED | HOST_COHERENT, but we can make do with just
+        // HOST_VISIBLE.
         let memory_props = unsafe { instance.get_physical_device_memory_properties(device) };
         let (host_visible_mem_type_index, host_mem_is_cached) = {
             let mut cached = true;
@@ -273,7 +274,8 @@ impl VkContext {
         #[cfg(all(target_os = "macos", not(feature = "moltenvk_static")))]
         {
             extensions.push(vk::KhrPortabilityEnumerationFn::name().as_ptr());
-            // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
+            // Enabling this extension is a requirement when using
+            // `VK_KHR_portability_subset`
             extensions.push(vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
         }
 
