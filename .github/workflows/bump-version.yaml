@@ -31,7 +31,7 @@ jobs:
           comp_dir="mm-${{ matrix.component }}"
           echo "COMPONENT_DIR=$comp_dir" | tee -a "$GITHUB_ENV"
 
-          version=$( git cliff -c .github/workflows/cliff-bump-version.toml \
+          version=$( git cliff -c .github/workflows/cliff.toml \
             --bumped-version --unreleased \
             --tag-pattern "${{ matrix.component }}" )
           echo "BUMPED_VERSION=$version" | tee -a "$GITHUB_ENV"
