@@ -7,9 +7,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::waking_sender::WakingSender;
-
 use super::{AudioStreamParams, CompositorEvent, CompositorHandle};
+use crate::waking_sender::WakingSender;
 
 mod pulse;
 use anyhow::Context as _;

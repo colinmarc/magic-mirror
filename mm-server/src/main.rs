@@ -39,7 +39,8 @@ struct Cli {
     /// Bind using systemd's socket passing protocol (LISTEN_FDS).
     #[arg(long)]
     bind_systemd: bool,
-    /// The path to a config file. By default, /etc/magic-mirror/mmserver.{toml,json} is used (if present).
+    /// The path to a config file. By default,
+    /// /etc/magic-mirror/mmserver.{toml,json} is used (if present).
     #[arg(short = 'C', long, value_name = "FILE")]
     config: Option<PathBuf>,
     /// Include extra app definitions. May be specified multiple times, with
@@ -92,7 +93,8 @@ fn main() -> Result<()> {
     #[cfg(feature = "ffmpeg_encode")]
     unsafe {
         ffmpeg_sys::av_log_set_level(ffmpeg_sys::AV_LOG_QUIET);
-        // TODO: the callback has to be variadic, which means using nightly rust.
+        // TODO: the callback has to be variadic, which means using nightly
+        // rust.
         // ffmpeg_sys::av_log_set_callback(Some(ffmpeg_log_callback))
     }
 

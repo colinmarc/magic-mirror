@@ -7,10 +7,6 @@ use std::{sync::Arc, time};
 use anyhow::{bail, Context as _};
 use ash::vk;
 use clap::Parser;
-use pollster::FutureExt as _;
-use tracing::{debug, error, warn};
-use winit::event_loop::EventLoop;
-
 use mm_client::{
     delegate::{AttachmentEvent, AttachmentProxy},
     video::*,
@@ -18,6 +14,9 @@ use mm_client::{
 };
 use mm_client_common as client;
 use mm_protocol as protocol;
+use pollster::FutureExt as _;
+use tracing::{debug, error, warn};
+use winit::event_loop::EventLoop;
 
 const APP_DIMENSION: u32 = 256;
 const DEFAULT_TIMEOUT: time::Duration = time::Duration::from_secs(1);

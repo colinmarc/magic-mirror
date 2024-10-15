@@ -662,7 +662,8 @@ impl State {
                 });
             }
             Cursor::Surface { .. } => {
-                // The cursor will be dispatched after it's rendered during the next frame.
+                // The cursor will be dispatched after it's rendered during the
+                // next frame.
             }
             Cursor::Hidden => self.handle.dispatch(CompositorEvent::CursorUpdate {
                 image: None,

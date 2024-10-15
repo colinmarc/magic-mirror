@@ -18,9 +18,8 @@ use std::{
 };
 
 use futures::channel::oneshot;
-use tracing::{debug, error, trace, warn};
-
 use mm_protocol as protocol;
+use tracing::{debug, error, trace, warn};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConnError {

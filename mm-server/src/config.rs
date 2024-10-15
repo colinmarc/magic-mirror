@@ -2,11 +2,6 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use anyhow::{bail, Context};
-use lazy_static::lazy_static;
-use regex::Regex;
-use tracing::trace;
-
 use std::{
     collections::HashMap,
     ffi::{OsStr, OsString},
@@ -14,6 +9,11 @@ use std::{
     num::NonZeroU32,
     path::{Path, PathBuf},
 };
+
+use anyhow::{bail, Context};
+use lazy_static::lazy_static;
+use regex::Regex;
+use tracing::trace;
 
 lazy_static! {
     static ref NAME_RE: Regex = Regex::new(r"\A[a-z][a-z0-9-_]{0,256}\z").unwrap();
@@ -23,9 +23,10 @@ lazy_static! {
 
 /// Serde representations of the configuration files.
 mod parsed {
+    use std::{collections::HashMap, num::NonZeroU32, path::PathBuf};
+
     use converge::Converge;
     use serde::Deserialize;
-    use std::{collections::HashMap, num::NonZeroU32, path::PathBuf};
 
     #[derive(Debug, Clone, PartialEq)]
     pub(super) enum MaxConnections {
@@ -194,7 +195,10 @@ impl Config {
             }
         });
 
-        let data_home = data_home.ok_or(anyhow::anyhow!("failed to determine `data_home`. Set it explicitly or set one of $HOME or $XDG_DATA_HOME"))?;
+        let data_home = data_home.ok_or(anyhow::anyhow!(
+            "failed to determine `data_home`. Set it explicitly or set one of $HOME or \
+             $XDG_DATA_HOME"
+        ))?;
 
         // We only unwrap values that should have been set in the default
         // config. This is verified by a test.
@@ -397,8 +401,9 @@ fn locate_default_config_file() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use pretty_assertions::assert_eq;
+
+    use super::*;
 
     lazy_static! {
         static ref EXAMPLE_APP: AppConfig = AppConfig {

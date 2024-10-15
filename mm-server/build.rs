@@ -58,9 +58,9 @@ fn main() {
         [("SEMIPLANAR", "1")],
     );
 
-    // We need a keymap for the compositor, but it shouldn't affect much, since we operate
-    // generally with physical keycodes and so do games. If this proves limiting, we could
-    // allow the configuration of other virtual keyboards.
+    // We need a keymap for the compositor, but it shouldn't affect much, since we
+    // operate generally with physical keycodes and so do games. If this proves
+    // limiting, we could allow the configuration of other virtual keyboards.
     let xkb_ctx = xkb::Context::new(0);
     save_keymap(
         &xkb_ctx,

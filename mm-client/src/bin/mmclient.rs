@@ -7,11 +7,6 @@ use std::{sync::Arc, time};
 use anyhow::{anyhow, bail};
 use clap::Parser;
 use ffmpeg_sys_next as ffmpeg_sys;
-use pollster::FutureExt as _;
-use tracing::{debug, error, info, trace};
-use tracing_subscriber::Layer as _;
-use winit::{event_loop::ControlFlow, window};
-
 use mm_client::{
     audio,
     cursor::{cursor_icon_from_proto, load_cursor_image},
@@ -26,6 +21,10 @@ use mm_client::{
 };
 use mm_client_common as client;
 use mm_protocol as protocol;
+use pollster::FutureExt as _;
+use tracing::{debug, error, info, trace};
+use tracing_subscriber::Layer as _;
+use winit::{event_loop::ControlFlow, window};
 
 const DEFAULT_TIMEOUT: time::Duration = time::Duration::from_secs(5);
 const MAX_FRAME_TIME: time::Duration = time::Duration::from_nanos(1_000_000_000 / 24);
@@ -798,9 +797,10 @@ fn init_window(
 
     if !args.launch && matched.len() > 1 {
         bail!(
-                "multiple sessions found matching {:?}, specify a session ID to attach or use --launch to create a new one.",
-                target,
-            );
+            "multiple sessions found matching {:?}, specify a session ID to attach or use \
+             --launch to create a new one.",
+            target,
+        );
     } else if args.resume && matched.is_empty() {
         bail!("no session found matching {:?}", target);
     }
@@ -992,7 +992,8 @@ fn init_logging() -> anyhow::Result<()> {
     // Squash ffmpeg logs.
     unsafe {
         ffmpeg_sys::av_log_set_level(ffmpeg_sys::AV_LOG_QUIET);
-        // TODO: the callback has to be variadic, which means using nightly rust.
+        // TODO: the callback has to be variadic, which means using nightly
+        // rust.
         // ffmpeg_sys::av_log_set_callback(Some(ffmpeg_log_callback))
     }
 

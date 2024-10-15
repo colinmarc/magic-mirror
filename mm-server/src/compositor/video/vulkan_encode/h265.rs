@@ -16,14 +16,13 @@ use ash::vk::native::{
 use bytes::Bytes;
 use tracing::{debug, trace};
 
+use super::gop_structure::HierarchicalP;
+use super::rate_control::RateControlMode;
 use crate::color::VideoProfile;
 use crate::{
     compositor::{CompositorHandle, VideoStreamParams},
     vulkan::*,
 };
-
-use super::gop_structure::HierarchicalP;
-use super::rate_control::RateControlMode;
 
 vk_chain! {
     pub struct H265EncodeProfile<'a> {

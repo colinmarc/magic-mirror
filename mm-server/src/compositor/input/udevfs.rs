@@ -73,7 +73,8 @@ enum InodeType {
     InputDir = 0,
     /// The symlink in /sys/class/input.
     InputSymlink = 1,
-    /// A file containing device info, at /sys/devices/virtual/input/{dev}/uevent.
+    /// A file containing device info, at
+    /// /sys/devices/virtual/input/{dev}/uevent.
     Uevent = 2,
     /// A symlink back to /sys/class/input.
     SubsystemSymlink = 3,

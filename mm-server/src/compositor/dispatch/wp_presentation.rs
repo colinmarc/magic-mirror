@@ -39,7 +39,8 @@ impl wayland_server::Dispatch<wp_presentation::WpPresentation, ()> for State {
                 if let Some(surface_key) = surface.data::<SurfaceKey>() {
                     let wp_presentation_feedback = data_init.init(id, *surface_key);
 
-                    // for wl_output in state.output_proxies.iter().filter(|wl_output| wl_output.id().same_client_as(surface.id())) {
+                    // for wl_output in state.output_proxies.iter().filter(|wl_output|
+                    // wl_output.id().same_client_as(surface.id())) {
                     //     wp_presentation_feedback.sync_output()
                     // }
 

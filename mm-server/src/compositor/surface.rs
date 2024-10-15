@@ -403,7 +403,8 @@ impl State {
         }
     }
 
-    /// Checks if any surfaces have outdated configuration, and sends a configure event.
+    /// Checks if any surfaces have outdated configuration, and sends a
+    /// configure event.
     pub fn configure_surfaces(&mut self) -> anyhow::Result<()> {
         for (_id, surface) in self.surfaces.iter_mut() {
             if surface.configuration.is_none()

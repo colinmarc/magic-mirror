@@ -8,16 +8,15 @@ mod chain;
 mod timeline;
 pub mod video;
 
-pub(crate) use chain::*;
-pub use timeline::*;
-
-use cstr::cstr;
 use std::ffi::{c_void, CStr, CString};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use ash::extensions::{ext, khr};
 use ash::vk;
+pub(crate) use chain::*;
+use cstr::cstr;
+pub use timeline::*;
 use tracing::{debug, error, info, warn};
 
 use self::video::{VideoEncodeQueueExt, VideoQueueExt};
@@ -242,7 +241,8 @@ impl VkDeviceInfo {
             }
         }
 
-        // We want HOST_CACHED | HOST_COHERENT, but we can make do with just HOST_VISIBLE.
+        // We want HOST_CACHED | HOST_COHERENT, but we can make do with just
+        // HOST_VISIBLE.
         let memory_props = unsafe { instance.get_physical_device_memory_properties(device) };
 
         let (host_visible_mem_type_index, host_mem_is_cached) = {

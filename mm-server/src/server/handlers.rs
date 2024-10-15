@@ -2,18 +2,20 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
+use std::time;
+
+use crossbeam_channel::{select, Receiver};
+use hashbrown::HashMap;
+use mm_protocol as protocol;
+use protocol::error::ErrorCode;
+use tracing::{debug, debug_span, error, trace};
+
 use crate::{
     compositor::{self, CompositorEvent, ControlMessage, DisplayParams},
     session::Session,
     state::SharedState,
     waking_sender::{WakingOneshot, WakingSender},
 };
-use crossbeam_channel::{select, Receiver};
-use hashbrown::HashMap;
-use mm_protocol as protocol;
-use protocol::error::ErrorCode;
-use std::time;
-use tracing::{debug, debug_span, error, trace};
 
 mod validation;
 use validation::*;

@@ -7,9 +7,8 @@ use drm_fourcc::DrmFourcc;
 use image::ImageEncoder as _;
 use tracing::instrument;
 
-use crate::vulkan::VkHostBuffer;
-
 use crate::compositor::buffers::{fourcc_bpp, PlaneMetadata};
+use crate::vulkan::VkHostBuffer;
 
 #[instrument(skip_all)]
 pub fn shm_to_png(buffer: &VkHostBuffer, format: PlaneMetadata) -> anyhow::Result<Bytes> {

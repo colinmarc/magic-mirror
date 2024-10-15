@@ -5,12 +5,11 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
+#[cfg(feature = "ffmpeg_encode")]
+use ffmpeg_next as ffmpeg;
 use mm_protocol as protocol;
 
 use crate::vulkan::VkContext;
-
-#[cfg(feature = "ffmpeg_encode")]
-use ffmpeg_next as ffmpeg;
 
 /// A codec used for an attachment video stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
