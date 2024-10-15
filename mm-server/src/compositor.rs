@@ -100,6 +100,7 @@ pub struct Compositor {
     ready_once: Option<oneshot::Sender<WakingSender<ControlMessage>>>,
     timer: mio_timerfd::TimerFd,
     sleeping: bool,
+    shutting_down: bool,
 }
 
 pub struct State {
@@ -402,6 +403,7 @@ impl Compositor {
             ready_once: Some(ready_send),
             timer,
             sleeping: false,
+            shutting_down: false,
         };
 
         compositor.main_loop(pipe_recv)
@@ -452,6 +454,7 @@ impl Compositor {
                         match control_recv.try_recv() {
                             Ok(ControlMessage::Stop) => {
                                 self.state.handle.kick_clients();
+                                self.shutting_down = true;
                                 trace!("shutting down");
 
                                 // Usually, TERM doesn't work, because the
@@ -529,7 +532,9 @@ impl Compositor {
                 }
             }
 
-            self.idle()?;
+            if !self.shutting_down {
+                self.idle()?;
+            }
 
             // Check that we haven't timed out waiting for the client to start up.
             if self.ready_once.is_some() && self.state.surfaces_ready() {
@@ -869,6 +874,11 @@ impl Compositor {
 
     fn handle_control_message(&mut self, msg: ControlMessage) -> anyhow::Result<()> {
         trace!(?msg, "control message");
+
+        if self.shutting_down {
+            // We're about to shut down, so ignore all messages.
+            return Ok(());
+        }
 
         // Attachments get handled asynchronously.
         if matches!(msg, ControlMessage::Attach { .. }) {
