@@ -42,7 +42,8 @@ jobs:
       - name: create release tarball
         run: |-
           mkdir "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
-          cp -r mm-client/target/x86_64-unknown-linux-gnu/release/mmclient README.md \
+          cp -r mm-client/target/x86_64-unknown-linux-gnu/release/mmclient \
+            README.md CHANGELOG.md \
             "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
           cp LICENSES/MIT.txt "${RUNNER_TEMP}/${GITHUB_REF_NAME}/LICENSE.txt"
           tar -C "${RUNNER_TEMP}" --numeric-owner -cvzf "${GITHUB_REF_NAME}-linux-amd64.tar.gz" "$GITHUB_REF_NAME"
@@ -82,7 +83,8 @@ jobs:
       - name: create release tarball
         run: |-
           mkdir "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
-          cp -r mm-client/target/aarch64-apple-darwin/release/mmclient README.md \
+          cp -r mm-client/target/aarch64-apple-darwin/release/mmclient \
+            README.md CHANGELOG.md \
             "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
           cp LICENSES/MIT.txt "${RUNNER_TEMP}/${GITHUB_REF_NAME}/LICENSE.txt"
           gtar -C "${RUNNER_TEMP}" --numeric-owner -cvzf "${GITHUB_REF_NAME}-darwin-arm64.tar.gz" "$GITHUB_REF_NAME"

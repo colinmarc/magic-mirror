@@ -42,7 +42,8 @@ jobs:
       - name: create release tarball
         run: |-
           mkdir "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
-          cp -r mm-server/target/x86_64-unknown-linux-gnu/release/mmserver README.md mmserver.default.toml \
+          cp -r mm-server/target/x86_64-unknown-linux-gnu/release/mmserver \
+            README.md CHANGELOG.md mmserver.default.toml \
             "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
           cp LICENSES/BUSL-1.1.txt "${RUNNER_TEMP}/${GITHUB_REF_NAME}/LICENSE.txt"
           tar -C "${RUNNER_TEMP}" --numeric-owner -cvzf "${GITHUB_REF_NAME}-linux-amd64.tar.gz" "$GITHUB_REF_NAME"
