@@ -1,3 +1,30 @@
+## [mmserver-v0.5.0] - 2024-10-15
+
+### New Features
+
+- Plumb controller input through to the server (990f48cdac4181e69ac3cb5dd1473fe16fca3390)
+- Allow specifying 'permanent' gamepads for a session (1d5b7f0a38017e0589c928a9acb6a10075bfac52)
+- Add support for native linux containerization (a37b0db8c5006e4c7b02cc98e506cd68a6ac2aa1)
+- Basic gamepad support (f0eceab777fd38cb085e0f5120fe54ab2a71d362)
+- List applications the server can launch (5d042be0f51095e06bbf68cdc3d3e40523c3e5ad)
+
+### Bugfixes
+
+- Remove a bunch of dead code (b5e88bbe9e472866d9ddd5316a7a8187d7676778)
+- Add description field to application configs (d786828a87ce2c5ed18f373e3be06a1808ad5c42)
+- Include more context when reading config files (d39aaf46c09d2c6d4525dfb3b452374cd1476b9d)
+- Require app names to start with a letter (4182a506ea3a15809c42010ef88da1aeac12278d)
+- Handle unknown message types more gracefully (2978f9b2d41e4916f7a18905586466bb66e92c35)
+- Add application name to session spans (eccca93fd50530d7d658e8a69bb22ef1b689b5a4)
+- Sleep the compositor if no client is attached (e03d8f2914867cc733fa4b44f78f00f7f89ea361)
+- Make reattaching slightly more robust (10cfede5b4ef625f9961b3582ac7dab33cba6dd7)
+- If using layers > 0, pass that many rate control layers (3a201510794deaebf262a81e8b02e8a3d9359cfd)
+- Get hierarchical coding working on H265 (7b63cc694b28eb7fd1e9155a182e5446b80ef998)
+- Add some preflight checks at startup (91e00002073a1c07af73fb5a7f1e27a5779d66b3)
+- Improve shutdown behavior (5e77d7719313c2c6d53fa3335aec06840a9fe92a)
+- Use putenv instead of Command::env (0a832c0f606a9d130eeca0bcb334dc6c5d65e169)
+- Remove unshare as a dependency (e5c4575e3cacc9d00656cda7af114a0eb471777c)
+
 ## [mmserver-v0.4.1] - 2024-08-16
 
 ### Bugfixes
