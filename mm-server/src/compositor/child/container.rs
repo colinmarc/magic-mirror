@@ -76,8 +76,10 @@ const DEV_BIND_MOUNTS: &[DevBindMount] = &[
     },
 ];
 
+#[cfg(debug_assertions)]
 struct UnbufferedStderr<'a>(BorrowedFd<'a>);
 
+#[cfg(debug_assertions)]
 impl<'a> std::fmt::Write for UnbufferedStderr<'a> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         write(self.0, s.as_bytes()).map_err(|_| std::fmt::Error)?;
@@ -102,18 +104,18 @@ macro_rules! preexec_debug {
     ($($arg:tt)*) => {};
 }
 
-unsafe fn _must<T>(op: &str, res: rustix::io::Result<T>) -> T {
+unsafe fn _must<T>(_op: &str, res: rustix::io::Result<T>) -> T {
     loop {
         match res {
             Ok(v) => return v,
             Err(Errno::INTR) => continue,
-            Err(e) => {
+            Err(_e) => {
                 #[cfg(debug_assertions)]
                 {
                     use std::fmt::Write as _;
                     let mut stderr = UnbufferedStderr(rustix::stdio::stderr());
 
-                    let _ = std::writeln!(stderr, "[PRE-EXEC] {op}: {e}");
+                    let _ = std::writeln!(stderr, "[PRE-EXEC] {_op}: {_e}");
                     let _ = std::writeln!(stderr);
                 }
 
@@ -588,9 +590,9 @@ impl Container {
         // }
 
         // If successful, this never returns.
-        let e = self.child_cmd.exec();
+        let _e = self.child_cmd.exec();
 
-        preexec_debug!("execve failed: {e}");
+        preexec_debug!("execve failed: {_e}");
         std::process::abort();
     }
 }
@@ -653,8 +655,8 @@ where
                 Some(LinkNameSpaceType::Mount)
             ));
 
-            if let Err(e) = f() {
-                preexec_debug!("run_in_container: {e}");
+            if let Err(_e) = f() {
+                preexec_debug!("run_in_container: {_e}");
                 libc::exit(1);
             }
 
