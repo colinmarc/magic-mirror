@@ -12,7 +12,7 @@ use rustix::process::{Pid, Signal, WaitId, WaitidOptions};
 use tracing::{debug, info};
 
 mod container;
-pub use container::Container;
+pub use container::{Container, HomeIsolationMode};
 
 /// A handle to a running container.
 pub struct ChildHandle {

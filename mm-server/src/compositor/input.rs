@@ -237,10 +237,7 @@ mod test {
     use rustix::pipe::{pipe_with, PipeFlags};
 
     use super::{GamepadLayout, InputDeviceManager};
-    use crate::{
-        compositor::Container,
-        config::{AppConfig, HomeIsolationMode},
-    };
+    use crate::compositor::{Container, HomeIsolationMode};
 
     fn run_in_container_with_gamepads<T>(cmd: impl AsRef<[T]>) -> anyhow::Result<String>
     where
@@ -252,16 +249,7 @@ mod test {
             .map(|s| s.as_ref().to_owned().into())
             .collect();
 
-        let app_config = AppConfig {
-            description: None,
-            command,
-            env: Default::default(),
-            xwayland: false,
-            force_1x_scale: false,
-            home_isolation_mode: HomeIsolationMode::Unisolated,
-        };
-
-        let mut container = Container::new(app_config)?;
+        let mut container = Container::new(command, HomeIsolationMode::Tmpfs)?;
         let (pipe_rx, pipe_tx) = pipe_with(PipeFlags::CLOEXEC)?;
         container.set_stdout(pipe_tx)?;
 
