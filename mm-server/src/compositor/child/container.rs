@@ -152,7 +152,7 @@ pub struct Container {
 
     // Note: we don't use Command::env or Command::env_clear, because those
     // cause Command::exec to allocate, which we don't want to do after forking.
-    envs: Vec<(OsString, OsString)>,
+    envs: Vec<CString>,
 
     tmp_stderr: Option<OwnedFd>,
 
@@ -180,21 +180,26 @@ impl Container {
         let exe_path =
             find_executable_in_path(&exe).ok_or(anyhow!("command {:?} not in PATH", &exe))?;
 
-        let mut envs: Vec<(OsString, OsString)> = app_config.env.clone().into_iter().collect();
+        let mut envs: Vec<CString> = app_config
+            .env
+            .clone()
+            .into_iter()
+            .map(|(k, v)| make_putenv(k, v))
+            .collect();
 
         let mut child_cmd = Command::new(exe_path);
         child_cmd.current_dir("/");
         child_cmd.args(args);
 
         if let Some(path) = std::env::var_os("PATH") {
-            envs.push(("PATH".into(), path));
+            envs.push(make_putenv("PATH", path));
         }
 
         let uid = getuid();
         let gid = getgid();
 
         let intern_run_path: OsString = format!("/run/user/{}", uid.as_raw()).try_into().unwrap();
-        envs.push(("XDG_RUNTIME_DIR".into(), intern_run_path.clone()));
+        envs.push(make_putenv("XDG_RUNTIME_DIR", intern_run_path.clone()));
 
         let extern_run_path = std::env::temp_dir().join(format!(
             "mm.{}",
@@ -203,7 +208,7 @@ impl Container {
         std::fs::create_dir_all(&extern_run_path)?;
 
         let intern_home_path: OsString = std::env::var_os("HOME").unwrap_or("/home/mm".into());
-        envs.push(("HOME".into(), intern_home_path.clone()));
+        envs.push(make_putenv("HOME", intern_home_path.clone()));
 
         debug!(home_mode = ?app_config.home_isolation_mode, "using home mode");
         let (extern_home_path, clear_home) = match app_config.home_isolation_mode {
@@ -270,8 +275,7 @@ impl Container {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        self.envs
-            .push((key.as_ref().to_owned(), val.as_ref().to_owned()))
+        self.envs.push(make_putenv(key, val))
     }
 
     pub fn set_stdout<T: AsFd>(&mut self, stdio: T) -> anyhow::Result<()> {
@@ -321,8 +325,6 @@ impl Container {
             .flag_newns()
             .flag_newpid();
 
-        // TODO
-        self.child_cmd.env_clear().envs(self.envs.clone());
         debug!(cmd = ?self.child_cmd, "spawning child process");
 
         let (barrier, child_barrier) = ipc::EventfdBarrier::new()?;
@@ -584,10 +586,10 @@ impl Container {
 
         // We don't trust std::os::Command's env handling, because sometimes
         // it allocates.
-        // libc::clearenv();
-        // for (k, v) in &self.envs {
-        //     libc::setenv
-        // }
+        libc::clearenv();
+        for v in &mut self.envs {
+            libc::putenv(v.as_ptr() as *mut _);
+        }
 
         // If successful, this never returns.
         let _e = self.child_cmd.exec();
@@ -821,6 +823,16 @@ fn mount_fs(
 // Wrapped in a function for compatibility with the must! macro.
 fn sync_barrier(barrier: &ipc::EventfdBarrier) -> rustix::io::Result<()> {
     barrier.sync(time::Duration::from_secs(1))
+}
+
+/// Generates a CString in the format key=value, for putenv(3).
+fn make_putenv(k: impl AsRef<OsStr>, v: impl AsRef<OsStr>) -> CString {
+    CString::new(format!(
+        "{}={}",
+        k.as_ref().to_str().unwrap(),
+        v.as_ref().to_str().unwrap()
+    ))
+    .unwrap()
 }
 
 #[cfg(test)]
