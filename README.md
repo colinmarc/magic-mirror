@@ -6,13 +6,15 @@
 
 This is a game streaming and remote desktop tool for Linux, featuring:
 
- - 100% headless, offscreen, multitenant rendering - no dummy plug required
- - Up to 4k streaming (with support for 10-bit HDR in progress)
+ - Headless, offscreen, multitenant rendering
+ - No system dependencies; no desktop environment, dummy plug, docker, pipewire, etc required
+ - Native linux containerization for running apps (the equivalent of unshare(1))
+ - Up to 4k streaming (with support for 10-bit HDR in progres)
  - Very low latency (about 1 frame, plus network)
  - Local cursor rendering
  - Client support for macOS
 
-> [!WARNING]  
+> [!WARNING]
 > Alpha software! Please submit any issues you encounter. Run the server with `--bug-report` to generate detailed logs and record videos to attach to your report.
 
 ### Quickstart
@@ -45,7 +47,7 @@ For instructions on building the server and/or client yourself, see [BUILD.md](B
 The following is required to run the server:
 
  - Linux 6.x (for Ubuntu, this means Mantic or Noble)
- - (For AMD/Intel cards) Mesa 24.1.x or later (not yet released, so use `mesa-git` on arch or build from source)
+ - (For AMD/Intel cards) Mesa 24.1.x or later
  - (For NVIDIA cards) [Vulkan drivers](https://developer.nvidia.com/vulkan-driver) version 550 or later
  - XWayland (for X11 apps)
 
