@@ -12,6 +12,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: install deps
         run: |
+          sudo apt update
           sudo apt install \
             nasm cmake protobuf-compiler libxkbcommon-dev libwayland-dev libasound2-dev \
             ffmpeg libavutil-dev libavformat-dev libavdevice-dev libavfilter-dev \
