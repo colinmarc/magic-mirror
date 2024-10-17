@@ -489,7 +489,6 @@ fn conn_reactor(
             deadline = now + time::Duration::from_secs(1);
 
             // Check roundtrip deadlines.
-
             let mut timed_out = Vec::new();
             for (sid, Roundtrip { deadline, .. }) in in_flight.roundtrips.iter() {
                 if deadline.is_some_and(|dl| now >= dl) {

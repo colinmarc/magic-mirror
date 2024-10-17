@@ -1020,7 +1020,7 @@ fn determine_resolution(resolution: Resolution, width: u32, height: u32) -> (u32
     match resolution {
         Resolution::Auto => (width.next_multiple_of(2), height.next_multiple_of(2)),
         Resolution::Height(h) => {
-            let h = std::cmp::min(h, height);
+            let h = std::cmp::min(h, height).next_multiple_of(2);
             let w = (h * width / height).next_multiple_of(2);
             (w, h)
         }
