@@ -185,6 +185,8 @@ where
                 {
                     break;
                 }
+
+                continue;
             }
 
             let pad = remote_gamepads.get_mut(&id).unwrap();
