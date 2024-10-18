@@ -1,3 +1,13 @@
+## [mmserver-v0.5.1] - 2024-10-18
+
+### Bugfixes
+
+- Correctly emulate input nodes in udevfs (3fec928dcb5d7d5054d6ca7821864bae74559b9b)
+- Increase the ready timeout (df5ba10642c5ec18064a67f8279d40d3b12baa76)
+- Stub wl_data_device_manager (af1853aaf34c373617b78ddbfbde2d37a977d3df)
+- Don't discard buffers when resending frame callbacks (3b9ce4164bb617ce7e0fd0840bad74fd281fda99)
+- Organize bug report files slightly better (1806d3eea0e33c124f58d413fc3843e288cc0b0e)
+
 ## [mmclient-v0.4.0] - 2024-10-18
 
 ### New Features
