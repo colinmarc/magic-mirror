@@ -41,7 +41,6 @@ mio = { version = "1", features = ["net", "os-ext", "os-poll"] }
 mio-timerfd = "0.2"
 mktemp = "0.5"
 mm-protocol = { path = "../mm-protocol" }
-murmur3 = "0.5"
 nix = { version = "0.29", features = ["net", "socket", "uio"] }
 num_enum = "0.7"
 octets = "0.2"

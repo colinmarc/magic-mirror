@@ -152,7 +152,8 @@ fn init_logging(bug_report_dir: Option<impl AsRef<Path>>) -> Result<()> {
     let trace_log = if let Some(dir) = bug_report_dir {
         // Additionally write a trace log with everything to the bug report dir.
         let file = std::fs::File::create(dir.as_ref().join("mmserver.log"))?;
-        let trace_filter = tracing_subscriber::EnvFilter::new("mmserver=trace");
+        let trace_filter =
+            tracing_subscriber::EnvFilter::new("mmserver=trace,fuser=trace,southpaw=trace");
 
         let trace_log = tracing_subscriber::fmt::layer()
             .with_ansi(false)

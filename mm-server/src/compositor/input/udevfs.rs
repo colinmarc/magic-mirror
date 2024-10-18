@@ -2,11 +2,16 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{collections::BTreeMap, path::PathBuf, str::FromStr as _, sync::Arc, time};
+use std::{
+    collections::BTreeMap,
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time,
+};
 
 use fuser as fuse;
 use libc::EBADF;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
 use parking_lot::Mutex;
 use tracing::{debug, warn};
 
@@ -14,24 +19,7 @@ use super::DeviceState;
 
 const ENOENT: i32 = rustix::io::Errno::NOENT.raw_os_error();
 
-const STATIC_DIRS: &[&str] = &[
-    "sys",
-    "sys/devices",
-    "sys/devices/virtual",
-    "sys/devices/virtual/input",
-    "sys/class",
-    "sys/class/input",
-    "run",
-    "run/udev",
-    "run/udev/data",
-];
-
-// Must match the indexes above. Verified with a test.
-const SYS_DEVICES_VIRTUAL_INPUT: u64 = static_ino(3);
-const SYS_CLASS_INPUT: u64 = static_ino(5);
-const UDEV_DATA: u64 = static_ino(8);
-
-const UDEV_INPUT_DATA: &str = r#"E:ID_INPUT=1
+const UDEV_INPUT_DATA: &[u8] = r#"E:ID_INPUT=1
 E:ID_INPUT_JOYSTICK=1
 E:ID_BUS=usb
 G:seat
@@ -39,139 +27,184 @@ G:uaccess
 Q:seat
 Q:uaccess
 V:1
-"#;
+"#
+.as_bytes();
 
-const STATIC_TTL: time::Duration = time::Duration::MAX;
-const SHORT_TTL: time::Duration = time::Duration::ZERO;
+const ZERO_TTL: time::Duration = time::Duration::ZERO;
 
-const fn static_ino(idx: usize) -> u64 {
-    idx as u64 + fuse::FUSE_ROOT_ID + 1
-}
-
-fn static_path(ino: u64) -> Option<&'static str> {
-    let idx = ino - fuse::FUSE_ROOT_ID - 1;
-    STATIC_DIRS.get(idx as usize).copied()
-}
-
-#[derive(Clone)]
-struct StaticEntry {
-    parent_ino: u64,
-    child_inos: Vec<u64>,
-    relpath: PathBuf,
+#[derive(Debug, Clone)]
+struct Entry {
+    path: PathBuf,
     attr: fuse::FileAttr,
+    /// The associated device ID.
+    dev: Option<u64>,
 }
 
-#[repr(u32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
-enum InodeType {
-    /// The directory in /sys/devices/virtual/input.
-    InputDir = 0,
-    /// The symlink in /sys/class/input.
-    InputSymlink = 1,
-    /// A file containing device info, at
-    /// /sys/devices/virtual/input/{dev}/uevent.
-    Uevent = 2,
-    /// A symlink back to /sys/class/input.
-    SubsystemSymlink = 3,
-    /// The data file in /run/udev/data.
-    DataFile = 4,
+struct InodeCache {
+    inodes: BTreeMap<u64, Entry>,
+    next_inode: u64,
+    ctime: time::SystemTime,
 }
 
-/// We use the following encoding for inodes, to make lookup easy:
-///  - The first 32 bytes are the short ID of the device.
-///  - The last 32 bytes are the inode type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DeviceInode {
-    short_id: u32,
-    inode_type: InodeType,
-}
-
-impl DeviceInode {
-    fn make(short_id: u32, inode_type: InodeType) -> u64 {
-        Self {
-            short_id,
-            inode_type,
+impl InodeCache {
+    fn get_or_insert(
+        &mut self,
+        p: impl AsRef<Path>,
+        mut attr: fuse::FileAttr,
+        dev: Option<u64>,
+    ) -> fuse::FileAttr {
+        for entry in self.inodes.values() {
+            if entry.path == p.as_ref() {
+                return entry.attr;
+            }
         }
-        .into()
+
+        let ino = self.next_inode;
+        self.next_inode += 1;
+
+        attr.ino = ino;
+        self.inodes.insert(
+            ino,
+            Entry {
+                path: p.as_ref().to_owned(),
+                attr,
+                dev,
+            },
+        );
+
+        attr
     }
-}
 
-impl From<DeviceInode> for u64 {
-    fn from(value: DeviceInode) -> Self {
-        let res = (value.short_id as u64) << 32;
-        res | u32::from(value.inode_type) as u64
+    fn lookup_name(&self, inode: u64) -> Option<(PathBuf, Option<u64>)> {
+        if inode == fuse::FUSE_ROOT_ID {
+            return Some((Path::new("/").to_owned(), None));
+        }
+
+        self.inodes
+            .get(&inode)
+            .map(|entry| (entry.path.clone(), entry.dev))
     }
-}
 
-impl TryFrom<u64> for DeviceInode {
-    type Error = <InodeType as TryFromPrimitive>::Error;
+    fn reply_add_dirs<P>(
+        &self,
+        mut reply: fuse::ReplyDirectory,
+        names: impl IntoIterator<Item = P>,
+        skip: usize,
+    ) where
+        P: AsRef<Path>,
+    {
+        let mut offset = 1_i64;
+        for name in names.into_iter().skip(skip) {
+            for (ino, entry) in &self.inodes {
+                if entry.path == name.as_ref() {
+                    if reply.add(
+                        *ino,
+                        offset,
+                        entry.attr.kind,
+                        entry.path.file_name().unwrap().to_str().unwrap(),
+                    ) {
+                        return reply.ok();
+                    };
 
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        let short_id = (value >> 32) as u32;
-        let ty = value as u32;
-        ty.try_into().map(|inode_type| DeviceInode {
-            short_id,
-            inode_type,
-        })
+                    offset += 1;
+                }
+            }
+        }
+
+        reply.ok()
+    }
+
+    fn cache_dir(&mut self, p: impl AsRef<Path>, dev: Option<u64>) -> fuse::FileAttr {
+        let attr = fuse::FileAttr {
+            ino: 0,
+            size: 0,
+            blocks: 0,
+            atime: self.ctime,
+            mtime: self.ctime,
+            ctime: self.ctime,
+            crtime: time::SystemTime::UNIX_EPOCH,
+            kind: fuse::FileType::Directory,
+            perm: 0o777,
+            nlink: 1,
+            uid: 0,
+            gid: 0,
+            rdev: 0,
+            blksize: 512,
+            flags: 0,
+        };
+
+        self.get_or_insert(p, attr, dev)
+    }
+
+    fn cache_file(&mut self, p: impl AsRef<Path>, dev: Option<u64>, len: usize) -> fuse::FileAttr {
+        let attr = fuse::FileAttr {
+            ino: 0,
+            size: len as u64,
+            blocks: 0,
+            atime: time::UNIX_EPOCH,
+            mtime: time::UNIX_EPOCH,
+            ctime: time::UNIX_EPOCH,
+            crtime: time::UNIX_EPOCH,
+            kind: fuse::FileType::RegularFile,
+            perm: 0o777,
+            nlink: 1,
+            uid: 0,
+            gid: 0,
+            rdev: 0,
+            blksize: 512,
+            flags: 0,
+        };
+
+        self.get_or_insert(p, attr, dev)
+    }
+
+    fn cache_symlink(&mut self, p: impl AsRef<Path>, dev: Option<u64>) -> fuse::FileAttr {
+        let attr = fuse::FileAttr {
+            ino: 0,
+            size: 0,
+            blocks: 0,
+            atime: self.ctime,
+            mtime: self.ctime,
+            ctime: self.ctime,
+            crtime: time::SystemTime::UNIX_EPOCH,
+            kind: fuse::FileType::Symlink,
+            perm: 0o777,
+            nlink: 1,
+            uid: 0,
+            gid: 0,
+            rdev: 0,
+            blksize: 512,
+            flags: 0,
+        };
+
+        self.get_or_insert(p, attr, dev)
     }
 }
 
 /// A FUSE filesystem designed to fool libudev. All incoming paths are intended
 /// to be absolute. The following paths are emulated:
 ///   - /sys/devices/virtual/input: contains folders for each virtual input
-///     device.
+///     device. Contains both a top-level folder, inputX, and an eventX folder
+///     for the evdev node.
 ///   - /sys/class/input: contains symlinks to the above device entries.
+///   - /sys/class/hidraw: empty, so that no hidraw devices can be found
+///   - /run/udev/control: an empty file that indicates udev is running
 ///   - /run/udev/data: contains "c{major}:{minor}" files with metadata on each
 ///     device.
 pub struct UdevFs {
     state: Arc<Mutex<super::InputManagerState>>,
-    static_inodes: BTreeMap<u64, StaticEntry>, // Indexed by inode.
+    tree: InodeCache,
 }
 
 impl UdevFs {
     pub fn new(state: Arc<Mutex<super::InputManagerState>>) -> Self {
-        let ctime = time::SystemTime::now();
-
-        let mut static_inodes: BTreeMap<u64, StaticEntry> = BTreeMap::new();
-
-        for (idx, entry) in STATIC_DIRS.iter().enumerate() {
-            let mut relpath = PathBuf::from_str(entry).unwrap();
-            let ino = static_ino(idx);
-
-            // Attempt to find the parent.
-            let mut parent_ino = fuse::FUSE_ROOT_ID;
-            for (prev_idx, prev_p) in STATIC_DIRS[..idx].iter().enumerate().rev() {
-                if let Ok(p) = relpath.strip_prefix(prev_p) {
-                    parent_ino = static_ino(prev_idx);
-                    relpath = p.to_owned();
-                    break;
-                }
-            }
-
-            if let Some(parent) = static_inodes.get_mut(&parent_ino) {
-                parent.child_inos.push(ino);
-            }
-
-            assert_eq!(
-                relpath.components().count(),
-                1,
-                "failed to find parent for {}",
-                relpath.display()
-            );
-            static_inodes.insert(
-                ino,
-                StaticEntry {
-                    parent_ino,
-                    child_inos: Vec::new(),
-                    relpath,
-                    attr: make_dir_attr(ino, ctime),
-                },
-            );
-        }
-
         Self {
             state,
-            static_inodes,
+            tree: InodeCache {
+                inodes: Default::default(),
+                next_inode: fuse::FUSE_ROOT_ID + 1,
+                ctime: time::SystemTime::now(),
+            },
         }
     }
 }
@@ -179,381 +212,393 @@ impl UdevFs {
 impl fuse::Filesystem for UdevFs {
     fn lookup(
         &mut self,
-        _req: &fuser::Request<'_>,
+        _req: &fuse::Request<'_>,
         parent: u64,
         name: &std::ffi::OsStr,
-        reply: fuser::ReplyEntry,
+        reply: fuse::ReplyEntry,
     ) {
         let Some(name) = name.to_str() else {
-            reply.error(ENOENT);
-            return;
+            warn!(?name, "invalid lookup name");
+            return reply.error(ENOENT);
         };
 
-        if parent == SYS_DEVICES_VIRTUAL_INPUT {
-            let guard = self.state.lock();
-            for dev in &guard.devices {
-                if name == dev.devname {
-                    let ino = DeviceInode::make(dev.short_id, InodeType::InputDir);
-                    reply.entry(&SHORT_TTL, &make_dir_attr(ino, dev.plugged), 0);
-                    return;
-                }
-            }
-        }
-
-        if parent == SYS_CLASS_INPUT {
-            let guard = self.state.lock();
-            for dev in &guard.devices {
-                if name == dev.devname {
-                    let ino = DeviceInode::make(dev.short_id, InodeType::InputSymlink);
-                    reply.entry(&SHORT_TTL, &make_symlink_attr(ino, dev.plugged), 0);
-                    return;
-                }
-            }
-        }
-
-        if parent == UDEV_DATA {
-            let guard = self.state.lock();
-            for dev in &guard.devices {
-                if name == format!("c13:{}", dev.counter) {
-                    let ino = DeviceInode::make(dev.short_id, InodeType::DataFile);
-                    reply.entry(
-                        &SHORT_TTL,
-                        &make_file_attr(ino, dev.plugged, UDEV_INPUT_DATA.len()),
-                        0,
-                    );
-                    return;
-                }
-            }
-        }
-
-        for entry in self.static_inodes.values() {
-            if entry.parent_ino == parent && name == entry.relpath.as_os_str() {
-                reply.entry(&STATIC_TTL, &entry.attr, 0);
-                return;
-            }
-        }
-
-        let Ok(DeviceInode {
-            short_id,
-            inode_type,
-        }) = parent.try_into()
-        else {
-            reply.error(ENOENT);
-            return;
+        let inodes = &mut self.tree;
+        let Some((parent_path, dev)) = inodes.lookup_name(parent) else {
+            warn!(?parent, ?name, "lookup failed");
+            return reply.error(ENOENT);
         };
 
-        let guard = self.state.lock();
-        let Some(dev) = guard.find_device(short_id) else {
-            reply.error(ENOENT);
-            return;
-        };
+        debug!(?parent_path, ?name, dev, "lookup");
+        match (parent_path.to_str().unwrap(), name, dev) {
+            ("/", "sys", _) => reply.entry(&ZERO_TTL, &inodes.cache_dir("/sys", None), 0),
+            ("/sys", "class", _) => {
+                reply.entry(&ZERO_TTL, &inodes.cache_dir("/sys/class", None), 0)
+            }
+            ("/sys/class", "input", _) => {
+                reply.entry(&ZERO_TTL, &inodes.cache_dir("/sys/class/input", None), 0)
+            }
+            ("/sys/class/input", name, _) => {
+                let Some(dev) = self
+                    .state
+                    .lock()
+                    .device_by_eventname(name)
+                    .map(|dev| dev.id)
+                else {
+                    warn!(name, "device not found in /sys/class/input");
+                    return reply.error(ENOENT);
+                };
 
-        match (inode_type, name) {
-            (InodeType::InputDir, "uevent") => {
-                let content = make_uevent(dev);
-                let ino = DeviceInode::make(short_id, InodeType::Uevent);
                 reply.entry(
-                    &SHORT_TTL,
-                    &make_file_attr(ino, dev.plugged, content.len()),
+                    &ZERO_TTL,
+                    &inodes.cache_symlink(parent_path.join(name), Some(dev)),
                     0,
                 );
+            }
+            ("/sys/class", "hidraw", _) => {
+                reply.entry(&ZERO_TTL, &inodes.cache_dir("/sys/class/hidraw", None), 0)
+            }
+            ("/sys", "devices", _) => {
+                reply.entry(&ZERO_TTL, &inodes.cache_dir("/sys/devices", None), 0)
+            }
+            ("/sys/devices", "virtual", _) => reply.entry(
+                &ZERO_TTL,
+                &inodes.cache_dir("/sys/devices/virtual", None),
+                0,
+            ),
+            ("/sys/devices/virtual", "input", _) => reply.entry(
+                &ZERO_TTL,
+                &inodes.cache_dir("/sys/devices/virtual/input", None),
+                0,
+            ),
+            ("/sys/devices/virtual/input", name, _) => {
+                let Some(dev) = self.state.lock().device_by_devname(name).map(|dev| dev.id) else {
+                    warn!(name, "device not found in /sys/devices/virtual/input");
+                    return reply.error(ENOENT);
+                };
 
-                return;
+                reply.entry(
+                    &ZERO_TTL,
+                    &inodes.cache_dir(parent_path.join(name), Some(dev)),
+                    0,
+                );
             }
-            (InodeType::InputDir, "subsystem") => {
-                let ino = DeviceInode::make(short_id, InodeType::SubsystemSymlink);
-                reply.entry(&SHORT_TTL, &make_symlink_attr(ino, dev.plugged), 0);
-                return;
+            (p, "uevent", Some(dev)) if p.starts_with("/sys/devices/virtual/input") => {
+                let guard = self.state.lock();
+                let Some(dev) = guard.device_by_id(dev) else {
+                    warn!(?p, dev, "device not found in /sys/devices/virtual/input");
+                    return reply.error(ENOENT);
+                };
+
+                // Inside the device directory, there are two levels of subdirectories.
+                let path = parent_path
+                    .strip_prefix(Path::new("/sys/devices/virtual/input"))
+                    .unwrap();
+                if path.as_os_str().is_empty() {
+                    unreachable!() // Handled by the case above this one.
+                }
+
+                // Distinguish between the inputX uevent and the eventX uevent.
+                let content = if path.to_str().unwrap() == dev.devname {
+                    make_input_uevent(dev)
+                } else if path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("event")
+                {
+                    make_evdev_uevent(dev)
+                } else {
+                    warn!(?parent_path, "unrecognized uevent path");
+                    return reply.error(ENOENT);
+                };
+
+                reply.entry(
+                    &ZERO_TTL,
+                    &self
+                        .tree
+                        .cache_file(parent_path.join("uevent"), Some(dev.id), content.len()),
+                    0,
+                );
             }
-            (InodeType::InputDir, "dev") => (), // TODO
-            _ => (),
+            (p, "subsystem", Some(dev)) if p.starts_with("/sys/devices/virtual/input") => {
+                reply.entry(
+                    &ZERO_TTL,
+                    &self
+                        .tree
+                        .cache_symlink(parent_path.join("subsystem"), Some(dev)),
+                    0,
+                );
+            }
+            (p, name, Some(dev))
+                if p.starts_with("/sys/devices/virtual/input") && name.starts_with("event") =>
+            {
+                // This is /sys/devices/virtual/input/inputX/eventX.
+                reply.entry(
+                    &ZERO_TTL,
+                    &inodes.cache_dir(parent_path.join(name), Some(dev)),
+                    0,
+                );
+            }
+            ("/", "run", _) => reply.entry(&ZERO_TTL, &inodes.cache_dir("/run", None), 0),
+            ("/run", "udev", _) => reply.entry(&ZERO_TTL, &inodes.cache_dir("/run/udev", None), 0),
+            ("/run/udev", "control", _) => reply.entry(
+                &ZERO_TTL,
+                &inodes.cache_file("/run/udev/control", None, 0),
+                0,
+            ),
+            ("/run/udev", "data", _) => {
+                reply.entry(&ZERO_TTL, &inodes.cache_dir("/run/udev/data", None), 0)
+            }
+            ("/run/udev", "udev.conf.d", _) => reply.error(ENOENT),
+
+            ("/run/udev/data", name, _) => {
+                let guard = self.state.lock();
+                for dev in &guard.devices {
+                    if name == format!("c13:{}", dev.counter) {
+                        return reply.entry(
+                            &ZERO_TTL,
+                            &inodes.cache_file(
+                                parent_path.join(name),
+                                Some(dev.id),
+                                UDEV_INPUT_DATA.len(),
+                            ),
+                            0,
+                        );
+                    }
+                }
+
+                warn!(?name, "no device found in /run/udev/data");
+                reply.error(ENOENT);
+            }
+            (parent_name, name, dev) => {
+                warn!(parent_name, name, dev, "udevfs lookup failed");
+                reply.error(ENOENT);
+            }
         }
-
-        warn!(parent = static_path(parent), name, "udevfs lookup failed");
-        reply.error(ENOENT);
     }
 
     fn getattr(
         &mut self,
-        _req: &fuser::Request<'_>,
+        _req: &fuse::Request<'_>,
         ino: u64,
         _fh: Option<u64>,
-        reply: fuser::ReplyAttr,
+        reply: fuse::ReplyAttr,
     ) {
-        if let Some(entry) = self.static_inodes.get(&ino) {
-            reply.attr(&STATIC_TTL, &entry.attr);
-            return;
-        }
-
-        let Ok(DeviceInode {
-            short_id,
-            inode_type,
-        }) = ino.try_into()
-        else {
-            reply.error(ENOENT);
-            return;
+        let Some(entry) = self.tree.inodes.get(&ino) else {
+            warn!(ino, "lookup failed");
+            return reply.error(ENOENT);
         };
 
-        let guard = self.state.lock();
-        let Some(dev) = guard.find_device(short_id) else {
-            reply.error(ENOENT);
-            return;
-        };
-
-        let attr = match inode_type {
-            InodeType::InputDir => make_dir_attr(ino, dev.plugged),
-            InodeType::InputSymlink => make_symlink_attr(ino, dev.plugged),
-            InodeType::SubsystemSymlink => make_symlink_attr(ino, dev.plugged),
-            InodeType::Uevent => {
-                let contents = make_uevent(dev);
-                make_file_attr(ino, dev.plugged, contents.len())
-            }
-            InodeType::DataFile => make_file_attr(ino, dev.plugged, UDEV_INPUT_DATA.len()),
-        };
-
-        reply.attr(&SHORT_TTL, &attr);
+        reply.attr(&ZERO_TTL, &entry.attr);
     }
 
-    fn readlink(&mut self, _req: &fuser::Request<'_>, ino: u64, reply: fuser::ReplyData) {
-        let Ok(DeviceInode {
-            short_id,
-            inode_type,
-        }) = ino.try_into()
-        else {
-            reply.error(ENOENT);
-            return;
+    fn readlink(&mut self, _req: &fuse::Request<'_>, ino: u64, reply: fuse::ReplyData) {
+        let Some(entry) = self.tree.inodes.get(&ino) else {
+            warn!(ino, "lookup failed");
+            return reply.error(ENOENT);
         };
 
-        let guard = self.state.lock();
-        let Some(dev) = guard.find_device(short_id) else {
-            reply.error(ENOENT);
-            return;
-        };
+        debug!(path = ?entry.path, "readlink");
+        if let Some(name) = matches_prefix_with_name(&entry.path, "/sys/class/input") {
+            let guard = self.state.lock();
+            let Some(dev) = guard.device_by_eventname(name) else {
+                warn!(eventname = ?name, "device not found in /sys/devices/virtual/input");
+                return reply.error(ENOENT);
+            };
 
-        match inode_type {
-            InodeType::InputSymlink => {
-                let dst = format!("/sys/devices/virtual/input/{}", dev.devname);
-                reply.data(dst.as_bytes());
-            }
-            InodeType::SubsystemSymlink => {
-                reply.data(b"/sys/class/input");
-            }
-            _ => reply.error(ENOENT),
+            let dst = Path::new("/sys/devices/virtual/input")
+                .join(&dev.devname)
+                .join(name);
+            debug!(?dst, "returning from readlink");
+            return reply.data(dst.as_os_str().as_encoded_bytes());
+        } else if entry.path.starts_with("/sys/devices")
+            && entry.path.file_name() == Some(Path::new("subsystem").as_os_str())
+        {
+            return reply.data(b"/sys/class/input");
+        } else {
+            warn!(path = ?entry.path, dev = ?entry.dev, "readlink failed");
+            reply.error(ENOENT);
         }
     }
 
     fn read(
         &mut self,
-        _req: &fuser::Request<'_>,
+        _req: &fuse::Request<'_>,
         ino: u64,
         _fh: u64,
         _offset: i64,
         _size: u32,
         _flags: i32,
         _lock_owner: Option<u64>,
-        reply: fuser::ReplyData,
+        reply: fuse::ReplyData,
     ) {
-        if self.static_inodes.contains_key(&ino) {
+        let Some(entry) = self.tree.inodes.get(&ino) else {
+            warn!(ino, "lookup failed");
             return reply.error(EBADF);
-        }
-
-        let Ok(DeviceInode {
-            short_id,
-            inode_type,
-        }) = ino.try_into()
-        else {
-            reply.error(ENOENT);
-            return;
         };
 
-        let guard = self.state.lock();
-        let Some(dev) = guard.find_device(short_id) else {
-            reply.error(ENOENT);
-            return;
-        };
+        debug!(path = ?entry.path, "read");
 
-        match inode_type {
-            InodeType::Uevent => {
-                let contents = make_uevent(dev);
-                reply.data(contents.as_bytes())
+        if entry.path.starts_with("/run/udev/data") {
+            reply.data(UDEV_INPUT_DATA);
+        } else if entry.dev.is_some()
+            && entry.path.starts_with("/sys/devices")
+            && entry.path.file_name() == Some(Path::new("uevent").as_os_str())
+        {
+            let guard = self.state.lock();
+            let Some(dev) = guard.device_by_id(entry.dev.unwrap()) else {
+                warn!(dev = ?entry.dev, "device lookup failed");
+                return reply.error(EBADF);
+            };
+
+            let mut parent_path = entry.path.clone();
+            parent_path.pop();
+
+            if parent_path.file_name() == Some(&dev.eventname) {
+                reply.data(&make_evdev_uevent(dev))
+            } else if parent_path.file_name() == Some(&dev.devname) {
+                reply.data(&make_input_uevent(dev))
+            } else {
+                warn!(?entry.path, "bad uevent path");
+                reply.error(EBADF);
             }
-            InodeType::DataFile => reply.data(UDEV_INPUT_DATA.as_bytes()),
-            _ => reply.error(ENOENT),
-        };
+        } else {
+            warn!(path = ?entry.path, dev = entry.dev, "read failed");
+            reply.error(EBADF);
+        }
     }
 
     fn readdir(
         &mut self,
-        _req: &fuser::Request<'_>,
+        _req: &fuse::Request<'_>,
         ino: u64,
         _fh: u64,
-        offset: i64,
-        mut reply: fuser::ReplyDirectory,
+        skip: i64,
+        mut reply: fuse::ReplyDirectory,
     ) {
-        if ino == SYS_DEVICES_VIRTUAL_INPUT {
-            todo!() // It doesn't seem like udev ever does this.
-        }
+        let inodes = &mut self.tree;
+        let Some(Entry { path, dev, .. }) = inodes.inodes.get(&ino).cloned() else {
+            warn!(ino, "lookup failed");
+            return reply.error(EBADF);
+        };
 
-        if ino == SYS_CLASS_INPUT {
-            let guard = self.state.lock();
+        debug!(?path, ?dev, "readdir");
 
-            for (
-                idx,
-                DeviceState {
-                    short_id, devname, ..
-                },
-            ) in guard.devices.iter().skip(offset as usize).enumerate()
-            {
-                debug!(devname, "udev is enumerating device");
+        let skip = skip as usize;
+        match (path.to_str().unwrap(), dev) {
+            ("/", _) => inodes.reply_add_dirs(reply, ["sys", "run"], skip),
+            ("/sys", _) => inodes.reply_add_dirs(reply, ["class", "devices"], skip),
+            ("/sys/class", _) => inodes.reply_add_dirs(reply, ["input", "hidraw"], skip),
+            ("/sys/class/input", _) => {
+                let guard = self.state.lock();
 
-                if reply.add(
-                    DeviceInode::make(*short_id, InodeType::InputSymlink),
-                    (idx as i64) + 1,
-                    fuse::FileType::Symlink,
-                    devname,
-                ) {
-                    break;
+                debug!("udev is enumerating devices in /sys/class/input");
+                for (idx, DeviceState { id, eventname, .. }) in
+                    guard.devices.iter().skip(skip).enumerate()
+                {
+                    let attr = inodes.cache_symlink(path.join(eventname), Some(*id));
+
+                    if reply.add(
+                        attr.ino,
+                        (idx as i64) + 1,
+                        fuse::FileType::Symlink,
+                        eventname,
+                    ) {
+                        break;
+                    }
                 }
+
+                reply.ok();
             }
-
-            reply.ok();
-            return;
-        }
-
-        if let Some(entry) = self.static_inodes.get(&ino).cloned() {
-            for child_ino in entry.child_inos {
-                let child_entry = self.static_inodes.get(&child_ino).unwrap();
-                if reply.add(
-                    child_ino,
-                    0,
-                    fuse::FileType::Directory,
-                    child_entry.relpath.file_name().unwrap(),
-                ) {
-                    break;
-                };
+            ("/sys/class/hidraw", _) => {
+                reply.ok() // Empty.
             }
+            ("/sys/devices", _) => inodes.reply_add_dirs(reply, ["virtual"], skip),
+            ("/sys/devices/virtual", _) => inodes.reply_add_dirs(reply, ["input"], skip),
+            ("/sys/devices/virtual/input", _) => {
+                let guard = self.state.lock();
 
-            reply.ok();
-            return;
+                debug!("udev is enumerating devices in /sys/devices/virtual/input");
+                for (idx, DeviceState { id, devname, .. }) in
+                    guard.devices.iter().skip(skip).enumerate()
+                {
+                    let attr = inodes.cache_dir(path.join(devname), Some(*id));
+
+                    if reply.add(
+                        attr.ino,
+                        (idx as i64) + 1,
+                        fuse::FileType::Directory,
+                        devname,
+                    ) {
+                        break;
+                    }
+                }
+
+                reply.ok();
+            }
+            (_p, Some(_))
+                if matches_prefix_with_name(&path, "/sys/devices/virtual/input").is_some() =>
+            {
+                // Note: this seems not to happen.
+                // inodes.reply_add_dirs(reply, ["subsystem", "capabilities",
+                // "uevent"], skip)
+            }
+            ("/run", _) => inodes.reply_add_dirs(reply, ["udev"], skip),
+            ("/run/udev", _) => inodes.reply_add_dirs(reply, ["control", "data"], skip),
+            ("/run/udev/data", _) => {
+                // Note: this seems not to happen.
+            }
+            _ => {
+                warn!(?path, ?dev, "readdir failed");
+                reply.error(ENOENT);
+            }
         }
-
-        reply.error(ENOENT);
     }
 
-    fn access(
-        &mut self,
-        _req: &fuser::Request<'_>,
-        _ino: u64,
-        _mask: i32,
-        reply: fuser::ReplyEmpty,
-    ) {
+    fn access(&mut self, _req: &fuse::Request<'_>, _ino: u64, _mask: i32, reply: fuse::ReplyEmpty) {
         reply.ok()
     }
 
     fn release(
         &mut self,
-        _req: &fuser::Request<'_>,
+        _req: &fuse::Request<'_>,
         _ino: u64,
         _fh: u64,
         _flags: i32,
         _lock_owner: Option<u64>,
         _flush: bool,
-        reply: fuser::ReplyEmpty,
+        reply: fuse::ReplyEmpty,
     ) {
         reply.ok()
     }
 }
 
-fn make_uevent(dev: &DeviceState) -> String {
+fn make_input_uevent(_dev: &DeviceState) -> Vec<u8> {
+    // TODO hack
+    br#"PRODUCT=3/45e/2ea/408
+NAME="Magic Mirror Emulated Controller"
+EV=20000b
+KEY=7fdb000000000000 0 0 0 0
+ABS=3003f
+UNIQ="d0:bc:c1:db:1d:2f"
+"#
+    .to_vec()
+}
+
+fn make_evdev_uevent(dev: &DeviceState) -> Vec<u8> {
     format!(
         "MAJOR=13\nMINOR={}\nDEVNAME=input/{}\n",
-        dev.counter, dev.devname
+        dev.counter,
+        dev.eventname.to_str().unwrap()
     )
+    .as_bytes()
+    .to_vec()
 }
 
-const fn make_file_attr(ino: u64, t: time::SystemTime, len: usize) -> fuse::FileAttr {
-    fuser::FileAttr {
-        ino,
-        size: len as u64,
-        blocks: 0,
-        atime: t,
-        mtime: t,
-        ctime: t,
-        crtime: time::SystemTime::UNIX_EPOCH,
-        kind: fuse::FileType::RegularFile,
-        perm: 0o644,
-        nlink: 1,
-        uid: 0,
-        gid: 0,
-        rdev: 0,
-        blksize: 512,
-        flags: 0,
-    }
-}
-
-const fn make_dir_attr(ino: u64, t: time::SystemTime) -> fuse::FileAttr {
-    fuser::FileAttr {
-        ino,
-        size: 0,
-        blocks: 0,
-        atime: t,
-        mtime: t,
-        ctime: t,
-        crtime: time::SystemTime::UNIX_EPOCH,
-        kind: fuse::FileType::Directory,
-        perm: 0o777,
-        nlink: 1,
-        uid: 0,
-        gid: 0,
-        rdev: 0,
-        blksize: 512,
-        flags: 0,
-    }
-}
-fn make_symlink_attr(ino: u64, t: time::SystemTime) -> fuse::FileAttr {
-    fuser::FileAttr {
-        ino,
-        size: 0,
-        blocks: 0,
-        atime: t,
-        mtime: t,
-        ctime: t,
-        crtime: time::SystemTime::UNIX_EPOCH,
-        kind: fuse::FileType::Symlink,
-        perm: 0o777,
-        nlink: 1,
-        uid: 0,
-        gid: 0,
-        rdev: 0,
-        blksize: 512,
-        flags: 0,
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn static_inodes_correct() {
-        assert_eq!(
-            static_path(SYS_DEVICES_VIRTUAL_INPUT),
-            Some("sys/devices/virtual/input"),
-        );
-        assert_eq!(static_path(SYS_CLASS_INPUT), Some("sys/class/input"));
-        assert_eq!(static_path(UDEV_DATA), Some("run/udev/data"));
-    }
-
-    #[test]
-    fn inode_serde() {
-        let inode = DeviceInode {
-            short_id: 12345,
-            inode_type: InodeType::InputSymlink,
-        };
-
-        let v: u64 = inode.into();
-        assert_eq!(v, 53021371269121);
-
-        assert_eq!(DeviceInode::try_from(v), Ok(inode));
+fn matches_prefix_with_name(p: &Path, prefix: impl AsRef<Path>) -> Option<&OsStr> {
+    match p.strip_prefix(prefix).ok()?.components().next() {
+        Some(std::path::Component::Normal(devname)) => Some(devname),
+        _ => None,
     }
 }

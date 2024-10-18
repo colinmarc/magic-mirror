@@ -2,10 +2,12 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{io::Cursor, sync::Arc, time};
+use std::{
+    ffi::{OsStr, OsString},
+    sync::Arc,
+};
 
 use fuser as fuse;
-use murmur3::murmur3_32 as murmur3;
 use parking_lot::Mutex;
 use southpaw::{
     sys::{EV_ABS, EV_KEY},
@@ -33,10 +35,10 @@ pub struct InputDeviceManager {
 }
 
 struct DeviceState {
-    short_id: u32, // Used by udevfs.
+    id: u64,
     counter: u16,
-    plugged: time::SystemTime,
-    devname: String,
+    devname: OsString,   // inputX
+    eventname: OsString, // eventX
 }
 
 #[derive(Default)]
@@ -46,8 +48,18 @@ struct InputManagerState {
 }
 
 impl InputManagerState {
-    fn find_device(&self, short_id: u32) -> Option<&DeviceState> {
-        self.devices.iter().find(|dev| dev.short_id == short_id)
+    fn device_by_id(&self, id: u64) -> Option<&DeviceState> {
+        self.devices.iter().find(|dev| dev.id == id)
+    }
+
+    fn device_by_devname(&self, name: impl AsRef<OsStr>) -> Option<&DeviceState> {
+        self.devices.iter().find(|dev| dev.devname == name.as_ref())
+    }
+
+    fn device_by_eventname(&self, name: impl AsRef<OsStr>) -> Option<&DeviceState> {
+        self.devices
+            .iter()
+            .find(|dev| dev.eventname == name.as_ref())
     }
 }
 
@@ -142,6 +154,7 @@ impl InputDeviceManager {
             "/sys/devices/virtual/input",
         );
         container.internal_bind_mount(udevfs_path.join("sys/class/input"), "/sys/class/input");
+        container.internal_bind_mount(udevfs_path.join("sys/class/hidraw"), "/sys/class/hidraw");
         container.internal_bind_mount(udevfs_path.join("run/udev"), "/run/udev");
         container.internal_bind_mount(southpaw_path, "/dev/input");
 
@@ -163,7 +176,8 @@ impl InputDeviceManager {
 
         guard.counter += 1;
         let counter = guard.counter;
-        let devname = format!("event{counter}");
+        let devname = OsStr::new(&format!("input{counter}")).to_owned();
+        let eventname = OsStr::new(&format!("event{counter}")).to_owned();
 
         let xy_absinfo = AbsInfo {
             value: 128,
@@ -187,8 +201,8 @@ impl InputDeviceManager {
         };
 
         let device = southpaw::Device::builder()
-            .name("Magic Mirror Emulated DualSense Controller")
-            .id(southpaw::BusType::Usb, 0x54c, 0xce5, 0x8111)
+            .name("Magic Mirror Emulated Controller")
+            .id(southpaw::BusType::Usb, 1234, 4567, 111)
             .supported_key_codes([
                 KeyCode::BtnSouth,
                 KeyCode::BtnNorth,
@@ -212,14 +226,13 @@ impl InputDeviceManager {
             .supported_absolute_axis(AbsAxis::RZ, trigger_absinfo)
             .supported_absolute_axis(AbsAxis::HAT0X, dpad_absinfo)
             .supported_absolute_axis(AbsAxis::HAT0Y, dpad_absinfo)
-            .add_to_tree(&mut self.southpaw, &devname)?;
+            .add_to_tree(&mut self.southpaw, &eventname)?;
 
-        let short_id = murmur3(&mut Cursor::new(id.to_ne_bytes()), 0).unwrap();
         guard.devices.push(DeviceState {
-            short_id,
+            id,
             counter,
             devname,
-            plugged: time::SystemTime::now(),
+            eventname,
         });
 
         Ok(GamepadHandle {
@@ -280,10 +293,18 @@ mod test {
             "input",
         ])?;
 
-        pretty_assertions::assert_eq!(
-            output,
-            "/sys/devices/virtual/input/event1\n/sys/devices/virtual/input/event2\n"
-        );
+        let mut expected = String::new();
+        for path in [
+            "/sys/devices/virtual/input/input1",
+            "/sys/devices/virtual/input/input1/event1",
+            "/sys/devices/virtual/input/input2",
+            "/sys/devices/virtual/input/input2/event2",
+        ] {
+            expected.push_str(path);
+            expected.push('\n');
+        }
+
+        pretty_assertions::assert_eq!(output, expected);
         Ok(())
     }
 }
