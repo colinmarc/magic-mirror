@@ -1168,7 +1168,6 @@ dependencies = [
  "mio-timerfd",
  "mktemp",
  "mm-protocol",
- "murmur3",
  "nix 0.29.0",
  "num_enum",
  "octets",
@@ -1218,12 +1217,6 @@ name = "multimap"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "defc4c55412d89136f966bbb339008b474350e5e6e78d2714439c386b3137a03"
-
-[[package]]
-name = "murmur3"
-version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9252111cf132ba0929b6f8e030cac2a24b507f3a4d6db6fb2896f27b354c714b"
 
 [[package]]
 name = "nix"
@@ -1930,7 +1923,6 @@ dependencies = [
 [[package]]
 name = "southpaw"
 version = "0.1.1"
-source = "git+https://github.com/colinmarc/southpaw?rev=ff78fa6ce7e82c8afa5f7e365194ac083ce743b3#ff78fa6ce7e82c8afa5f7e365194ac083ce743b3"
 dependencies = [
  "bindgen 0.70.1",
  "bit-vec",
