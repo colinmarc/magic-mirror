@@ -52,7 +52,7 @@ jobs:
 
       - name: cargo update
         if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
-        run: (cd $COMPONENT_DIR && cargo update $COMPONENT_DIR)
+        run: (cd $COMPONENT_DIR && cargo update --offline $COMPONENT_DIR)
 
       - name: update BUSL change date
         if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION && matrix.component == 'server' }}
