@@ -29,11 +29,12 @@ jobs:
           echo "COMPONENT=${{ matrix.component }}" | tee -a "$GITHUB_ENV"
           echo "CURRENT_VERSION=$( git tag | grep "${{ matrix.component }}" | tail -1 )" | tee -a "$GITHUB_ENV"
 
-          comp_dir="mm-${{ matrix.component }}"
-          echo "COMPONENT_DIR=$comp_dir" | tee -a "$GITHUB_ENV"
+          mm_component="mm-${{ matrix.component }}"
+          echo "MM_COMPONENT=$mm_component" | tee -a "$GITHUB_ENV"
 
           version=$( git cliff -c .github/workflows/cliff.toml \
             --bumped-version \
+            --include-path "$MM_COMPONENT*/**/*" \
             --tag-pattern "${{ matrix.component }}" )
           echo "BUMPED_VERSION=$version" | tee -a "$GITHUB_ENV"
           echo "BUMPED_VERSION_SHORT=$( echo $version | sed -E 's/^[a-z]+-v(.*)/\1/' )" | tee -a "$GITHUB_ENV"
@@ -48,11 +49,11 @@ jobs:
 
       - name: replace version in Cargo.toml
         if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
-        run: (cd $COMPONENT_DIR && cargo set-version --offline $BUMPED_VERSION_SHORT)
+        run: (cd $MM_COMPONENT && cargo set-version --offline $BUMPED_VERSION_SHORT)
 
       - name: cargo update
         if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
-        run: (cd $COMPONENT_DIR && cargo update $COMPONENT_DIR)
+        run: (cd $MM_COMPONENT && cargo update $MM_COMPONENT)
 
       - name: update BUSL change date
         if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION && matrix.component == 'server' }}
@@ -64,7 +65,7 @@ jobs:
         if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
         run: |
           git cliff -c .github/workflows/cliff.toml \
-            --include-path "$COMPONENT_DIR/**/*" \
+            --include-path "$MM_COMPONENT*/**/*" \
             --tag-pattern "$COMPONENT" \
             -t "$BUMPED_VERSION" -u \
             -p CHANGELOG.md
@@ -73,7 +74,7 @@ jobs:
         if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
         run: |
           git cliff -c .github/workflows/cliff.toml \
-            --include-path "$COMPONENT_DIR/**/*" \
+            --include-path "$MM_COMPONENT*/**/*" \
             --tag-pattern "$COMPONENT" \
             -t "$BUMPED_VERSION" -u > "$RUNNER_TEMP/pr-body.txt"
 
