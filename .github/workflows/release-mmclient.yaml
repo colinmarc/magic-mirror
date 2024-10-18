@@ -50,7 +50,7 @@ jobs:
           path: mmclient-*.tar.gz
 
   create_tarball_macos:
-    name: Build mmclient (macos)
+    name: Build mmclient (macos arm)
     runs-on: macos-latest
     steps:
       - uses: dtolnay/rust-toolchain@stable
@@ -90,9 +90,50 @@ jobs:
           name: mmclient-mac
           path: mmclient-*.tar.gz
 
+  create_tarball_macos_intel:
+    name: Build mmclient (macos intel)
+    runs-on: macos-13
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: install deps
+        run: |
+          brew install ffmpeg@6 protobuf
+          brew link ffmpeg@6
+
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/install-slang
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: macos-x86_64
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            mm-client
+            mm-protocol
+
+      - name: cargo build
+        run: (cd mm-client && cargo build --bin mmclient --release --features moltenvk_static --target x86_64-apple-darwin)
+      - name: create release tarball
+        run: |-
+          mkdir "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
+          cp -r mm-client/target/x86_64-apple-darwin/release/mmclient \
+            README.md CHANGELOG.md \
+            "${RUNNER_TEMP}/${GITHUB_REF_NAME}"
+          cp LICENSES/MIT.txt "${RUNNER_TEMP}/${GITHUB_REF_NAME}/LICENSE.txt"
+          gtar -C "${RUNNER_TEMP}" --numeric-owner -cvzf "${GITHUB_REF_NAME}-darwin-amd64.tar.gz" "$GITHUB_REF_NAME"
+      - name: upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmclient-mac-intel
+          path: mmclient-*.tar.gz
+
   create_release:
     name: Create release
-    needs: [create_tarball_linux, create_tarball_macos]
+    needs: [create_tarball_linux, create_tarball_macos, create_tarball_macos_intel]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
