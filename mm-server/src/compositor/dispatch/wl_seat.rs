@@ -1,3 +1,7 @@
+// Copyright 2024 Colin Marc <hi@colinmarc.com>
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 use wayland_server::{
     protocol::{wl_keyboard, wl_pointer, wl_seat},
     Resource as _,
