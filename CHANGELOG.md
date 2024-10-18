@@ -1,3 +1,9 @@
+## [mmserver-v0.5.2] - 2024-10-18
+
+### Bugfixes
+
+- Use getgid if we want the group ID (6a9c71d25d58ff6b5bc4564b99230d76a6599f0e)
+
 ## [mmserver-v0.5.1] - 2024-10-18
 
 ### Bugfixes
