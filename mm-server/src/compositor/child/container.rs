@@ -707,7 +707,7 @@ pub(super) fn fuse_mount(
 
     let (fd_tx, fd_rx) = ipc::fd_oneshot()?;
     let uid = CString::new(format!("{}", getuid().as_raw())).unwrap();
-    let gid = CString::new(format!("{}", getuid().as_raw())).unwrap();
+    let gid = CString::new(format!("{}", getgid().as_raw())).unwrap();
     let rootmode = CString::new(format!("{st_mode:o}")).unwrap();
 
     let is_dir = FileType::from_raw_mode(st_mode) == FileType::Directory;
