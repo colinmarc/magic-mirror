@@ -265,7 +265,7 @@ impl State {
 
         // Buffer swap happens first. We handle it a bit differently because
         // buffers can be removed, not just overwritten.
-        let feedback = surface.pending_feedback.take();
+        let mut feedback = surface.pending_feedback.take();
         match surface.pending_buffer.take() {
             Some(PendingBuffer::Detach) => {
                 self.unmap_surface(id);
@@ -287,44 +287,41 @@ impl State {
                     ));
                 }
 
-                // If we're waiting on an ack_configure, discard the buffer.
+                // If we're waiting on an ack_configure, poke the client again.
                 if surface.pending_configure.is_some() {
-                    debug!(pending_configure = ?surface.pending_configure, "discarding buffer");
-                    if let Some(fb) = feedback {
+                    debug!(pending_configure = ?surface.pending_configure, "pending configure, resending frame callback");
+                    if let Some(fb) = feedback.take() {
                         fb.discarded();
                     }
 
                     if let Some(cb) = surface.frame_callback.pending.take() {
                         cb.done(self.serial.next());
                     }
+                }
 
+                buffer.needs_release = true;
+                surface.content = Some(ContentUpdate {
+                    buffer: buffer_id,
+                    wp_presentation_feedback: feedback,
+                });
+
+                // In the case of shm buffer, we do a copy and immediately release it.
+                if let BufferBacking::Shm {
+                    staging_buffer,
+                    format,
+                    pool,
+                    dirty,
+                    ..
+                } = &mut buffer.backing
+                {
+                    let len = (format.stride * format.height) as usize;
+                    let pool = pool.read().unwrap();
+                    let contents = pool.data(format.offset as usize, len);
+
+                    staging_buffer.copy_from_slice(contents);
+                    *dirty = true;
                     buffer.needs_release = false;
                     buffer.wl_buffer.release();
-                } else {
-                    buffer.needs_release = true;
-                    surface.content = Some(ContentUpdate {
-                        buffer: buffer_id,
-                        wp_presentation_feedback: feedback,
-                    });
-
-                    // In the case of shm buffer, we do a copy and immediately release it.
-                    if let BufferBacking::Shm {
-                        staging_buffer,
-                        format,
-                        pool,
-                        dirty,
-                        ..
-                    } = &mut buffer.backing
-                    {
-                        let len = (format.stride * format.height) as usize;
-                        let pool = pool.read().unwrap();
-                        let contents = pool.data(format.offset as usize, len);
-
-                        staging_buffer.copy_from_slice(contents);
-                        *dirty = true;
-                        buffer.needs_release = false;
-                        buffer.wl_buffer.release();
-                    }
                 }
             }
             None => (),
