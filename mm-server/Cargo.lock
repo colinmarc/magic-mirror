@@ -1923,8 +1923,9 @@ dependencies = [
 [[package]]
 name = "southpaw"
 version = "0.1.1"
-source = "git+https://github.com/colinmarc/southpaw?rev=ff78fa6ce7e82c8afa5f7e365194ac083ce743b3#ff78fa6ce7e82c8afa5f7e365194ac083ce743b3"
+source = "git+https://github.com/colinmarc/southpaw?rev=92621c93134223d98288275ae23f3cd705087423#92621c93134223d98288275ae23f3cd705087423"
 dependencies = [
+ "anyhow",
  "bindgen 0.70.1",
  "bit-vec",
  "fuser",
