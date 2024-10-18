@@ -112,7 +112,7 @@ fn launch_session(
     };
 
     // Tracy gets confused if we have multiple sessions going.
-    let guard = state.lock();
+    let mut guard = state.lock();
     if cfg!(feature = "tracy") && !guard.sessions.is_empty() {
         send_err(
             response,
@@ -145,10 +145,19 @@ fn launch_session(
     }
 
     let bug_report_dir = guard.cfg.bug_report_dir.clone();
+    let (session_seq, session_id) = guard.generate_session_id();
     drop(guard);
+
+    // Create a folder in the bug report directory just for this session.
+    let mut bug_report_dir = bug_report_dir;
+    if let Some(ref mut dir) = bug_report_dir {
+        dir.push(format!("session-{:02}-{}", session_seq, session_id));
+        std::fs::create_dir_all(dir).unwrap();
+    }
 
     let session = match Session::launch(
         vk_clone,
+        session_id,
         &msg.application_name,
         &application_config,
         display_params,
@@ -287,49 +296,44 @@ fn attach(
         }
     };
 
-    let (handle, display_params, bug_report_dir) = {
-        let mut state = state.lock();
+    let mut guard = state.lock();
 
-        let session = match state.sessions.get_mut(&session_id) {
-            Some(s) => s,
-            None => {
-                send_err(outgoing, ErrorCode::ErrorSessionNotFound, None);
-                return;
-            }
-        };
-
-        if !session.supports_stream(video_params) {
-            send_err(
-                outgoing,
-                ErrorCode::ErrorAttachmentParamsNotSupported,
-                Some("unsupported streaming resolution or codec".to_string()),
-            );
+    let attachment_id = guard.id_generator.next_int();
+    let session = match guard.sessions.get_mut(&session_id) {
+        Some(s) => s,
+        None => {
+            send_err(outgoing, ErrorCode::ErrorSessionNotFound, None);
             return;
-        }
-
-        match session.attach(true, video_params, audio_params) {
-            Ok(handle) => (
-                handle,
-                session.display_params,
-                session.bug_report_dir.clone(),
-            ),
-            Err(e) => {
-                error!("failed to attach to session: {}", e);
-                send_err(
-                    outgoing,
-                    ErrorCode::ErrorServer,
-                    Some("failed to attach to session".to_string()),
-                );
-                return;
-            }
         }
     };
 
-    let span = debug_span!(
-        "attachment",
-        session_id,
-        attachment_id = handle.attachment_id
-    );
+    if !session.supports_stream(video_params) {
+        send_err(
+            outgoing,
+            ErrorCode::ErrorAttachmentParamsNotSupported,
+            Some("unsupported streaming resolution or codec".to_string()),
+        );
+        return;
+    }
+
+    let handle = match session.attach(attachment_id, true, video_params, audio_params) {
+        Ok(handle) => handle,
+        Err(e) => {
+            error!("failed to attach to session: {}", e);
+            send_err(
+                outgoing,
+                ErrorCode::ErrorServer,
+                Some("failed to attach to session".to_string()),
+            );
+            return;
+        }
+    };
+
+    let display_params = session.display_params;
+    let bug_report_dir = session.bug_report_dir.clone();
+    drop(guard);
+
+    let span = debug_span!("attachment", session_id, attachment_id,);
 
     debug!(?video_params, ?audio_params, "attaching with params");
 
@@ -636,7 +640,7 @@ fn attach(
                             let file = debug_outputs.entry(stream_seq).or_insert_with(|| {
                                 let dir = bug_report_dir.clone().unwrap();
                                 let ext = format!("{video_codec:?}").to_lowercase();
-                                let path = dir.join(format!("attachment-{}-{}.{}", handle.attachment_id, stream_seq, ext));
+                                let path = dir.join(format!("attachment-{:02}-{}.{}", stream_seq, handle.attachment_id, ext));
                                 std::fs::File::create(path).unwrap()
                             });
 

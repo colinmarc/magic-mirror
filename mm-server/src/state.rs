@@ -19,6 +19,8 @@ pub struct ServerState {
     // TODO: we'd rather use a BTreeMap, but we want
     // hash_brown::HashMap::extract_if.
     pub sessions: HashMap<u64, Session>,
+    pub session_seq: usize,
+    pub id_generator: tiny_id::ShortCodeGenerator<char>,
     pub cfg: Config,
     pub vk: Arc<VkContext>,
 }
@@ -29,7 +31,16 @@ impl ServerState {
             vk,
             cfg,
             sessions: HashMap::new(),
+            session_seq: 0,
+            id_generator: tiny_id::ShortCodeGenerator::new_numeric(6),
         }
+    }
+
+    pub fn generate_session_id(&mut self) -> (usize, u64) {
+        let seq = self.session_seq;
+        self.session_seq += 1;
+
+        (seq, self.id_generator.next_int())
     }
 
     /// Run periodic cleanup, e.g. ending defunct sessions.
