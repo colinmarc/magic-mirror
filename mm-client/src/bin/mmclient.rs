@@ -26,7 +26,7 @@ use tracing::{debug, error, info, trace};
 use tracing_subscriber::Layer as _;
 use winit::{event_loop::ControlFlow, window};
 
-const DEFAULT_TIMEOUT: time::Duration = time::Duration::from_secs(5);
+const DEFAULT_TIMEOUT: time::Duration = time::Duration::from_secs(30);
 const MAX_FRAME_TIME: time::Duration = time::Duration::from_nanos(1_000_000_000 / 24);
 const RESIZE_COOLDOWN: time::Duration = time::Duration::from_millis(500);
 
