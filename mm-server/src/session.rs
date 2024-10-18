@@ -4,11 +4,9 @@
 
 use std::{path::PathBuf, sync::Arc, time};
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, bail};
 use crossbeam_channel as crossbeam;
-use lazy_static::lazy_static;
 use mm_protocol as protocol;
-use parking_lot::Mutex;
 use pathsearch::find_executable_in_path;
 use tracing::{debug_span, info};
 
@@ -53,25 +51,16 @@ impl Session {
     /// until both have started up and connected over a unix socket.
     pub fn launch(
         vk: Arc<VkContext>,
+        id: u64,
         application_name: &str,
         application_config: &super::config::AppConfig,
         display_params: DisplayParams,
         permanent_gamepads: Vec<protocol::Gamepad>,
         bug_report_dir: Option<PathBuf>,
     ) -> anyhow::Result<Self> {
-        let id = generate_id();
-
         // Do an early check that the executable exists.
         let exe = application_config.command.first().unwrap();
         find_executable_in_path(exe).ok_or(anyhow!("command {:?} not in PATH", exe))?;
-
-        // Create a folder in the bug report directory just for this session.
-        let mut bug_report_dir = bug_report_dir;
-        if let Some(ref mut dir) = bug_report_dir {
-            dir.push(format!("session-{}", id));
-            std::fs::create_dir_all(dir)
-                .context("failed to create session-specific bug report dir")?;
-        }
 
         // Launch the compositor, which in turn launches the app.
         let (ready_send, ready_recv) = oneshot::channel();
@@ -152,6 +141,7 @@ impl Session {
 
     pub fn attach(
         &mut self,
+        id: u64,
         operator: bool,
         video_params: VideoStreamParams,
         audio_params: AudioStreamParams,
@@ -163,8 +153,6 @@ impl Session {
         } else if self.operator_attachment_id.is_some() {
             return Err(anyhow!("session already has an operator"));
         }
-
-        let id = generate_id();
 
         info!(
             session_id = self.id,
@@ -246,13 +234,4 @@ impl Session {
 
         probe_codec(self.vk.clone(), params.codec)
     }
-}
-
-lazy_static! {
-    static ref ID_GENERATOR: Mutex<tiny_id::ShortCodeGenerator<char>> =
-        Mutex::new(tiny_id::ShortCodeGenerator::new_numeric(6));
-}
-
-fn generate_id() -> u64 {
-    ID_GENERATOR.lock().next_int()
 }
