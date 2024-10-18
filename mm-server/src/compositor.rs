@@ -203,6 +203,7 @@ impl Compositor {
         create_global::<xdg_wm_base::XdgWmBase>(&dh, 6);
 
         create_global::<protocol::wl_seat::WlSeat>(&dh, 9);
+        create_global::<protocol::wl_data_device_manager::WlDataDeviceManager>(&dh, 3);
         create_global::<zwp_pointer_constraints_v1::ZwpPointerConstraintsV1>(&dh, 1);
         create_global::<zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1>(&dh, 1);
         create_global::<zwp_text_input_manager_v3::ZwpTextInputManagerV3>(&dh, 1);
