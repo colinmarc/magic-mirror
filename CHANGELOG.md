@@ -1,3 +1,23 @@
+## [mmclient-v0.4.0] - 2024-10-18
+
+### New Features
+
+- Plumb controller input through to the server (990f48cdac4181e69ac3cb5dd1473fe16fca3390)
+- Allow specifying 'permanent' gamepads for a session (1d5b7f0a38017e0589c928a9acb6a10075bfac52)
+- Refactor out most of mmclient into a UniFFI rust lib (e8097e594b72a336ace6ef5fe7247304a18dd364)
+- List applications the server can launch (5d042be0f51095e06bbf68cdc3d3e40523c3e5ad)
+- Add a logging interface (b961041ce28b7da961f193b17cd03f4e36c14ea7)
+
+### Bugfixes
+
+- Remove unecessary clone (87c95e63f6c6ce2f63207f96da839408f4617785)
+- Rename Gamepad* enums to reduce the possibility of collision (5fd2241beff203c5c09089456e9326102213c2c2)
+- Prevent a reattaching doom loop (dfa5d75e8daefa3dc15468145f55a5d06e7cd6e1)
+- Correctly invert joystick direction (a60eb398b5f1dd13e1ac660f856a03857decad5b)
+- Round off window height (d4227e772a7d6c8d30919b1e08876ee4a2e55802)
+- Handle gamepad connected events correctly (aed00821a8ce3add26ef3ff2226b26e0752c1971)
+- Increase the ready timeout (df5ba10642c5ec18064a67f8279d40d3b12baa76)
+
 ## [mmserver-v0.5.0] - 2024-10-15
 
 ### New Features
