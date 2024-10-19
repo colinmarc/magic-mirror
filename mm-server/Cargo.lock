@@ -769,6 +769,20 @@ dependencies = [
 [[package]]
 name = "fuser"
 version = "0.14.0"
+source = "git+https://github.com/colinmarc/fuser?rev=574a43a1d84ff82855947f04fcfa69cb094190b0#574a43a1d84ff82855947f04fcfa69cb094190b0"
+dependencies = [
+ "libc",
+ "log",
+ "memchr",
+ "nix 0.28.0",
+ "page_size",
+ "smallvec",
+ "zerocopy",
+]
+
+[[package]]
+name = "fuser"
+version = "0.14.0"
 source = "git+https://github.com/colinmarc/fuser?rev=643facdc1bcc9a3b11d7a88ebfaaaa045c3596c1#643facdc1bcc9a3b11d7a88ebfaaaa045c3596c1"
 dependencies = [
  "libc",
@@ -1154,7 +1168,7 @@ dependencies = [
  "drm-fourcc",
  "ffmpeg-next",
  "ffmpeg-sys-next",
- "fuser",
+ "fuser 0.14.0 (git+https://github.com/colinmarc/fuser?rev=643facdc1bcc9a3b11d7a88ebfaaaa045c3596c1)",
  "git-version",
  "glam",
  "hashbrown 0.14.5",
@@ -1923,17 +1937,18 @@ dependencies = [
 [[package]]
 name = "southpaw"
 version = "0.1.1"
-source = "git+https://github.com/colinmarc/southpaw?rev=92621c93134223d98288275ae23f3cd705087423#92621c93134223d98288275ae23f3cd705087423"
+source = "git+https://github.com/colinmarc/southpaw?rev=e022f2066b300c9600d69bac73e7d8ef7e19f08c#e022f2066b300c9600d69bac73e7d8ef7e19f08c"
 dependencies = [
  "anyhow",
  "bindgen 0.70.1",
  "bit-vec",
- "fuser",
+ "fuser 0.14.0 (git+https://github.com/colinmarc/fuser?rev=574a43a1d84ff82855947f04fcfa69cb094190b0)",
  "libc",
  "litemap",
  "log",
  "num_enum",
  "parking_lot",
+ "regex",
  "rustix",
  "semver",
  "seq-macro",
