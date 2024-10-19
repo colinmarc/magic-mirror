@@ -134,7 +134,7 @@ unsafe fn _must<T>(_op: &str, res: rustix::io::Result<T>) -> T {
                     let _ = std::writeln!(stderr);
                 }
 
-                std::process::abort();
+                libc::_exit(1);
             }
         }
     }
@@ -611,7 +611,7 @@ impl Container {
         let _e = self.child_cmd.exec();
 
         preexec_debug!("execve failed: {_e}");
-        std::process::abort();
+        libc::_exit(1);
     }
 }
 
@@ -675,10 +675,10 @@ where
 
             if let Err(_e) = f() {
                 preexec_debug!("run_in_container: {_e}");
-                libc::exit(1);
+                libc::_exit(1);
             }
 
-            libc::exit(0);
+            libc::_exit(0);
         }
     }
 
