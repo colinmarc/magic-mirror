@@ -23,7 +23,7 @@ Grab the latest release (link above), and run it on a server with a GPU:
 
 ```shell
 $ cat > steam-bigpicture.toml <<EOF
-command = ["steam", "-steamos", "-gamepadui"]
+command = ["steam", "-gamepadui"]
 xwayland = true
 EOF
 $ ./mmserver --bind "<your local ip>:9599" -i steam-bigpicture.toml
