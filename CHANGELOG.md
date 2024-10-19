@@ -1,3 +1,11 @@
+## [mmserver-v0.5.2] - 2024-10-19
+
+### Bugfixes
+
+- Use getgid if we want the group ID (6a9c71d25d58ff6b5bc4564b99230d76a6599f0e)
+- Use _exit instead of exit or abort (c33a7b8989121706e0286af5efcdd8b5cf1291f1)
+- Pass locale environment variables through to child apps (8022fd1bdb8e64918e15f38b2b4197361841f9d5)
+
 ## [mmserver-v0.5.1] - 2024-10-18
 
 ### Bugfixes
