@@ -203,8 +203,26 @@ impl Container {
         child_cmd.current_dir("/");
         child_cmd.args(args);
 
-        if let Some(path) = std::env::var_os("PATH") {
-            envs.push(make_putenv("PATH", path));
+        for key in [
+            "PATH",
+            "USER",
+            "SHELL",
+            "EDITOR",
+            "LANG",
+            "LC_ALL",
+            "LC_ADDRESS",
+            "LC_IDENTIFICATION",
+            "LC_MEASUREMENT",
+            "LC_MONETARY",
+            "LC_NAME",
+            "LC_NUMERIC",
+            "LC_PAPER",
+            "LC_TELEPHONE",
+            "LC_TIME",
+        ] {
+            if let Some(value) = std::env::var_os(key) {
+                envs.push(make_putenv(key, value));
+            }
         }
 
         let uid = getuid();
