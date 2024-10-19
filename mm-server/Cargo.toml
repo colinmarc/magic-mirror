@@ -95,7 +95,7 @@ features = ["mm", "mount", "pipe", "time", "thread", "stdio"]
 
 [dependencies.southpaw]
 git = "https://github.com/colinmarc/southpaw"
-rev = "92621c93134223d98288275ae23f3cd705087423"
+rev = "e022f2066b300c9600d69bac73e7d8ef7e19f08c"
 
 [dependencies.svt]
 git = "https://github.com/colinmarc/svt-rs"
