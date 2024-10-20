@@ -27,7 +27,7 @@ pub struct XWayland {
 }
 
 // Where the socket gets mounted inside the container.
-pub const SOCKET_PATH: &str = "/tmp/.x11-magic-mirror";
+pub const SOCKET_PATH: &str = "/tmp/.X11-magic-mirror";
 
 impl XWayland {
     pub fn spawn(
