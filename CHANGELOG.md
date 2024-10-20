@@ -1,3 +1,10 @@
+## [mmserver-v0.5.3] - 2024-10-20
+
+### Bugfixes
+
+- Be consistent in xwayland socket naming (9fa9252ed665663b2f5c1461895a6213dade1124)
+- Never use a 0 audio stream_seq (09f0d7567e68fca89aff329bcb7608f419e3a72f)
+
 ## [mmserver-v0.5.2] - 2024-10-19
 
 ### Bugfixes
