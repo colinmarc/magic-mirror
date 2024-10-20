@@ -78,7 +78,7 @@ impl EncodePipeline {
             server_close_tx: close_tx,
 
             compositor,
-            stream_seq: 0,
+            stream_seq: 1,
 
             encoder: None,
             done_tx,
