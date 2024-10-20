@@ -1,3 +1,9 @@
+## [mmclient-v0.4.1] - 2024-10-20
+
+### Bugfixes
+
+- Handle video/audio stream seq more intelligently (dd298b33b8361b31bc32dc64be19cc2804c78636)
+
 ## [mmserver-v0.5.2] - 2024-10-19
 
 ### Bugfixes
