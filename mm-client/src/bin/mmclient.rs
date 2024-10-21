@@ -1090,17 +1090,32 @@ fn cmd_list_apps(client: &client::Client) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let mut apps = apps
+        .into_iter()
+        .map(|app| {
+            let mut name = String::new();
+            for dir in &app.folder {
+                name.push_str(dir);
+                name.push('/');
+            }
+            name.push_str(&app.name);
+
+            (name, app.description)
+        })
+        .collect::<Vec<_>>();
+    apps.sort();
+
     let mut tw = tabwriter::TabWriter::new(std::io::stdout()).padding(4);
 
     use std::io::Write as _;
     writeln!(&mut tw, "Name\tDescription")?;
     writeln!(&mut tw, "----\t-----------")?;
 
-    for app in apps {
-        if app.description.len() <= 80 {
-            writeln!(&mut tw, "{}\t{}", app.name, app.description)?;
+    for (name, desc) in apps {
+        if desc.len() <= 80 {
+            writeln!(&mut tw, "{}\t{}", name, desc)?;
         } else {
-            writeln!(&mut tw, "{}\t{}...", app.name, &app.description[..77])?;
+            writeln!(&mut tw, "{}\t{}...", name, &desc[..77])?;
         }
     }
 

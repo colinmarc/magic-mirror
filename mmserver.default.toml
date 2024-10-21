@@ -90,10 +90,16 @@ mdns = true
 
 ## A basic app definition has a command to run. You can also specify environment
 ## variables to inject.
-# [apps.steam-big-picture-example]
-# description = "Steam's big picture mode."
+# [apps.steam-big-picture]
+# description = "Steam"
 # command = ["steam", "-gamepadui"]
 # environment = { "FOO" = "bar" }
+
+## Configure a "path" for the application. Clients can use this to group apps
+## into folders. This has nothing to do with the local filesystem. Paths should
+## use unix path separators. They may include characters in the set
+## [A-Za-z0-9-_ ] (including spaces).
+# app_path = "My Games/Puzzle Games"
 
 ## Enable XWayland support for this application. This is required for any
 ## applications that are built for the legacy X11 windowing system, such as Steam.

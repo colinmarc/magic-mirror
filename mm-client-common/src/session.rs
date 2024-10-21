@@ -14,6 +14,7 @@ use crate::validation::*;
 pub struct Application {
     pub name: String,
     pub description: String,
+    pub folder: Vec<String>,
 }
 
 impl TryFrom<protocol::application_list::Application> for Application {
@@ -23,6 +24,7 @@ impl TryFrom<protocol::application_list::Application> for Application {
         Ok(Application {
             name: value.name,
             description: value.description,
+            folder: value.folder,
         })
     }
 }

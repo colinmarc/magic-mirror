@@ -91,6 +91,7 @@ fn list_applications(state: SharedState, response: &WakingSender<protocol::Messa
         .map(|(name, app)| protocol::application_list::Application {
             name: name.clone(),
             description: app.description.clone().unwrap_or_default(),
+            folder: app.path.clone(),
         })
         .collect();
 

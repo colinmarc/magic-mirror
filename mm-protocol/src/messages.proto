@@ -357,6 +357,9 @@ message ApplicationList {
   message Application {
     string name = 1; // Required.
     string description = 2;
+
+    // A list of path components, used to group applications for display.
+    repeated string folder = 3;
   }
 
   repeated Application list = 1;

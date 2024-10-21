@@ -7,7 +7,7 @@ use std::{
     ffi::{OsStr, OsString},
     net::ToSocketAddrs,
     num::NonZeroU32,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use anyhow::{bail, Context};
@@ -17,9 +17,13 @@ use tracing::trace;
 
 lazy_static! {
     static ref NAME_RE: Regex = Regex::new(r"\A[a-z][a-z0-9-_]{0,256}\z").unwrap();
+    static ref DESCRIPTION_RE: Regex = Regex::new(r"\A[A-Za-z0-9-_ ]{0,256}\z").unwrap();
+    static ref PATH_COMPONENT_RE: Regex = Regex::new(r"\A[A-Za-z0-9-_  ]{0,64}\z").unwrap();
     static ref DEFAULT_CFG: parsed::Config =
         toml::from_str(include_str!("../../mmserver.default.toml")).unwrap();
 }
+
+const MAX_APP_PATH_COMPONENTS: usize = 8;
 
 /// Serde representations of the configuration files.
 mod parsed {
@@ -100,6 +104,7 @@ mod parsed {
     #[derive(Debug, Clone, PartialEq, Deserialize)]
     #[serde(deny_unknown_fields)]
     pub(super) struct AppConfig {
+        pub(super) app_path: Option<String>,
         pub(super) description: Option<String>,
         pub(super) command: Vec<String>,
         pub(super) environment: Option<BTreeMap<String, String>>,
@@ -135,6 +140,7 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppConfig {
     pub description: Option<String>,
+    pub path: Vec<String>,
     pub command: Vec<OsString>,
     pub env: BTreeMap<OsString, OsString>,
     pub xwayland: bool,
@@ -241,54 +247,12 @@ impl Config {
             .flatten();
 
         for (name, app) in apps.into_iter().chain(additional_apps) {
-            if !NAME_RE.is_match(&name) {
-                bail!("invalid app name: {}", name);
-            }
-
             if this.apps.contains_key(&name) {
                 bail!("duplicate app name: {}", name);
             }
-
-            let isolate_home = app
-                .isolate_home
-                .or(default_app_settings.isolate_home)
-                .unwrap();
-            let tmp_home = app.tmp_home.or(default_app_settings.tmp_home).unwrap();
-            let home_isolation_mode = match (isolate_home, tmp_home) {
-                (false, true) => bail!("if isolate_home = false, tmp_home must also be false"),
-                (false, false) => HomeIsolationMode::Unisolated,
-                (true, true) => HomeIsolationMode::Tmpfs,
-                (true, false) => {
-                    if let Some(s) = app.shared_home_name {
-                        if !NAME_RE.is_match(&s) {
-                            bail!("invalid shared_home_name: {s}",)
-                        }
-
-                        HomeIsolationMode::Permanent(data_home.join("homes").join(s))
-                    } else {
-                        HomeIsolationMode::Permanent(data_home.join("homes").join(&name))
-                    }
-                }
-            };
-
-            let res = AppConfig {
-                description: app.description,
-                command: app.command.into_iter().map(OsString::from).collect(),
-                env: app
-                    .environment
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(k, v)| (OsString::from(k), OsString::from(v)))
-                    .collect(),
-                xwayland: app.xwayland.or(default_app_settings.xwayland).unwrap(),
-                force_1x_scale: app
-                    .force_1x_scale
-                    .or(default_app_settings.force_1x_scale)
-                    .unwrap(),
-                home_isolation_mode,
-            };
-
-            this.apps.insert(name, res);
+            let app = validate_app(&name, app, &default_app_settings, &data_home)
+                .context(format!("failed to load app config for '{}'", name))?;
+            this.apps.insert(name, app);
         }
 
         trace!("using config: {:#?}", this);
@@ -405,6 +369,97 @@ fn locate_default_config_file() -> Option<PathBuf> {
     None
 }
 
+fn validate_app(
+    name: &str,
+    app: parsed::AppConfig,
+    defaults: &parsed::DefaultAppSettings,
+    data_home: &Path,
+) -> anyhow::Result<AppConfig> {
+    if !NAME_RE.is_match(&name) {
+        bail!("invalid name: {}", name);
+    }
+
+    if app
+        .description
+        .as_ref()
+        .is_some_and(|desc| !DESCRIPTION_RE.is_match(desc))
+    {
+        bail!("invalid description: {}", app.description.unwrap())
+    }
+
+    let path = match app.app_path {
+        None => Vec::new(),
+        Some(p) => validate_app_path(p)?,
+    };
+
+    let isolate_home = app.isolate_home.or(defaults.isolate_home).unwrap();
+    let tmp_home = app.tmp_home.or(defaults.tmp_home).unwrap();
+    let home_isolation_mode = match (isolate_home, tmp_home) {
+        (false, true) => bail!("if isolate_home = false, tmp_home must also be false"),
+        (false, false) => HomeIsolationMode::Unisolated,
+        (true, true) => HomeIsolationMode::Tmpfs,
+        (true, false) => {
+            if let Some(s) = app.shared_home_name {
+                if !NAME_RE.is_match(&s) {
+                    bail!("invalid shared_home_name: {s}",)
+                }
+
+                HomeIsolationMode::Permanent(data_home.join("homes").join(s))
+            } else {
+                HomeIsolationMode::Permanent(data_home.join("homes").join(&name))
+            }
+        }
+    };
+
+    Ok(AppConfig {
+        path,
+        description: app.description,
+        command: app.command.into_iter().map(OsString::from).collect(),
+        env: app
+            .environment
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+            .collect(),
+        xwayland: app.xwayland.or(defaults.xwayland).unwrap(),
+        force_1x_scale: app.force_1x_scale.or(defaults.force_1x_scale).unwrap(),
+        home_isolation_mode,
+    })
+}
+
+fn validate_app_path(p: String) -> anyhow::Result<Vec<String>> {
+    let components = Path::new(&p).components();
+    let mut out = Vec::new();
+
+    for component in components {
+        if let Some(s) = validate_app_path_component(component) {
+            out.push(s);
+        } else {
+            bail!("invalid path compontent: {:?}", component.as_os_str());
+        }
+    }
+
+    if out.len() > MAX_APP_PATH_COMPONENTS {
+        bail!("app_path has too many components");
+    }
+
+    Ok(out)
+}
+
+fn validate_app_path_component(component: Component) -> Option<String> {
+    match component {
+        Component::Normal(s) => {
+            let comp = s.to_str()?;
+            if !PATH_COMPONENT_RE.is_match(comp) {
+                None
+            } else {
+                Some(comp.trim().to_owned())
+            }
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod test {
     use pretty_assertions::assert_eq;
@@ -413,6 +468,7 @@ mod test {
 
     lazy_static! {
         static ref EXAMPLE_APP: AppConfig = AppConfig {
+            path: Vec::new(),
             description: None,
             command: vec!["echo".to_owned().into(), "hello".to_owned().into()],
             env: Default::default(),
@@ -522,5 +578,17 @@ mod test {
         config
             .validate()
             .expect("TLS not required for shared NAT address");
+    }
+
+    #[test]
+    fn app_paths() {
+        assert!(validate_app_path("foo!".into()).is_err());
+        assert!(validate_app_path("C:\\\\foo\\bar".into()).is_err());
+
+        let expected: Vec<String> = vec!["Foo Bar".into(), "Baz".into(), "Qux".into()];
+        assert_eq!(
+            expected,
+            validate_app_path("Foo Bar/ Baz/Qux ".into()).unwrap()
+        )
     }
 }
