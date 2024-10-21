@@ -25,7 +25,7 @@ const ATTACH_TIMEOUT: time::Duration = time::Duration::from_secs(10);
 pub struct Session {
     pub id: u64,
     pub display_params: DisplayParams,
-    pub application_name: String,
+    pub application_id: String,
     pub started: time::SystemTime,
     pub detached_since: Option<time::Instant>,
     pub permanent_gamepads: Vec<protocol::Gamepad>,
@@ -52,7 +52,7 @@ impl Session {
     pub fn launch(
         vk: Arc<VkContext>,
         id: u64,
-        application_name: &str,
+        application_id: &str,
         application_config: &super::config::AppConfig,
         display_params: DisplayParams,
         permanent_gamepads: Vec<protocol::Gamepad>,
@@ -65,7 +65,7 @@ impl Session {
         // Launch the compositor, which in turn launches the app.
         let (ready_send, ready_recv) = oneshot::channel();
         let vk_clone = vk.clone();
-        let app_name = application_name.to_owned();
+        let app_name = application_id.to_owned();
         let app_cfg = application_config.clone();
         let gamepads = permanent_gamepads
             .iter()
@@ -89,7 +89,7 @@ impl Session {
             )
         });
 
-        info!(session_id = id, application = ?application_name, "launching session");
+        info!(session_id = id, application = ?application_id, "launching session");
 
         // Wait until the compositor is ready.
         let control_sender = match ready_recv.recv() {
@@ -105,7 +105,7 @@ impl Session {
 
         Ok(Self {
             id,
-            application_name: application_name.to_string(),
+            application_id: application_id.to_string(),
             display_params,
             permanent_gamepads,
             started: time::SystemTime::now(),

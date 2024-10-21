@@ -61,7 +61,7 @@ struct Cli {
     /// The server to connect to.
     #[arg(value_name = "HOST[:PORT]")]
     host: String,
-    /// The name of the app, or the ID of an existing session.
+    /// The id of the app, or the ID of an existing session.
     app: Option<String>,
     /// Print a list of launchable applications and exit.
     #[arg(long)]
@@ -1071,7 +1071,7 @@ fn filter_sessions(sessions: Vec<client::Session>, app: &str) -> Vec<client::Ses
 
     sessions
         .into_iter()
-        .filter(|s| s.application_name == app)
+        .filter(|s| s.application_id == app)
         .collect()
 }
 
@@ -1090,7 +1090,7 @@ fn cmd_list_apps(client: &client::Client) -> anyhow::Result<()> {
                 name.push_str(dir);
                 name.push('/');
             }
-            name.push_str(&app.name);
+            name.push_str(&app.id);
 
             (name, app.description)
         })
@@ -1145,7 +1145,7 @@ fn cmd_list_sessions(args: &Cli, client: &client::Client) -> anyhow::Result<()> 
         writeln!(
             &mut tw,
             "{}\t{}\t{}",
-            session.id, session.application_name, runtime,
+            session.id, session.application_id, runtime,
         )?;
     }
 
