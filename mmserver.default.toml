@@ -105,6 +105,11 @@ mdns = true
 ## [A-Za-z0-9-_ ] (including spaces).
 # app_path = "My Games/Puzzle Games"
 
+## Add a header image to the app, for displaying in clients. The image must be a
+## PNG file and less than 1mb. Any aspect ratio is permitted, but roughly 2:1
+## with a transparent background will work best.
+# header_image = "/path/to/image.png"
+
 ## Enable XWayland support for this application. This is required for any
 ## applications that are built for the legacy X11 windowing system, such as Steam.
 # xwayland = true

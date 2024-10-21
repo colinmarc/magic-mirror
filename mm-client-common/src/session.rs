@@ -5,6 +5,7 @@
 use std::time;
 
 use mm_protocol as protocol;
+pub use protocol::ApplicationImageFormat;
 
 use crate::display_params;
 use crate::validation::*;
@@ -15,16 +16,29 @@ pub struct Application {
     pub id: String,
     pub description: String,
     pub folder: Vec<String>,
+    pub images_available: Vec<ApplicationImageFormat>,
 }
 
 impl TryFrom<protocol::application_list::Application> for Application {
     type Error = ValidationError;
 
     fn try_from(value: protocol::application_list::Application) -> Result<Self, Self::Error> {
+        let images_available = value
+            .images_available
+            .into_iter()
+            .map(|v| match v.try_into() {
+                Err(_) | Ok(protocol::ApplicationImageFormat::Unknown) => {
+                    Err(ValidationError::InvalidEnum("images_available".into()))
+                }
+                Ok(v) => Ok(v),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         Ok(Application {
             id: value.id,
             description: value.description,
             folder: value.folder,
+            images_available,
         })
     }
 }

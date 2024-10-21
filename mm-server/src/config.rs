@@ -24,6 +24,7 @@ lazy_static! {
 }
 
 const MAX_APP_PATH_COMPONENTS: usize = 8;
+pub const MAX_IMAGE_SIZE: u64 = 1024 * 1024;
 
 /// Serde representations of the configuration files.
 mod parsed {
@@ -107,6 +108,7 @@ mod parsed {
     pub(super) struct AppConfig {
         pub(super) app_path: Option<String>,
         pub(super) description: Option<String>,
+        pub(super) header_image: Option<PathBuf>,
         pub(super) command: Vec<String>,
         pub(super) environment: Option<BTreeMap<String, String>>,
         pub(super) xwayland: Option<bool>,
@@ -143,6 +145,7 @@ pub struct ServerConfig {
 pub struct AppConfig {
     pub description: Option<String>,
     pub path: Vec<String>,
+    pub header_image: Option<PathBuf>,
     pub command: Vec<OsString>,
     pub env: BTreeMap<OsString, OsString>,
     pub xwayland: bool,
@@ -395,6 +398,18 @@ fn validate_app(
         Some(p) => validate_app_path(p)?,
     };
 
+    if let Some(p) = &app.header_image {
+        let len = p.metadata()?.len();
+        if len > MAX_IMAGE_SIZE {
+            bail!(
+                "image is {} bytes, over the maximum of {}: {}",
+                len,
+                MAX_IMAGE_SIZE,
+                p.display()
+            );
+        }
+    }
+
     let isolate_home = app.isolate_home.or(defaults.isolate_home).unwrap();
     let tmp_home = app.tmp_home.or(defaults.tmp_home).unwrap();
     let home_isolation_mode = match (isolate_home, tmp_home) {
@@ -417,6 +432,7 @@ fn validate_app(
     Ok(AppConfig {
         path,
         description: app.description,
+        header_image: app.header_image,
         command: app.command.into_iter().map(OsString::from).collect(),
         env: app
             .environment
@@ -473,6 +489,7 @@ mod test {
         static ref EXAMPLE_APP: AppConfig = AppConfig {
             path: Vec::new(),
             description: None,
+            header_image: None,
             command: vec!["echo".to_owned().into(), "hello".to_owned().into()],
             env: Default::default(),
             xwayland: true,
