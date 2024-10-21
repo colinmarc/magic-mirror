@@ -16,7 +16,7 @@ use regex::Regex;
 use tracing::trace;
 
 lazy_static! {
-    static ref NAME_RE: Regex = Regex::new(r"\A[a-z][a-z0-9-_]{0,256}\z").unwrap();
+    static ref ID_RE: Regex = Regex::new(r"\A[a-z][a-z0-9-_]{0,256}\z").unwrap();
     static ref DESCRIPTION_RE: Regex = Regex::new(r"\A[A-Za-z0-9-_ ]{0,256}\z").unwrap();
     static ref PATH_COMPONENT_RE: Regex = Regex::new(r"\A[A-Za-z0-9-_  ]{0,64}\z").unwrap();
     static ref DEFAULT_CFG: parsed::Config =
@@ -246,13 +246,13 @@ impl Config {
             .into_iter()
             .flatten();
 
-        for (name, app) in apps.into_iter().chain(additional_apps) {
-            if this.apps.contains_key(&name) {
-                bail!("duplicate app name: {}", name);
+        for (id, app) in apps.into_iter().chain(additional_apps) {
+            if this.apps.contains_key(&id) {
+                bail!("duplicate app name: {}", id);
             }
-            let app = validate_app(&name, app, &default_app_settings, &data_home)
-                .context(format!("failed to load app config for '{}'", name))?;
-            this.apps.insert(name, app);
+            let app = validate_app(&id, app, &default_app_settings, &data_home)
+                .context(format!("failed to load app config for '{}'", id))?;
+            this.apps.insert(id, app);
         }
 
         trace!("using config: {:#?}", this);
@@ -370,13 +370,13 @@ fn locate_default_config_file() -> Option<PathBuf> {
 }
 
 fn validate_app(
-    name: &str,
+    id: &str,
     app: parsed::AppConfig,
     defaults: &parsed::DefaultAppSettings,
     data_home: &Path,
 ) -> anyhow::Result<AppConfig> {
-    if !NAME_RE.is_match(&name) {
-        bail!("invalid name: {}", name);
+    if !ID_RE.is_match(id) {
+        bail!("invalid name: {}", id);
     }
 
     if app
@@ -400,13 +400,13 @@ fn validate_app(
         (true, true) => HomeIsolationMode::Tmpfs,
         (true, false) => {
             if let Some(s) = app.shared_home_name {
-                if !NAME_RE.is_match(&s) {
+                if !ID_RE.is_match(&s) {
                     bail!("invalid shared_home_name: {s}",)
                 }
 
                 HomeIsolationMode::Permanent(data_home.join("homes").join(s))
             } else {
-                HomeIsolationMode::Permanent(data_home.join("homes").join(&name))
+                HomeIsolationMode::Permanent(data_home.join("homes").join(id))
             }
         }
     };

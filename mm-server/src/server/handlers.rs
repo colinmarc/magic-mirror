@@ -88,8 +88,8 @@ fn list_applications(state: SharedState, response: &WakingSender<protocol::Messa
         .cfg
         .apps
         .iter()
-        .map(|(name, app)| protocol::application_list::Application {
-            name: name.clone(),
+        .map(|(id, app)| protocol::application_list::Application {
+            id: id.clone(),
             description: app.description.clone().unwrap_or_default(),
             folder: app.path.clone(),
         })
@@ -126,7 +126,7 @@ fn launch_session(
 
     // Don't keep the state cloned while we launch the session.
     let vk_clone = guard.vk.clone();
-    let application_config = match guard.cfg.apps.get(&msg.application_name).cloned() {
+    let application_config = match guard.cfg.apps.get(&msg.application_id).cloned() {
         Some(c) => c,
         None => {
             send_err(
@@ -159,7 +159,7 @@ fn launch_session(
     let session = match Session::launch(
         vk_clone,
         session_id,
-        &msg.application_name,
+        &msg.application_id,
         &application_config,
         display_params,
         msg.permanent_gamepads,
@@ -192,7 +192,7 @@ fn list_sessions(state: SharedState, response: &WakingSender<protocol::MessageTy
         .sessions
         .values()
         .map(|s| protocol::session_list::Session {
-            application_name: s.application_name.clone(),
+            application_id: s.application_id.clone(),
             session_id: s.id,
             session_start: Some(s.started.into()),
             display_params: Some(s.display_params.into()),

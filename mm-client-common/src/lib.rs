@@ -314,13 +314,13 @@ impl Client {
 
     pub async fn launch_session(
         &self,
-        application_name: String,
+        application_id: String,
         display_params: display_params::DisplayParams,
         permanent_gamepads: Vec<input::Gamepad>,
         timeout: time::Duration,
     ) -> Result<Session, ClientError> {
         let msg = protocol::LaunchSession {
-            application_name: application_name.clone(),
+            application_id: application_id.clone(),
             display_params: Some(display_params.clone().into()),
             permanent_gamepads: permanent_gamepads.iter().map(|pad| (*pad).into()).collect(),
         };
@@ -334,7 +334,7 @@ impl Client {
         Ok(Session {
             id: res.id,
             start: time::SystemTime::now(),
-            application_name,
+            application_id,
             display_params,
         })
     }
