@@ -295,6 +295,24 @@ impl Client {
             .collect::<Result<Vec<_>, validation::ValidationError>>()?)
     }
 
+    pub async fn fetch_application_image(
+        &self,
+        application_id: String,
+        format: session::ApplicationImageFormat,
+        timeout: time::Duration,
+    ) -> Result<Vec<u8>, ClientError> {
+        let fetch = protocol::FetchApplicationImage {
+            format: format.into(),
+            application_id,
+        };
+
+        match self.roundtrip(fetch, timeout).await? {
+            protocol::MessageType::ApplicationImage(res) => Ok(res.image_data.into()),
+            protocol::MessageType::Error(e) => Err(ClientError::ServerError(e)),
+            msg => Err(ClientError::UnexpectedMessage(msg)),
+        }
+    }
+
     pub async fn list_sessions(
         &self,
         timeout: time::Duration,

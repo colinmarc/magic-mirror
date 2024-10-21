@@ -2,8 +2,10 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::{collections::BTreeMap, time};
+use std::{collections::BTreeMap, fs::File, path::Path, time};
 
+use anyhow::bail;
+use bytes::Bytes;
 use crossbeam_channel::{select, Receiver};
 use mm_protocol as protocol;
 use protocol::error::ErrorCode;
@@ -55,6 +57,7 @@ pub fn dispatch(
 
     match initial {
         protocol::MessageType::ListApplications(_) => list_applications(state, &outgoing),
+        protocol::MessageType::FetchApplicationImage(msg) => fetch_img(state, msg, &outgoing),
         protocol::MessageType::LaunchSession(msg) => launch_session(state, msg, &outgoing),
         protocol::MessageType::ListSessions(_) => list_sessions(state, &outgoing),
         protocol::MessageType::UpdateSession(msg) => update_session(state, msg, &outgoing),
@@ -92,11 +95,70 @@ fn list_applications(state: SharedState, response: &WakingSender<protocol::Messa
             id: id.clone(),
             description: app.description.clone().unwrap_or_default(),
             folder: app.path.clone(),
+            images_available: if app.header_image.is_some() {
+                vec![protocol::ApplicationImageFormat::Header.into()]
+            } else {
+                vec![]
+            },
         })
         .collect();
 
     let msg = protocol::ApplicationList { list: apps };
     response.send(msg.into()).ok();
+}
+
+fn fetch_img(
+    state: SharedState,
+    msg: protocol::FetchApplicationImage,
+    response: &WakingSender<protocol::MessageType>,
+) {
+    match msg.format.try_into() {
+        Ok(protocol::ApplicationImageFormat::Header) => (),
+        _ => {
+            send_err(
+                response,
+                ErrorCode::ErrorProtocol,
+                Some("unknown application image type".to_string()),
+            );
+            return;
+        }
+    }
+
+    let Some(config) = state.lock().cfg.apps.get(&msg.application_id).cloned() else {
+        send_err(
+            response,
+            ErrorCode::ErrorApplicationNotFound,
+            Some("application not found".to_string()),
+        );
+
+        return;
+    };
+
+    let Some(path) = &config.header_image else {
+        send_err(
+            response,
+            ErrorCode::ErrorApplicationNotFound,
+            Some("image not found".to_string()),
+        );
+
+        return;
+    };
+
+    match read_file(path, crate::config::MAX_IMAGE_SIZE) {
+        Ok(image_data) => {
+            let msg = protocol::ApplicationImage { image_data };
+            let _ = response.send(msg.into());
+        }
+        Err(err) => {
+            error!(path = ?path, ?err, "failed to load image data");
+
+            send_err(
+                response,
+                ErrorCode::ErrorServer,
+                Some("failed to load image".into()),
+            );
+        }
+    }
 }
 
 fn launch_session(
@@ -774,6 +836,25 @@ fn generate_streaming_res(display_params: &DisplayParams) -> Vec<protocol::Size>
     }]
 }
 
+fn read_file(p: impl AsRef<Path>, max_size: u64) -> anyhow::Result<Bytes> {
+    use std::io::Read as _;
+
+    use bytes::buf::BufMut;
+
+    let mut r = File::open(p.as_ref())?.take(max_size + 1);
+    let mut w = bytes::BytesMut::new().writer();
+
+    match std::io::copy(&mut r, &mut w) {
+        Ok(len) if len > max_size => bail!("file is bigger than maximum size"),
+        Ok(0) => bail!("file is empty"),
+        Ok(len) => {
+            let mut buf = w.into_inner();
+            Ok(buf.split_to(len as usize).freeze())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
 fn iter_chunks(
     mut buf: bytes::Bytes,
     chunk_size: usize,
@@ -1043,5 +1124,25 @@ mod tests {
         assert_eq!(data.len(), 1136);
 
         assert!(chunks.next().is_none());
+    }
+
+    #[test]
+    fn test_read_file() -> anyhow::Result<()> {
+        let zero_file = mktemp::Temp::new_file()?;
+        assert_eq!("".to_string(), std::fs::read_to_string(&zero_file)?);
+        assert!(read_file(&zero_file, 1024).is_err());
+        drop(zero_file);
+
+        let s = "foobar".repeat(64);
+        let len = s.len() as u64;
+        let big_file = mktemp::Temp::new_file()?;
+        std::fs::write(&big_file, &s)?;
+        assert_eq!(s, std::fs::read_to_string(&big_file)?);
+        assert_eq!(s.as_bytes().to_vec(), read_file(&big_file, len)?);
+        assert_eq!(s.as_bytes().to_vec(), read_file(&big_file, len + 1)?);
+        assert!(read_file(&big_file, len - 1).is_err());
+        drop(big_file);
+
+        Ok(())
     }
 }
