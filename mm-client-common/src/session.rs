@@ -12,7 +12,7 @@ use crate::validation::*;
 /// A launchable application on the server.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Application {
-    pub name: String,
+    pub id: String,
     pub description: String,
     pub folder: Vec<String>,
 }
@@ -22,7 +22,7 @@ impl TryFrom<protocol::application_list::Application> for Application {
 
     fn try_from(value: protocol::application_list::Application) -> Result<Self, Self::Error> {
         Ok(Application {
-            name: value.name,
+            id: value.id,
             description: value.description,
             folder: value.folder,
         })
@@ -33,7 +33,7 @@ impl TryFrom<protocol::application_list::Application> for Application {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Session {
     pub id: u64,
-    pub application_name: String,
+    pub application_id: String,
     pub start: time::SystemTime,
     pub display_params: display_params::DisplayParams,
 }
@@ -51,7 +51,7 @@ impl TryFrom<protocol::session_list::Session> for Session {
 
         Ok(Session {
             id: msg.session_id,
-            application_name: msg.application_name,
+            application_id: msg.application_id,
             start,
             display_params: required_field!(msg.display_params)?.try_into()?,
         })
