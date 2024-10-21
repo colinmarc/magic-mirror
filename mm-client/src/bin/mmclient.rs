@@ -16,6 +16,7 @@ use mm_client::{
     keys::winit_key_to_proto,
     overlay::Overlay,
     render::Renderer,
+    stats::STATS,
     video::{self, VideoStreamEvent},
     vulkan,
 };
@@ -141,6 +142,8 @@ struct AttachmentWindow {
 
     flash: Flash,
     overlay: Option<Overlay>,
+
+    stats_timer: time::Instant,
 
     _vk: Arc<vulkan::VkContext>,
 }
@@ -637,6 +640,10 @@ impl AttachmentWindow {
             self.window.request_redraw();
         }
 
+        if self.stats_timer.elapsed() > time::Duration::from_millis(100) {
+            STATS.set_connection_rtt(client.stats().rtt)
+        }
+
         let last_frame = self.last_frame_received.elapsed();
         if last_frame > time::Duration::from_secs(1) {
             if last_frame > DEFAULT_TIMEOUT {
@@ -956,6 +963,8 @@ fn init_window(
 
         flash,
         overlay,
+
+        stats_timer: now,
 
         _vk: vk,
     })

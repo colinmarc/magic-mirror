@@ -153,7 +153,7 @@ impl<T: From<VideoStreamEvent> + Send + 'static> VideoStream<T> {
                     "received full video packet",
                 );
 
-                STATS.full_frame_received(stream_seq, seq, len);
+                STATS.frame_received(stream_seq, seq, len);
                 dec.send_packet(buf)?;
                 return Ok(());
             }

@@ -18,6 +18,7 @@ mod conn;
 mod logging;
 mod packet;
 mod session;
+mod stats;
 mod validation;
 
 pub mod codec;
@@ -144,6 +145,7 @@ pub struct Client {
     name: String,
     addr: String,
     inner: Arc<AsyncMutex<InnerClient>>,
+    stats: Arc<stats::StatsCollector>,
 }
 
 impl Client {
@@ -155,7 +157,7 @@ impl Client {
             ClientState::Connected(_) => (),
             ClientState::Defunct(ClientError::ConnectionError(conn::ConnError::Idle)) => {
                 // Reconnect after an idle timeout.
-                let conn = spawn_conn(&self.addr, inner_clone).await?;
+                let conn = spawn_conn(&self.addr, inner_clone, self.stats.clone()).await?;
                 guard.state = ClientState::Connected(conn);
 
                 debug!("reconnected after idle timeout");
@@ -249,14 +251,20 @@ impl Client {
             state: ClientState::Defunct(ClientError::Defunct),
         }));
 
-        let conn = spawn_conn(addr, inner.clone()).await?;
+        let stats = Arc::new(stats::StatsCollector::default());
+        let conn = spawn_conn(addr, inner.clone(), stats.clone()).await?;
         inner.lock().await.state = ClientState::Connected(conn);
 
         Ok(Self {
             name: client_name.to_owned(),
             addr: addr.to_owned(),
             inner,
+            stats,
         })
+    }
+
+    pub fn stats(&self) -> stats::ClientStats {
+        self.stats.snapshot()
     }
 
     pub async fn list_applications(
@@ -409,6 +417,7 @@ impl Client {
 async fn spawn_conn(
     addr: &str,
     client: Arc<AsyncMutex<InnerClient>>,
+    stats: Arc<stats::StatsCollector>,
 ) -> Result<ConnHandle, ClientError> {
     let (incoming_tx, incoming_rx) = flume::unbounded();
     let (outgoing_tx, outgoing_rx) = flume::unbounded();
@@ -419,7 +428,7 @@ async fn spawn_conn(
     let (roundtrips_tx, roundtrips_rx) = flume::bounded(0);
     let (attachments_tx, attachments_rx) = flume::bounded(0);
 
-    let mut conn = conn::Conn::new(addr, incoming_tx, outgoing_rx, ready_tx, shutdown_rx)?;
+    let mut conn = conn::Conn::new(addr, incoming_tx, outgoing_rx, ready_tx, shutdown_rx, stats)?;
     let waker = conn.waker();
 
     // Spawn a polling loop for the quic connection.

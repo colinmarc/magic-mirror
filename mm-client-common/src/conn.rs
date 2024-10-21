@@ -13,13 +13,15 @@ const CONNECT_TIMEOUT: time::Duration = time::Duration::from_secs(5);
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     time,
 };
 
 use futures::channel::oneshot;
 use mm_protocol as protocol;
 use tracing::{debug, error, trace, warn};
+
+use crate::stats::StatsCollector;
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ConnError {
@@ -79,6 +81,9 @@ pub(crate) struct Conn {
     outgoing: flume::Receiver<OutgoingMessage>,
 
     ready: Option<oneshot::Sender<Result<(), ConnError>>>,
+
+    stats_timer: time::Instant,
+    stats_collector: Arc<StatsCollector>,
 }
 
 impl Conn {
@@ -88,6 +93,7 @@ impl Conn {
         outgoing: flume::Receiver<OutgoingMessage>,
         ready: oneshot::Sender<Result<(), ConnError>>,
         shutdown: oneshot::Receiver<()>,
+        stats: Arc<StatsCollector>,
     ) -> Result<Self, ConnError> {
         let (hostname, server_addr) = resolve_server(addr)?;
         let bind_addr = match server_addr {
@@ -152,6 +158,9 @@ impl Conn {
             outgoing,
 
             ready: Some(ready),
+
+            stats_timer: time::Instant::now(),
+            stats_collector: stats,
         })
     }
 
@@ -204,11 +213,13 @@ impl Conn {
                 self.start_shutdown()?;
             }
 
-            // if (now - self.stats_timer) > time::Duration::from_millis(200) {
-            //     self.stats_timer = now;
-            //     let stats = self.conn.path_stats().next().unwrap();
-            //     STATS.set_rtt(stats.rtt);
-            // }
+            if (now - self.stats_timer) > time::Duration::from_millis(200) {
+                self.stats_timer = now;
+                let stats = self.conn.path_stats().next().unwrap();
+                self.stats_collector
+                    .rtt_us
+                    .store(stats.rtt.as_micros() as u64, Ordering::SeqCst);
+            }
 
             // Read incoming UDP packets and handle them.
             loop {

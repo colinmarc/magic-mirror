@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     sync::{Arc, RwLock},
     time,
 };
@@ -20,14 +20,10 @@ pub struct Stats {
     inner: RwLock<Inner>,
 }
 
-struct Frame {
-    first_chunk_recvd: time::Instant,
-    last_chunk_recvd: time::Instant,
-    len: usize,
-}
+struct InFlightFrame(time::Instant);
 
 struct Inner {
-    in_flight_frames: HashMap<(u64, u64), Frame>,
+    in_flight_frames: BTreeMap<(u64, u64), InFlightFrame>,
 
     video_bitrate: SingleSumSMA<f32, f32, 60>,
     video_bytes: u64,
@@ -38,39 +34,21 @@ struct Inner {
 }
 
 impl Stats {
-    /// Tracks the connection roundtrip time.
-    pub fn set_rtt(&self, rtt: time::Duration) {
+    pub fn set_connection_rtt(&self, rtt: time::Duration) {
         self.inner.write().unwrap().connection_rtt = rtt;
     }
 
-    /// Starts tracking a frame, and tracks total video frame bytes transferred.
-    /// Should be called whenever a chunk arrives.
-    pub fn frame_chunk_received(&self, stream_seq: u64, seq: u64, len: usize) {
+    /// Starts tracking a frame.
+    pub fn frame_received(&self, stream_seq: u64, seq: u64, len: usize) {
         let now = time::Instant::now();
         let mut inner = self.inner.write().unwrap();
 
         inner
             .in_flight_frames
             .entry((stream_seq, seq))
-            .or_insert(Frame {
-                first_chunk_recvd: now,
-                last_chunk_recvd: now,
-                len: 0,
-            });
+            .or_insert(InFlightFrame(now));
 
         inner.video_bytes += len as u64;
-    }
-
-    /// Tracks the size of the frame and the time it took to receive all its
-    /// chunks. Should be called whenever a frame is complete.
-    pub fn full_frame_received(&self, stream_seq: u64, seq: u64, len: usize) {
-        let now = time::Instant::now();
-        let mut inner = self.inner.write().unwrap();
-
-        if let Some(frame) = inner.in_flight_frames.get_mut(&(stream_seq, seq)) {
-            frame.len = len;
-            frame.last_chunk_recvd = now;
-        }
     }
 
     /// Tracks the total frame time. Should be called right before the frame is
@@ -91,7 +69,7 @@ impl Stats {
         if let Some(frame) = inner.in_flight_frames.remove(&(stream_seq, seq)) {
             inner
                 .video_latency
-                .add_sample((now - frame.first_chunk_recvd).as_nanos() as u64)
+                .add_sample((now - frame.0).as_nanos() as u64)
         }
     }
 
@@ -120,7 +98,7 @@ impl Stats {
 impl Default for Inner {
     fn default() -> Self {
         Self {
-            in_flight_frames: HashMap::new(),
+            in_flight_frames: BTreeMap::new(),
 
             video_bitrate: SingleSumSMA::new(),
             video_bytes: 0,
