@@ -220,6 +220,15 @@ message Gamepad {
   GamepadLayout layout = 2; // Required.
 }
 
+// ### Application Image Format
+//
+// Distinguishes between different images associated with an application.
+enum ApplicationImageFormat {
+  APPLICATION_IMAGE_FORMAT_UNKNOWN = 0;
+  // A roughly 400x200 image for display in a list of applications.
+  APPLICATION_IMAGE_FORMAT_HEADER = 1;
+}
+
 // ## Errors and exceptions
 
 // ### 001 - Error
@@ -236,6 +245,8 @@ message Error {
     ERROR_PROTOCOL_INCORRECT_STREAM = 22;
     ERROR_PROTOCOL_UKNOWN_MESSAGE_TYPE = 23;
     ERROR_TIMEOUT = 24;
+    ERROR_APPLICATION_NOT_FOUND = 25;
+    ERROR_APPLICATION_NO_IMAGE = 26;
     // Used to indicate that the server refuses to launch a session.
     ERROR_SESSION_LAUNCH_FAILED = 30;
     ERROR_SESSION_LAUNCH_REFUSED = 31;
@@ -360,6 +371,10 @@ message ApplicationList {
 
     // A list of path components, used to group applications for display.
     repeated string folder = 3;
+
+    // If set, the image can be fetched with a `021 - Fetch Application Image`
+    // message.
+    repeated ApplicationImageFormat images_available = 4;
   }
 
   repeated Application list = 1;
@@ -439,7 +454,7 @@ message ListSessions {}
 message SessionList {
   message Session {
     uint64 session_id = 1;       // Required.
-    string application_id = 2; // Required.
+    string application_id = 2;   // Required.
     Timestamp session_start = 3; // Required.
 
     VirtualDisplayParameters display_params = 10; // Required.
@@ -473,9 +488,31 @@ message EndSession {
 // ### 020 - Session Ended.
 //
 // This message, which must originate from the server on the same stream as the
-// corresponding `201 - End Session` message was sent, confirms that the session
-// has been ended.
+// corresponding `019 - End Session` message, confirms that the session has been
+// ended.
 message SessionEnded {}
+
+// ### 021 - Fetch Application Image
+//
+// This message, which must originate from the client on a new stream, requests
+// image metadata for an application. The Server must respond with either an
+// `022 - Application Image` message or an `01 - Error` message on the same
+// stream.
+message FetchApplicationImage {
+  string application_id = 1;  // Required.
+  ApplicationImageFormat format = 2; // Required.
+}
+
+// ### 022 - Application Image
+//
+// This message, which must originate from the server on the same stream as the
+// corresponding `021 - Fetch Application Image` message, sends the requested
+// image data to the client.
+message ApplicationImage {
+  // Required. Must be a complete PNG file and less than 1048576 bytes. Either
+  // restriction may be lifted or in the future.
+  bytes image_data = 1;
+}
 
 // ### 030 - Attach
 //

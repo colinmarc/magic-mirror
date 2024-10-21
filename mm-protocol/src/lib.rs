@@ -111,6 +111,8 @@ message_types! {
     18 => SessionList,
     19 => EndSession,
     20 => SessionEnded,
+    21 => FetchApplicationImage,
+    22 => ApplicationImage,
     30 => Attach,
     31 => Attached,
     32 => KeepAlive,
@@ -223,7 +225,7 @@ mod tests {
     use super::*;
 
     macro_rules! test_roundtrip {
-        ($name:ident: $value:expr) => {
+        ($name:ident : $value:expr) => {
             #[test]
             fn $name() {
                 let msg = $value.into();
