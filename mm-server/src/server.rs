@@ -271,6 +271,7 @@ impl Server {
                         worker.done.try_recv(),
                         Ok(()) | Err(oneshot::TryRecvError::Disconnected)
                     ) && worker.outgoing_messages.is_empty()
+                        && !client.partial_writes.contains_key(sid)
                     {
                         to_close.push(*sid);
                     }

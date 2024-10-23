@@ -381,7 +381,7 @@ impl Conn {
             let (msg, len) = match protocol::decode_message(&buf) {
                 Ok(v) => v,
                 Err(protocol::ProtocolError::ShortBuffer(n)) => {
-                    debug!("partial message on stream {}, need {} bytes", sid, n);
+                    debug!(have = buf.len(), need = n, sid, "partial message");
                     self.partial_reads.insert(sid, buf);
                     break;
                 }
