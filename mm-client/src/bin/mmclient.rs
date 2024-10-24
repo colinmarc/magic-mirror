@@ -238,6 +238,25 @@ impl winit::application::ApplicationHandler<AppEvent> for App {
         win.schedule_next_frame(event_loop, res);
     }
 
+    fn device_event(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        let Some(win) = &mut self.attachment_window else {
+            return;
+        };
+
+        let winit::event::DeviceEvent::MouseMotion { delta: (x, y) } = event else {
+            return;
+        };
+
+        if let Some((x, y)) = win.motion_vector_to_attachment_space(x, y) {
+            win.attachment.relative_pointer_motion(x, y)
+        }
+    }
+
     fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: AppEvent) {
         let Some(win) = &mut self.attachment_window else {
             return;
@@ -458,27 +477,9 @@ impl AttachmentWindow {
                 phase: TouchPhase::Moved,
                 ..
             } => {
-                if let Some(aspect) = self.renderer.get_texture_aspect() {
-                    // Map vector to [0, 1]. (It can also be negative.)
-                    let (x, y) = (
-                        (vector.x / self.window_width as f64),
-                        (vector.y / self.window_height as f64),
-                    );
-
-                    // Stretch the space to account for letterboxing. For
-                    // example, if the video texture only takes up one third
-                    // of the screen vertically, and we scroll up one third
-                    // of the window height, the resulting vector should be [0,
-                    // -1.0].
-                    let x = x * aspect.0;
-                    let y = y * aspect.1;
-
-                    // Map to the remote virtual display.
-                    self.attachment.pointer_scroll(
-                        client::input::ScrollType::Continuous,
-                        x * self.attachment_config.width as f64,
-                        y * self.attachment_config.height as f64,
-                    );
+                if let Some((x, y)) = self.motion_vector_to_attachment_space(vector.x, vector.y) {
+                    self.attachment
+                        .pointer_scroll(client::input::ScrollType::Continuous, x, y);
                 }
             }
             _ => (),
@@ -738,6 +739,29 @@ impl AttachmentWindow {
                 event_loop.exit()
             }
         }
+    }
+
+    fn motion_vector_to_attachment_space(&self, x: f64, y: f64) -> Option<(f64, f64)> {
+        let (aspect_x, aspect_y) = self.renderer.get_texture_aspect()?;
+
+        // Map vector to [0, 1]. (It can also be negative.)
+        let (x, y) = (
+            (x / self.window_width as f64),
+            (y / self.window_height as f64),
+        );
+
+        // Stretch the space to account for letterboxing. For
+        // example, if the video texture only takes up one third
+        // of the screen vertically, and we scroll up one third
+        // of the window height, the resulting vector should be [0,
+        // -1.0].
+        let x = x * aspect_x;
+        let y = y * aspect_y;
+
+        Some((
+            x * self.attachment_config.width as f64,
+            y * self.attachment_config.height as f64,
+        ))
     }
 }
 

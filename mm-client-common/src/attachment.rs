@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use async_mutex::Mutex as AsyncMutex;
 use futures::{channel::oneshot, future, FutureExt as _};
+use mm_protocol as protocol;
+pub use protocol::audio_channels::Channel as AudioChannel;
 use tracing::error;
 
 use crate::{
@@ -13,9 +15,6 @@ use crate::{
     packet::{self, PacketRing},
     ClientError, ClientState,
 };
-use mm_protocol as protocol;
-
-pub use protocol::audio_channels::Channel as AudioChannel;
 
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct AttachmentConfig {
@@ -254,6 +253,11 @@ impl Attachment {
     /// Sends pointer motion to the server.
     pub fn pointer_motion(&self, x: f64, y: f64) {
         self.send(protocol::PointerMotion { x, y }, false)
+    }
+
+    /// Sends relative pointer motion to the server.
+    pub fn relative_pointer_motion(&self, x: f64, y: f64) {
+        self.send(protocol::RelativePointerMotion { x, y }, false)
     }
 
     /// Sends pointer input to the server.
