@@ -1,3 +1,12 @@
+## [mmserver-v0.5.3] - 2024-10-24
+
+### Bugfixes
+
+- Be consistent in xwayland socket naming (f6f6db3ab8b61e7af7684f14202d2b203b7e7760)
+- Never use a 0 audio stream_seq (632bcb1f7c79d35701f31a29d2dbe659ab411e3c)
+- Use the attachment coordinate space (57a59f478a6e4e248490b04b8c1ab42d2b1ae115)
+- Don't close streams while partial writes are pending (0add85078734a27e121dda97293f0e48d8ebd214)
+
 ## [mmclient-v0.4.1] - 2024-10-24
 
 ### Bugfixes
