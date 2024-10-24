@@ -329,13 +329,25 @@ fn attach(
         }
     };
 
-    let display_params = session.display_params;
+    let mut display_params = session.display_params;
     let bug_report_dir = session.bug_report_dir.clone();
     drop(guard);
 
     let span = debug_span!("attachment", session_id, attachment_id,);
 
-    debug!(?video_params, ?audio_params, "attaching with params");
+    let attachment_scale = display_params.height as f64 / video_params.height as f64;
+    assert_eq!(display_params.height % video_params.height, 0);
+    assert_eq!(
+        display_params.width as f64 / video_params.width as f64,
+        attachment_scale
+    );
+
+    debug!(
+        ?video_params,
+        ?audio_params,
+        ?attachment_scale,
+        "attaching with params"
+    );
 
     let _guard = span.enter();
 
@@ -457,10 +469,14 @@ fn attach(
                                 }).ok();
                             }
                             protocol::MessageType::PointerMotion(ev) => {
-                                handle.control.send(ControlMessage::PointerMotion(ev.x, ev.y)).ok();
+                                let x = ev.x * attachment_scale;
+                                let y = ev.y * attachment_scale;
+                                handle.control.send(ControlMessage::PointerMotion(x, y)).ok();
                             }
                             protocol::MessageType::RelativePointerMotion(ev) => {
-                                handle.control.send(ControlMessage::RelativePointerMotion(ev.x, ev.y)).ok();
+                                let x = ev.x * attachment_scale;
+                                let y = ev.y * attachment_scale;
+                                handle.control.send(ControlMessage::RelativePointerMotion(x, y)).ok();
                             }
                             protocol::MessageType::PointerEntered(_) => {
                                 handle.control.send(ControlMessage::PointerEntered).ok();
@@ -509,7 +525,9 @@ fn attach(
                             protocol::MessageType::PointerScroll(ev) => {
                                 match ev.scroll_type.try_into() {
                                     Ok(protocol::pointer_scroll::ScrollType::Continuous) => {
-                                        handle.control.send(ControlMessage::PointerAxis(ev.x, ev.y)).ok();
+                                        let x = ev.x * attachment_scale;
+                                        let y = ev.y * attachment_scale;
+                                        handle.control.send(ControlMessage::PointerAxis(x, y)).ok();
                                     }
                                     Ok(protocol::pointer_scroll::ScrollType::Discrete) => {
                                         handle.control.send(ControlMessage::PointerAxisDiscrete(ev.x, ev.y)).ok();
@@ -607,6 +625,7 @@ fn attach(
                         return;
                     }
                     Ok(CompositorEvent::DisplayParamsChanged { params, reattach }) => {
+                        display_params = params;
                         let msg = protocol::SessionParametersChanged {
                             display_params: Some(params.into()),
                             supported_streaming_resolutions: generate_streaming_res(&params),
@@ -707,6 +726,9 @@ fn attach(
                         outgoing.send(msg.into()).ok();
                     }
                     Ok(CompositorEvent::PointerLocked(x, y)) => {
+                        let x = x / attachment_scale;
+                        let y = y / attachment_scale;
+
                         if pointer_lock.replace((x, y)).is_none() {
                             let msg = protocol::LockPointer {
                                 x,

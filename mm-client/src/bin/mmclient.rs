@@ -398,8 +398,8 @@ impl AttachmentWindow {
                     let y = (clip_y + 1.0) / 2.0;
 
                     // Convert the position to physical coordinates in the remote display.
-                    let cursor_x = x * self.session.display_params.width as f64;
-                    let cursor_y = y * self.session.display_params.height as f64;
+                    let cursor_x = x * self.attachment_config.width as f64;
+                    let cursor_y = y * self.attachment_config.height as f64;
 
                     Some((cursor_x, cursor_y))
                 });
@@ -476,8 +476,8 @@ impl AttachmentWindow {
                     // Map to the remote virtual display.
                     self.attachment.pointer_scroll(
                         client::input::ScrollType::Continuous,
-                        x * self.session.display_params.width as f64,
-                        y * self.session.display_params.height as f64,
+                        x * self.attachment_config.width as f64,
+                        y * self.attachment_config.height as f64,
                     );
                 }
             }
@@ -556,8 +556,8 @@ impl AttachmentWindow {
                         .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
 
                     if let Some(aspect) = self.renderer.get_texture_aspect() {
-                        let width = self.session.display_params.width;
-                        let height = self.session.display_params.height;
+                        let width = self.attachment_config.width;
+                        let height = self.attachment_config.height;
 
                         // Map vector to [-0.5, 0.5].
                         let x = (x / width as f64) - 0.5;

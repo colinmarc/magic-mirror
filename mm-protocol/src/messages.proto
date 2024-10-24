@@ -907,8 +907,8 @@ message PointerLeft {}
 // original `030 - Attach` message, indicates that the Pointer has moved to a
 // new position.
 //
-// The coordinates should be in the space defined by the `resolution` parameter
-// of the `VirtualDisplayParams` set on the session.
+// The coordinates should be in the space defined by the `streaming_resolution`
+// field of the `030 - Attach` message.
 message PointerMotion {
   double x = 1; // Required.
   double y = 2; // Required.
@@ -1039,8 +1039,8 @@ message UpdateCursor {
 // original `030 - Attach` message, indicates that the pointer should be locked
 // to the given location.
 //
-// The coordinates should be in the space defined by the `resolution` parameter
-// of the `VirtualDisplayParams` set on the session.
+// The coordinates should be in the space defined by the `streaming_resolution`
+// field of the `030 - Attach` message.
 message LockPointer {
   double x = 1;
   double y = 2;
@@ -1058,8 +1058,8 @@ message ReleasePointer {}
 // This message, which must originate from the client on the same stream as the
 // original `030 - Attach` message, indicates that the Pointer has moved.
 //
-// The vector should be in the space defined by the `resolution` parameter of
-// the `VirtualDisplayParams` set on the session.
+// The vector should be in the space defined by the `streaming_resolution`
+// field of the `030 - Attach` message.
 message RelativePointerMotion {
   double x = 1; // Required.
   double y = 2; // Required.
