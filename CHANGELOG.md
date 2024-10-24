@@ -1,3 +1,13 @@
+## [mmclient-v0.4.1] - 2024-10-24
+
+### Bugfixes
+
+- Handle video/audio stream seq more intelligently (4bab3902d1e7d88c7222ed6ef404190c512b1940)
+- Make the overlay work again (0b1579bf68b2cd31611ca10a735061ef58e64604)
+- Use the attachment coordinate space (57a59f478a6e4e248490b04b8c1ab42d2b1ae115)
+- Don't close streams while partial writes are pending (0add85078734a27e121dda97293f0e48d8ebd214)
+- Send relative pointer motion again (7fced702ebe37de5b2f96e46091c6b862806f757)
+
 ## [mmserver-v0.5.2] - 2024-10-19
 
 ### Bugfixes
