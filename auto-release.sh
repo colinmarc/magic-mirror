@@ -31,8 +31,15 @@ fi
 
 echo "bumping mm${component} to ${tag}..."
 git cherry-pick -S "origin/${branch}"
-git tag ${tag}
-git show
+
+echo "generating release notes..."
+release_notes="$(git cliff -v -c .github/workflows/cliff.toml \
+		 --tag-pattern "${component}" \
+		 --include-path "mm-${component}*/**/*" \
+		 --latest)"
+
+git tag ${tag} -a -m "${release_notes}" --cleanup=verbatim
+git show ${tag}
 
 
 
