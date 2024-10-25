@@ -33,6 +33,14 @@ use tracing::debug;
 
 mod ipc;
 
+// In CPU-constrained testing environments, we sometimes need to wait
+// to get scheduled.
+#[cfg(test)]
+const SYNC_TIMEOUT: time::Duration = time::Duration::from_secs(5);
+
+#[cfg(not(test))]
+const SYNC_TIMEOUT: time::Duration = time::Duration::from_secs(1);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HomeIsolationMode {
     Unisolated,
@@ -379,7 +387,7 @@ impl Container {
 
         // Wait for the child to signal that it's ready.
         barrier
-            .sync(time::Duration::from_secs(1))
+            .sync(SYNC_TIMEOUT)
             .context("timed out waiting for forked child (phase 1)")?;
 
         let mut handle = super::ChildHandle {
@@ -394,7 +402,7 @@ impl Container {
 
         // Unfreeze the child.
         barrier
-            .sync(time::Duration::from_secs(1))
+            .sync(SYNC_TIMEOUT)
             .context("timed out waiting for forked child (phase 2)")?;
 
         Ok(handle)
@@ -739,7 +747,7 @@ pub(super) fn fuse_mount(
         )?;
 
         // Send the fd back to mmserver.
-        fd_tx.send_timeout(fuse_device_fd.try_clone()?, time::Duration::from_secs(1))?;
+        fd_tx.send_timeout(fuse_device_fd.try_clone()?, SYNC_TIMEOUT)?;
 
         // format! allocates.
         let mut fd_buf = [0_u8; 32];
@@ -787,7 +795,7 @@ pub(super) fn fuse_mount(
         Ok(())
     })?;
 
-    fd_rx.recv_timeout(time::Duration::from_secs(1))
+    fd_rx.recv_timeout(SYNC_TIMEOUT)
 }
 
 fn touch(path: impl AsRef<Path>, mode: impl Into<Mode>) -> rustix::io::Result<()> {
@@ -856,7 +864,7 @@ fn mount_fs(
 
 // Wrapped in a function for compatibility with the must! macro.
 fn sync_barrier(barrier: &ipc::EventfdBarrier) -> rustix::io::Result<()> {
-    barrier.sync(time::Duration::from_secs(1))
+    barrier.sync(SYNC_TIMEOUT)
 }
 
 /// Generates a CString in the format key=value, for putenv(3).

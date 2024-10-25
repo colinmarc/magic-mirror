@@ -34,7 +34,7 @@ jobs:
       - name: server tests
         run: |
           export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E'
-          (cd mm-server && cargo test)
+          (cd mm-server && cargo test -- --test-threads=1)
       - name: protocol tests
         run: (cd mm-protocol && cargo test)
       - name: client tests
