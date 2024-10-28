@@ -146,6 +146,15 @@ impl InputDeviceManager {
             let device_fd = c.fuse_mount(southpaw_path_clone, "southpaw", mode)?;
             southpaw_clone.wrap_fd(device_fd);
 
+            // Headless servers won't have /sys/devices/virtual/input, and we
+            // can't mkdir the mount point, because it's sysfs.
+            c.fs_mount(
+                "/sys/devices/virtual",
+                "tmpfs",
+                rustix::mount::MountAttrFlags::empty(),
+                [(c"mode", c"0777")],
+            )?;
+
             Ok(())
         });
 

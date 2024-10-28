@@ -3,12 +3,16 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use std::{
+    ffi::CStr,
     os::fd::{AsFd, BorrowedFd, OwnedFd},
     path::{Path, PathBuf},
 };
 
 use anyhow::{bail, Context as _};
-use rustix::process::{Pid, Signal, WaitId, WaitidOptions};
+use rustix::{
+    mount::MountAttrFlags,
+    process::{Pid, Signal, WaitId, WaitidOptions},
+};
 use tracing::{debug, info};
 
 mod container;
@@ -59,6 +63,27 @@ impl ChildHandle {
         Ok(())
     }
 
+    /// Mounts a named filesystem inside the container at the given path.
+    pub fn fs_mount<S>(
+        &self,
+        dst: impl AsRef<Path>,
+        fstype: impl AsRef<str>,
+        attr: MountAttrFlags,
+        options: impl AsRef<[(S, S)]>,
+    ) -> anyhow::Result<()>
+    where
+        S: AsRef<CStr>,
+    {
+        let options = options
+            .as_ref()
+            .iter()
+            .map(|(k, v)| (k.as_ref(), v.as_ref()))
+            .collect::<Vec<_>>();
+
+        container::fs_mount_into(&self.pidfd, dst, fstype.as_ref().to_owned(), attr, &options)?;
+        Ok(())
+    }
+
     /// Opens /dev/fuse inside the container, mounts it to the given path,
     /// and returns the FD for use in a FUSE daemon.
     pub fn fuse_mount(
@@ -67,7 +92,8 @@ impl ChildHandle {
         fsname: impl AsRef<str>,
         st_mode: u32,
     ) -> anyhow::Result<OwnedFd> {
-        let fd = container::fuse_mount(&self.pidfd, &dst, fsname.as_ref().to_owned(), st_mode)?;
+        let fd =
+            container::fuse_mount_into(&self.pidfd, &dst, fsname.as_ref().to_owned(), st_mode)?;
 
         Ok(fd)
     }

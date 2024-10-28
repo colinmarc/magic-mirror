@@ -723,7 +723,27 @@ where
     }
 }
 
-pub(super) fn fuse_mount(
+pub(super) fn fs_mount_into(
+    ns_pidfd: impl AsFd,
+    dst: impl AsRef<Path>,
+    fsname: String,
+    attr: MountAttrFlags,
+    options: &[(&CStr, &CStr)],
+) -> io::Result<()> {
+    debug!("mounting {fsname} to {}", dst.as_ref().display());
+
+    let fsname = CString::new(fsname).unwrap();
+    let dst = CString::new(dst.as_ref().as_os_str().as_encoded_bytes()).unwrap();
+
+    run_in_container(ns_pidfd, None, move || {
+        mount_fs(&fsname, &dst, attr, options)?;
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
+pub(super) fn fuse_mount_into(
     ns_pidfd: impl AsFd,
     dst: impl AsRef<Path>,
     fsname: String,
