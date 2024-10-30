@@ -113,6 +113,7 @@ impl Attachment {
 
             delegate,
             attached_msg: attached,
+            server_error: None,
 
             video_packet_ring: PacketRing::new(),
             video_stream_seq: None,
@@ -202,11 +203,7 @@ pub trait AttachmentDelegate: Send + Sync + std::fmt::Debug {
 
     /// The client encountered an error. The attachment should be considered
     /// ended. [attachment_ended] will not be called.
-    fn client_error(&self, err: ClientError);
-
-    /// An error was sent by the server. Usually, the attachment will be
-    /// subsequently ended.
-    fn server_error(&self, error_code: crate::ErrorCode, error_text: String);
+    fn error(&self, err: ClientError);
 
     /// The attachment was ended by the server.
     fn attachment_ended(&self);
@@ -344,6 +341,7 @@ pub(crate) struct AttachmentState {
     delegate: Arc<dyn AttachmentDelegate>,
     attached_msg: protocol::Attached,
     reattach_required: bool,
+    server_error: Option<protocol::Error>,
 
     video_packet_ring: PacketRing,
     video_stream_seq: Option<u64>,
@@ -494,8 +492,8 @@ impl AttachmentState {
                 // We just check for the fin on the attachment stream.
             }
             protocol::MessageType::Error(error) => {
-                self.delegate
-                    .server_error(error.err_code(), error.error_text);
+                self.server_error = Some(error.clone());
+                self.delegate.error(ClientError::ServerError(error));
             }
             v => error!("unexpected message on attachment stream: {}", v),
         }
@@ -507,7 +505,9 @@ impl AttachmentState {
         } else if self.reattach_required {
             self.reattach_required = false;
         } else if let Some(err) = err {
-            self.delegate.client_error(err);
+            self.delegate.error(err);
+        } else if self.server_error.is_some() {
+            // We don't call attachment_ended because we already called error.
         } else {
             self.delegate.attachment_ended();
         }

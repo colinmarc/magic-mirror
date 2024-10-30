@@ -133,15 +133,8 @@ impl<T: From<AttachmentEvent> + std::fmt::Debug + Send + 'static> client::Attach
         })
     }
 
-    fn server_error(&self, error_code: client::ErrorCode, error_text: String) {
-        error!(
-            "received error on attachment stream: {:?}: {}",
-            error_code, error_text
-        )
-    }
-
-    fn client_error(&self, err: client::ClientError) {
-        error!("client error: {err:?}");
+    fn error(&self, err: client::ClientError) {
+        error!("error: {err:?}");
         self.proxy(AttachmentEvent::AttachmentEnded)
     }
 
