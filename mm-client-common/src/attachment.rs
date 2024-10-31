@@ -181,7 +181,7 @@ pub trait AttachmentDelegate: Send + Sync + std::fmt::Debug {
     fn update_cursor(
         &self,
         icon: input::CursorIcon,
-        image: Vec<u8>,
+        image: Option<Vec<u8>>,
         hotspot_x: u32,
         hotspot_y: u32,
     );
@@ -465,12 +465,13 @@ impl AttachmentState {
                 }
             }
             protocol::MessageType::UpdateCursor(msg) => {
-                self.delegate.update_cursor(
-                    msg.icon(),
-                    msg.image.to_vec(),
-                    msg.hotspot_x,
-                    msg.hotspot_y,
-                );
+                let image = match &msg.image {
+                    v if v.is_empty() => None,
+                    v => Some(v.to_vec()),
+                };
+
+                self.delegate
+                    .update_cursor(msg.icon(), image, msg.hotspot_x, msg.hotspot_y);
             }
             protocol::MessageType::LockPointer(msg) => {
                 self.delegate.lock_pointer(msg.x, msg.y);

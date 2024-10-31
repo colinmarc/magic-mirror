@@ -531,7 +531,7 @@ impl AttachmentWindow {
                     hotspot_x,
                     hotspot_y,
                 } => {
-                    if !image.is_empty() {
+                    if let Some(image) = image {
                         if let Ok(cursor) = load_cursor_image(&image, hotspot_x, hotspot_y)
                             .map(|src| event_loop.create_custom_cursor(src))
                         {

@@ -31,7 +31,7 @@ pub enum AttachmentEvent {
     AudioPacket(Arc<client::Packet>),
     UpdateCursor {
         icon: client::input::CursorIcon,
-        image: Vec<u8>,
+        image: Option<Vec<u8>>,
         hotspot_x: u32,
         hotspot_y: u32,
     },
@@ -60,7 +60,8 @@ impl std::fmt::Debug for AttachmentEvent {
                 write!(f, "AudioPacket({}, {})", packet.stream_seq(), packet.seq())
             }
             AttachmentEvent::UpdateCursor { icon, image, .. } => {
-                write!(f, "UpdateCursor({:?} image_len={})", icon, image.len())
+                let len = image.as_ref().map(|img| img.len()).unwrap_or_default();
+                write!(f, "UpdateCursor({icon:?} image_len={len})",)
             }
             AttachmentEvent::LockPointer(x, y) => {
                 write!(f, "LockPointer({}, {})", x, y)
@@ -102,7 +103,7 @@ impl<T: From<AttachmentEvent> + std::fmt::Debug + Send + 'static> client::Attach
     fn update_cursor(
         &self,
         icon: client::input::CursorIcon,
-        image: Vec<u8>,
+        image: Option<Vec<u8>>,
         hotspot_x: u32,
         hotspot_y: u32,
     ) {
