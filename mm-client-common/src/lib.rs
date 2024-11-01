@@ -129,6 +129,7 @@ impl InnerClient {
         //Shut down the connection thread.
         let close_err = conn.close();
         if let Err(Some(e)) = &close_err {
+            error!("connection error: {e:?}");
             self.state = ClientState::Defunct(e.clone().into());
         }
 

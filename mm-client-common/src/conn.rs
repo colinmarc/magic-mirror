@@ -422,9 +422,19 @@ impl Conn {
         let len = protocol::encode_message(&msg, &mut self.scratch)?;
 
         trace!(sid, %msg, fin, "sending message");
-        self.conn.stream_send(sid, &self.scratch[..len], fin)?;
+        match self.conn.stream_send(sid, &self.scratch[..len], fin) {
+            Ok(_) => Ok(()),
+            Err(quiche::Error::Done) | Err(quiche::Error::FinalSize) => {
+                warn!(sid, %msg, "dropping message on blocked stream");
+                if fin {
+                    // Try to close the connection anyway.
+                    let _ = self.conn.stream_send(sid, &[], fin);
+                }
 
-        Ok(())
+                Ok(())
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn start_shutdown(&mut self) -> Result<(), ConnError> {
