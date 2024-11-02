@@ -235,14 +235,14 @@ impl Attachment {
         )
     }
 
-    /// Notifies the server that the pointer has left the video area. This
-    /// should also be called if the pointer enters a letterbox.
+    /// Notifies the server that the pointer has entered the video area,
+    /// including if it enters a letterbox around the video.
     pub fn pointer_entered(&self) {
         self.send(protocol::PointerEntered {}, false)
     }
 
-    /// Notifies the server that the pointer has entered the video area. This
-    /// should not consider the letterbox.
+    /// Notifies the server that the pointer has left the video area. This
+    /// should consider any letterboxing part of the video area.
     pub fn pointer_left(&self) {
         self.send(protocol::PointerLeft {}, false)
     }
