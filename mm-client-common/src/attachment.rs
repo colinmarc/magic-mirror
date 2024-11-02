@@ -503,7 +503,9 @@ impl AttachmentState {
     pub(crate) fn handle_close(mut self, err: Option<ClientError>) {
         if let Some(tx) = self.notify_detached.take() {
             let _ = tx.send(());
-        } else if self.reattach_required {
+        }
+
+        if self.reattach_required {
             self.reattach_required = false;
         } else if let Some(err) = err {
             self.delegate.error(err);
