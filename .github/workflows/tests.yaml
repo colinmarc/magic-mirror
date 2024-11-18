@@ -33,7 +33,7 @@ jobs:
             mm-protocol
 
       - name: install deny
-        run: cargo install deny
+        run: cargo install cargo-deny
 
       - name: server tests
         run: |
