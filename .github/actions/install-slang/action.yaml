@@ -1,5 +1,7 @@
 name: Install slang
 inputs:
+  version:
+    required: true
   target:
     required: true
   token:
@@ -11,8 +13,8 @@ runs:
       shell: bash
       run: |
         mkdir $RUNNER_TEMP/slang
-        slang_url=$( gh api https://api.github.com/repos/shader-slang/slang/releases |\
-          jq -r '.[].assets[].browser_download_url' | grep ${{ inputs.target }}.tar.gz | head -1 )
+        slang_url=$( gh api https://api.github.com/repos/shader-slang/slang/releases/tags/${{ inputs.version }} |\
+          jq -r '.assets[].browser_download_url' | grep ${{ inputs.target }}.tar.gz | head -1 )
         (cd $RUNNER_TEMP/slang && curl -o - -fsSL "$slang_url" | tar zxv)
         echo "SLANG_DIR=$RUNNER_TEMP/slang" >> "$GITHUB_ENV"
         echo "LD_LIBRARY_PATH=$RUNNER_TEMP/slang/lib" >> "$GITHUB_ENV"
