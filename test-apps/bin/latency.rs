@@ -38,7 +38,7 @@ fn main() {
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(args)
         .add_systems(Startup, setup)
-        .add_systems(Update, (move_box, bevy::window::close_on_esc))
+        .add_systems(Update, move_box)
         .run();
 }
 

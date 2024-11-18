@@ -9,11 +9,15 @@ edition = "2021"
 
 [[bin]]
 name = "latency-test"
-path = "bin/latency-test.rs"
+path = "bin/latency.rs"
 
 [[bin]]
 name = "color-test"
-path = "bin/color-test.rs"
+path = "bin/color.rs"
+
+[[bin]]
+name = "cursorlock-test"
+path = "bin/cursorlock.rs"
 
 [dependencies]
 anyhow = "1.0.75"
@@ -35,7 +39,7 @@ default-features = false
 features = ["wayland", "rwh_05"]
 
 [dependencies.bevy]
-version = "0.13"
+version = "0.14"
 default-features = false
 features = [
     #"animation",
@@ -45,13 +49,12 @@ features = [
     #"bevy_scene",
     "bevy_winit",
     "bevy_core_pipeline",
-    #"bevy_pbr",
+    "bevy_pbr",
     #"bevy_gltf",
     "bevy_render",
     "bevy_sprite",
     #"bevy_text",
     #"bevy_ui",
-    "multi-threaded",
     #"png",
     #"hdr",
     #"vorbis",
@@ -59,7 +62,7 @@ features = [
     "wayland",
     #"bevy_gizmos",
     #"android_shared_stdcxx",
-    #"tonemapping_luts",
+    "tonemapping_luts",
     #"default_font",
     #"webgl2",
     #"bevy_debug_stepping",
