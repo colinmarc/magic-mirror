@@ -53,6 +53,7 @@ struct Pointer {
     pending_frame: bool,
 }
 
+#[derive(Debug)]
 struct PointerLock {
     wl_pointer: wl_pointer::WlPointer,
     wp_locked_pointer: zwp_locked_pointer_v1::ZwpLockedPointerV1,
@@ -215,7 +216,7 @@ impl Seat {
         }
     }
 
-    // Moves the pointer to a location, returning the active pointer lock.
+    // Moves the pointer to a location.
     pub fn update_pointer(
         &mut self,
         serial: &Serial,
@@ -561,12 +562,10 @@ impl Seat {
 impl State {
     pub fn update_pointer_lock(&mut self) {
         let seat = &mut self.default_seat;
-        let active = self.active_surface.and_then(|id| self.surfaces.get(id));
+        let focus = seat.pointer_focus();
 
         if let Some((wl_surface, lock)) = &seat.pointer_lock {
-            if Some(wl_surface) == active.map(|s| &s.wl_surface)
-                && lock.wp_locked_pointer.is_alive()
-            {
+            if Some(wl_surface) == focus.as_ref() && lock.wp_locked_pointer.is_alive() {
                 // Same surface, active lock, nothing to do.
                 return;
             }
@@ -585,14 +584,15 @@ impl State {
             None
         };
 
-        if let Some((wl_surface, lock)) =
-            active.and_then(|s| seat.inactive_pointer_locks.remove_entry(&s.wl_surface))
+        if let Some((wl_surface, lock)) = focus
+            .as_ref()
+            .and_then(|s| seat.inactive_pointer_locks.remove_entry(s))
         {
             lock.wp_locked_pointer.locked();
             seat.pointer_lock = Some((wl_surface, lock));
             let (x, y) = seat.pointer_coords().unwrap_or_default().into();
 
-            debug!(surface = ?active, x, y, "activating pointer lock");
+            debug!(surface = ?focus, x, y, "activating pointer lock");
             self.handle.dispatch(CompositorEvent::PointerLocked(x, y));
         } else if let Some(wp_locked_pointer) = prev_lock {
             wp_locked_pointer.unlocked();
