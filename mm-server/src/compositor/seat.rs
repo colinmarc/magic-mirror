@@ -510,8 +510,18 @@ impl Seat {
     }
 
     pub fn has_lock(&self, wl_surface: &wl_surface::WlSurface) -> bool {
-        self.inactive_pointer_locks.contains_key(wl_surface)
-            || self.pointer_lock.as_ref().map(|(surf, _)| surf) == Some(wl_surface)
+        if self
+            .pointer_lock
+            .as_ref()
+            .is_some_and(|(surf, lock)| surf == wl_surface && !lock.defunct)
+        {
+            return true;
+        }
+
+        // Check for inactive locks that aren't already destroyed.
+        self.inactive_pointer_locks
+            .get(wl_surface)
+            .is_some_and(|lock| !lock.defunct)
     }
 
     pub fn create_lock(
@@ -565,7 +575,10 @@ impl State {
         let focus = seat.pointer_focus();
 
         if let Some((wl_surface, lock)) = &seat.pointer_lock {
-            if Some(wl_surface) == focus.as_ref() && lock.wp_locked_pointer.is_alive() {
+            if !lock.defunct
+                && lock.wp_locked_pointer.is_alive()
+                && Some(wl_surface) == focus.as_ref()
+            {
                 // Same surface, active lock, nothing to do.
                 return;
             }
@@ -575,7 +588,7 @@ impl State {
             lock.wp_locked_pointer.unlocked();
 
             let lock_clone = lock.wp_locked_pointer.clone();
-            if lock.wp_locked_pointer.is_alive() && !lock.oneshot {
+            if !lock.defunct && !lock.oneshot && lock.wp_locked_pointer.is_alive() {
                 seat.inactive_pointer_locks.insert(surf, lock);
             }
 
