@@ -1,3 +1,11 @@
+## [mmserver-v0.5.4] - 2024-11-18
+
+### Bugfixes
+
+- Handle missing /sys/devices/virtual/input (8f316fe41c41101ae18156a41abe2e9ba1e3497f)
+- Lock pointer based on pointer focus (4ce202d3bd9cb764c0586cdc83e890843c3c04d7)
+- Correctly handle an edge case with pointer locks (7c3428932651a372c69b25d1f77dc973746273a9)
+
 ## [mmserver-v0.5.3] - 2024-10-24
 
 ### Bugfixes
