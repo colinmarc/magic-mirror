@@ -6,6 +6,7 @@
 name = "mm-protocol"
 version = "0.2.1"
 edition = "2021"
+license = "MIT"
 
 [dependencies]
 bytes = "1"

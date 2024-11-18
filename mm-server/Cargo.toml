@@ -6,6 +6,7 @@
 name = "mm-server"
 version = "0.5.4"
 edition = "2021"
+publish = false
 
 [[bin]]
 name = "mmserver"
