@@ -435,6 +435,14 @@ impl AttachmentWindow {
                     self.cursor_pos = new_position;
                 }
             }
+            WindowEvent::CursorEntered { .. } => {
+                // Handled on the CursorMoved event.
+            }
+            WindowEvent::CursorLeft { .. } => {
+                if self.cursor_pos.take().is_some() {
+                    self.attachment.pointer_left()
+                }
+            }
             WindowEvent::MouseInput { state, button, .. } => {
                 use protocol::pointer_input::*;
 
