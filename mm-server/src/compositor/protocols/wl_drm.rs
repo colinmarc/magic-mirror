@@ -1,3 +1,7 @@
+// Copyright 2024 Colin Marc <hi@colinmarc.com>
+//
+// SPDX-License-Identifier: BUSL-1.1
+
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 
