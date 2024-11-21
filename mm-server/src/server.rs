@@ -101,7 +101,13 @@ impl Server {
                 config
             }
             _ => {
-                let tls_ctx = self_signed_tls_ctx(socket.local_addr()?)?;
+                let addr = socket.local_addr()?;
+                let ip = addr.ip();
+                if ip_rfc::global(&ip) || ip.is_unspecified() {
+                    bail!("TLS is required for non-private addresses");
+                }
+
+                let tls_ctx = self_signed_tls_ctx(addr)?;
                 quiche::Config::with_boring_ssl_ctx_builder(quiche::PROTOCOL_VERSION, tls_ctx)?
             }
         };
