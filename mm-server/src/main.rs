@@ -103,7 +103,9 @@ fn main() -> Result<()> {
     let mut cfg = config::Config::new(args.config.as_ref(), &args.include_apps)
         .context("failed to read config")?;
 
-    preflight_checks(&cfg)?;
+    let vk = Arc::new(vulkan::VkContext::new(cfg!(debug_assertions))?);
+
+    preflight_checks(&cfg, &vk)?;
 
     // Override with command line flags.
     cfg.bug_report_dir = bug_report_dir.clone();
@@ -113,7 +115,6 @@ fn main() -> Result<()> {
         cfg.server.bind_systemd = true;
     }
 
-    let vk = Arc::new(vulkan::VkContext::new(cfg!(debug_assertions))?);
 
     let sock = if cfg.server.bind_systemd {
         let mut listenfd = listenfd::ListenFd::from_env();
@@ -186,7 +187,7 @@ fn init_logging(bug_report_dir: Option<impl AsRef<Path>>) -> Result<()> {
     Ok(())
 }
 
-fn preflight_checks(cfg: &config::Config) -> anyhow::Result<()> {
+fn preflight_checks(cfg: &config::Config, vk: &vulkan::VkContext) -> anyhow::Result<()> {
     match linux_version() {
         Some((major, minor)) if major < 6 => {
             bail!("kernel version {major}.{minor} is too low; 6.x required");
@@ -199,6 +200,10 @@ fn preflight_checks(cfg: &config::Config) -> anyhow::Result<()> {
         "failed to initialize data_home ({})",
         cfg.data_home.display(),
     ))?;
+
+    if !vk.device_info.supports_h264 || !vk.device_info.supports_h265 {
+        warn!("no/partial support for hardware encoding! performance may be significantly decreased");
+    }
 
     Ok(())
 }
