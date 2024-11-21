@@ -38,6 +38,7 @@ lazy_static = "1.4"
 libc = "0.2"
 libloading = "0.8"
 listenfd = "1"
+mdns-sd = "0.11"
 mio = { version = "1", features = ["net", "os-ext", "os-poll"] }
 mio-timerfd = "0.2"
 mktemp = "0.5"

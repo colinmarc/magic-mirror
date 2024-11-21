@@ -84,6 +84,8 @@ mod parsed {
         pub(super) tls_key: Option<PathBuf>,
         pub(super) worker_threads: Option<NonZeroU32>,
         pub(super) max_connections: Option<MaxConnections>,
+        pub(super) mdns: Option<bool>,
+        pub(super) mdns_hostname: Option<String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
@@ -126,6 +128,8 @@ pub struct ServerConfig {
     pub tls_key: Option<PathBuf>,
     pub worker_threads: NonZeroU32,
     pub max_connections: Option<NonZeroU32>,
+    pub mdns: bool,
+    pub mdns_hostname: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -216,6 +220,8 @@ impl Config {
                     parsed::MaxConnections::Value(n) => Some(n),
                     parsed::MaxConnections::Infinity => None,
                 },
+                mdns: server.mdns.unwrap(),
+                mdns_hostname: server.mdns_hostname,
             },
             data_home: data_home.clone(),
             apps: BTreeMap::new(), // Handled below.

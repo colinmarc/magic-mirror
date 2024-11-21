@@ -65,6 +65,13 @@ worker_threads = 8
 ## to specify no limit.
 max_connections = 4
 
+## Whether to use mDNS to allow clients to discover the server.
+mdns = true
+
+## The hostname to advertise over mDNS. Defaults to "$(uname -n).local." if left
+## unset, or ignored if 'mdns = false'.
+# mdns_hostname = "mycomputer.local."
+
 ## ***-------------------------***
 ## *** Configured Applications ***
 ## ***-------------------------***

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 mod handlers;
+mod mdns;
 mod sendmmsg;
 
 use std::collections::{BTreeMap, VecDeque};
@@ -50,6 +51,8 @@ pub struct Server {
     state: SharedState,
     close_recv: Receiver<()>,
     close_send: WakingSender<()>,
+
+    _mdns: Option<mdns::MdnsService>,
     shutting_down: bool,
 }
 
@@ -138,6 +141,19 @@ impl Server {
 
         let thread_pool = threadpool::ThreadPool::new(server_config.worker_threads.get() as usize);
 
+        let addr = socket.local_addr()?;
+        let mdns = if server_config.mdns {
+            match mdns::MdnsService::new(addr, server_config.mdns_hostname.as_deref()) {
+                Ok(sd) => Some(sd),
+                Err(e) => {
+                    error!("failed to enable mDNS service discovery: {e:#}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             server_config,
             quiche_config: config,
@@ -155,6 +171,8 @@ impl Server {
             state,
             close_send,
             close_recv,
+
+            _mdns: mdns,
             shutting_down: false,
         })
     }
