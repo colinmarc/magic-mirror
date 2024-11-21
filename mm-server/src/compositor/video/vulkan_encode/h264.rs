@@ -142,11 +142,12 @@ impl H264Encoder {
             caps.video_caps.picture_access_granularity.height
         );
 
-        let mb_size = caps.video_caps.picture_access_granularity.width;
-        trace!("mb size: {}", mb_size);
+        let mb_width = caps.video_caps.picture_access_granularity.width;
+        let mb_height = caps.video_caps.picture_access_granularity.height;
+        trace!("mb size: {mb_width}x{mb_height}");
 
-        let aligned_width = params.width.next_multiple_of(mb_size);
-        let aligned_height = params.height.next_multiple_of(mb_size);
+        let aligned_width = params.width.next_multiple_of(mb_width);
+        let aligned_height = params.height.next_multiple_of(mb_height);
 
         trace!(
             "aligned width: {}, height: {}",
@@ -202,8 +203,8 @@ impl H264Encoder {
             pic_order_cnt_type: StdVideoH264PocType_STD_VIDEO_H264_POC_TYPE_0,
             log2_max_pic_order_cnt_lsb_minus4: log2_max_frame_num_minus4,
             log2_max_frame_num_minus4,
-            pic_width_in_mbs_minus1: (aligned_width / mb_size) - 1,
-            pic_height_in_map_units_minus1: (aligned_height / mb_size) - 1,
+            pic_width_in_mbs_minus1: (aligned_width / mb_width) - 1,
+            pic_height_in_map_units_minus1: (aligned_height / mb_height) - 1,
             frame_crop_right_offset: crop_right,
             frame_crop_bottom_offset: crop_bottom,
 

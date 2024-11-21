@@ -149,11 +149,6 @@ impl EncoderInner {
 
         trace!(?input_format, width, height, "using input format");
 
-        assert_eq!(
-            capabilities.picture_access_granularity.width,
-            capabilities.picture_access_granularity.height
-        );
-
         let buffer_size_alignment = capabilities.min_bitstream_buffer_size_alignment as usize;
 
         let session = {
