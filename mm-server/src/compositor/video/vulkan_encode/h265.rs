@@ -182,8 +182,12 @@ impl H265Encoder {
             .max()
             .expect("no tbs size found");
 
-        let aligned_width = params.width.next_multiple_of(min_ctb as u32);
-        let aligned_height = params.height.next_multiple_of(min_ctb as u32);
+        let aligned_width = params
+            .width
+            .next_multiple_of(caps.encode_caps.encode_input_picture_granularity.width as u32);
+        let aligned_height = params
+            .height
+            .next_multiple_of(caps.encode_caps.encode_input_picture_granularity.height as u32);
 
         trace!(
             min_ctb,
@@ -195,7 +199,6 @@ impl H265Encoder {
             "block sizes",
         );
 
-        // Divide by two because of chroma subsampling, I guess?
         let crop_right = (aligned_width - params.width) / 2;
         let crop_bottom = (aligned_height - params.height) / 2;
 
