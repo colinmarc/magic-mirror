@@ -158,7 +158,14 @@ impl Client {
             ClientState::Connected(_) => (),
             ClientState::Defunct(ClientError::ConnectionError(conn::ConnError::Idle)) => {
                 // Reconnect after an idle timeout.
-                let conn = spawn_conn(&self.addr, inner_clone, self.stats.clone()).await?;
+                let conn = match spawn_conn(&self.addr, inner_clone, self.stats.clone()).await {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        error!("connection failed: {e:#}");
+                        return Err(e);
+                    }
+                };
+
                 guard.state = ClientState::Connected(conn);
 
                 debug!("reconnected after idle timeout");
