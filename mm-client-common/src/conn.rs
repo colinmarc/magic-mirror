@@ -470,7 +470,14 @@ fn resolve_server(hostport: &str) -> Result<(String, SocketAddr), ConnError> {
         DEFAULT_PORT
     });
 
-    let addr = (host.clone(), port)
+    // Rust chokes on zone identifiers. They are rarely needed.
+    let host = if let Some((before, _)) = host.rsplit_once('%') {
+        before
+    } else {
+        &host
+    };
+
+    let addr = (host, port)
         .to_socket_addrs()
         .map_err(|_| ConnError::InvalidAddress(hostport.to_string()))?
         .next()
