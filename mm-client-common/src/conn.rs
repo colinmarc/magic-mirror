@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: MIT
 
+mod hostport;
+
 const DEFAULT_PORT: u16 = 9599;
 const MAX_QUIC_PACKET_SIZE: usize = 1350;
 
@@ -19,7 +21,7 @@ use std::{
 
 use futures::channel::oneshot;
 use mm_protocol as protocol;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::stats::StatsCollector;
 
@@ -459,23 +461,16 @@ fn gen_scid() -> quiche::ConnectionId<'static> {
 fn resolve_server(hostport: &str) -> Result<(String, SocketAddr), ConnError> {
     use std::net::ToSocketAddrs;
 
-    let parts = hostport.splitn(2, ':').collect::<Vec<_>>();
-    let (host, port) = match parts[..] {
-        [host] => {
-            debug!("assuming default port {}", DEFAULT_PORT);
-            (host, DEFAULT_PORT)
-        }
-        [host, port] => {
-            if let Ok(port) = port.parse() {
-                (host, port)
-            } else {
-                return Err(ConnError::InvalidAddress(hostport.to_string()));
-            }
-        }
-        _ => return Err(ConnError::InvalidAddress(hostport.to_string())),
+    let Ok((host, port)) = hostport::split_host_port(hostport) else {
+        return Err(ConnError::InvalidAddress(hostport.to_string()));
     };
 
-    let addr = (host, port)
+    let port = port.unwrap_or_else(|| {
+        info!("using default port ({DEFAULT_PORT})");
+        DEFAULT_PORT
+    });
+
+    let addr = (host.clone(), port)
         .to_socket_addrs()
         .map_err(|_| ConnError::InvalidAddress(hostport.to_string()))?
         .next()
