@@ -2786,7 +2786,7 @@ dependencies = [
 [[package]]
 name = "slang"
 version = "0.1.0"
-source = "git+https://github.com/colinmarc/slang-rs?rev=78f7be2eb9a694747c6878d476984f576e21edf4#78f7be2eb9a694747c6878d476984f576e21edf4"
+source = "git+https://github.com/colinmarc/slang-rs?rev=6b503d9db1b911417f0641f3e54da23fe4850dc6#6b503d9db1b911417f0641f3e54da23fe4850dc6"
 dependencies = [
  "slang-sys",
 ]
@@ -2794,7 +2794,7 @@ dependencies = [
 [[package]]
 name = "slang-sys"
 version = "0.1.0"
-source = "git+https://github.com/colinmarc/slang-rs?rev=78f7be2eb9a694747c6878d476984f576e21edf4#78f7be2eb9a694747c6878d476984f576e21edf4"
+source = "git+https://github.com/colinmarc/slang-rs?rev=6b503d9db1b911417f0641f3e54da23fe4850dc6#6b503d9db1b911417f0641f3e54da23fe4850dc6"
 dependencies = [
  "anyhow",
  "bindgen 0.69.5",
