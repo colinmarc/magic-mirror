@@ -78,6 +78,8 @@ mod parsed {
         pub(super) server: Option<ServerConfig>,
         #[converge(nest)]
         pub(super) default_app_settings: Option<DefaultAppSettings>,
+        #[converge(nest)]
+        pub(super) integrations: Option<IntegrationsConfig>,
     }
 
     #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
@@ -117,6 +119,38 @@ mod parsed {
         pub(super) shared_home_name: Option<String>,
         pub(super) tmp_home: Option<bool>,
     }
+
+    #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
+    pub(super) struct IntegrationsConfig {
+        #[converge(nest)]
+        pub(super) remote_desktop: Option<RemoteDesktopIntegrationConfig>,
+        #[converge(nest)]
+        pub(super) steam: Option<SteamIntegrationConfig>,
+        #[converge(nest)]
+        pub(super) legendary: Option<LegendaryIntegrationConfig>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
+    pub(super) struct RemoteDesktopIntegrationConfig {
+        pub(super) enabled: Option<bool>,
+        pub(super) search_paths: Option<Vec<PathBuf>>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
+    pub(super) struct SteamIntegrationConfig {
+        pub(super) enabled: Option<bool>,
+        pub(super) steam_command: Option<Vec<String>>,
+        pub(super) shared_home_name: Option<String>,
+        pub(super) isolate_home: Option<bool>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
+    pub(super) struct LegendaryIntegrationConfig {
+        pub(super) enabled: Option<bool>,
+        pub(super) config_location: Option<PathBuf>,
+        pub(super) shared_home_name: Option<String>,
+        pub(super) isolate_home: Option<bool>,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -124,6 +158,8 @@ pub struct Config {
     pub server: ServerConfig,
     pub apps: BTreeMap<String, AppConfig>,
     pub data_home: PathBuf,
+
+    pub integrations: IntegrationsConfig,
 
     pub bug_report_dir: Option<PathBuf>,
 }
@@ -158,6 +194,54 @@ pub enum HomeIsolationMode {
     Unisolated,
     Tmpfs,
     Permanent(PathBuf),
+}
+
+impl HomeIsolationMode {
+    pub fn new(
+        isolate_home: bool,
+        tmp_home: bool,
+        shared_home_name: &str,
+        data_home: &Path,
+    ) -> anyhow::Result<Self> {
+        match (isolate_home, tmp_home) {
+            (false, true) => bail!("if isolate_home = false, tmp_home must also be false"),
+            (false, false) => Ok(HomeIsolationMode::Unisolated),
+            (true, true) => Ok(HomeIsolationMode::Tmpfs),
+            (true, false) => {
+                if !ID_RE.is_match(shared_home_name) {
+                    bail!("invalid shared_home_name: {shared_home_name}",)
+                }
+
+                Ok(HomeIsolationMode::Permanent(
+                    data_home.join("homes").join(shared_home_name),
+                ))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct IntegrationsConfig {
+    pub remote_desktop_integration: Option<RemoteDesktopIntegrationConfig>,
+    pub steam_integration: Option<SteamIntegrationConfig>,
+    pub legendary_integration: Option<LegendaryIntegrationConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteDesktopIntegrationConfig {
+    pub search_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SteamIntegrationConfig {
+    pub steam_command: Vec<String>,
+    pub home_isolation_mode: HomeIsolationMode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegendaryIntegrationConfig {
+    pub config_location: Option<PathBuf>,
+    pub home_isolation_mode: HomeIsolationMode,
 }
 
 impl Config {
@@ -220,6 +304,8 @@ impl Config {
         let server = input.server.unwrap();
         let default_app_settings = input.default_app_settings.unwrap();
 
+        let integrations = Self::build_integrations(input.integrations, &data_home)?;
+
         let mut this = Config {
             server: ServerConfig {
                 bind: server.bind.unwrap(),
@@ -236,6 +322,8 @@ impl Config {
                 mdns_instance_name: server.mdns_instance_name,
             },
             data_home: data_home.clone(),
+
+            integrations,
             apps: BTreeMap::new(), // Handled below.
             bug_report_dir: None,  // This is only set from the command line.
         };
@@ -268,8 +356,12 @@ impl Config {
 
     /// Performs high-level validation on the final configuration.
     fn validate(&self) -> anyhow::Result<()> {
-        if self.apps.is_empty() {
-            bail!("at least one application must be defined");
+        if self.apps.is_empty()
+            && self.integrations.remote_desktop_integration.is_none()
+            && self.integrations.steam_integration.is_none()
+            && self.integrations.legendary_integration.is_none()
+        {
+            bail!("at least one application or integration must be defined");
         }
 
         for (name, app) in &self.apps {
@@ -309,6 +401,67 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    fn build_integrations(
+        conf: Option<parsed::IntegrationsConfig>,
+        data_home: &Path,
+    ) -> anyhow::Result<IntegrationsConfig> {
+        let Some(input) = conf else {
+            return Ok(IntegrationsConfig::default());
+        };
+
+        let remote_desktop_integration = input.remote_desktop.and_then(|rd| {
+            if rd.enabled.unwrap_or_default() {
+                Some(RemoteDesktopIntegrationConfig {
+                    search_paths: rd.search_paths.unwrap(),
+                })
+            } else {
+                None
+            }
+        });
+
+        let steam_integration = if let Some(st) = input.steam {
+            if st.enabled.unwrap_or_default() {
+                Some(SteamIntegrationConfig {
+                    steam_command: st.steam_command.unwrap(),
+                    home_isolation_mode: HomeIsolationMode::new(
+                        st.isolate_home.unwrap(),
+                        false,
+                        &st.shared_home_name.unwrap(),
+                        data_home,
+                    )?,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let legendary_integration = if let Some(lg) = input.legendary {
+            if lg.enabled.unwrap_or_default() {
+                Some(LegendaryIntegrationConfig {
+                    config_location: lg.config_location,
+                    home_isolation_mode: HomeIsolationMode::new(
+                        lg.isolate_home.unwrap(),
+                        false,
+                        &lg.shared_home_name.unwrap(),
+                        data_home,
+                    )?,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(IntegrationsConfig {
+            remote_desktop_integration,
+            steam_integration,
+            legendary_integration,
+        })
     }
 }
 
@@ -412,22 +565,12 @@ fn validate_app(
 
     let isolate_home = app.isolate_home.or(defaults.isolate_home).unwrap();
     let tmp_home = app.tmp_home.or(defaults.tmp_home).unwrap();
-    let home_isolation_mode = match (isolate_home, tmp_home) {
-        (false, true) => bail!("if isolate_home = false, tmp_home must also be false"),
-        (false, false) => HomeIsolationMode::Unisolated,
-        (true, true) => HomeIsolationMode::Tmpfs,
-        (true, false) => {
-            if let Some(s) = app.shared_home_name {
-                if !ID_RE.is_match(&s) {
-                    bail!("invalid shared_home_name: {s}",)
-                }
-
-                HomeIsolationMode::Permanent(data_home.join("homes").join(s))
-            } else {
-                HomeIsolationMode::Permanent(data_home.join("homes").join(id))
-            }
-        }
-    };
+    let home_isolation_mode = HomeIsolationMode::new(
+        isolate_home,
+        tmp_home,
+        app.shared_home_name.as_deref().unwrap_or(id),
+        data_home,
+    )?;
 
     Ok(AppConfig {
         path,
@@ -547,8 +690,6 @@ mod test {
         )
         .unwrap();
 
-        eprintln!("{:?}", config.server);
-
         match config.validate() {
             Err(e) => {
                 assert_eq!(
@@ -610,5 +751,24 @@ mod test {
             expected,
             validate_app_path("Foo Bar/ Baz/Qux ".into()).unwrap()
         )
+    }
+
+    #[test]
+    fn integrations_enabled() {
+        let config = config_from_str(
+            r#"
+            [integrations.remote-desktop]
+            enabled = true
+            [integrations.steam]
+            enabled = true
+            [integrations.legendary]
+            enabled = true
+            "#,
+        )
+        .unwrap();
+
+        config
+            .validate()
+            .expect("integration defaults should be valid")
     }
 }

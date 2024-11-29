@@ -152,3 +152,54 @@ xwayland = true
 force_1x_scale = false
 isolate_home = true
 tmp_home = false
+
+## ***--------------***
+## *** Integrations ***
+## ***--------------***
+
+## -- Steam
+## Enable the steam integration to automatically list installed games as
+## launchable applications.
+[integrations.steam]
+
+## Uncomment this to enable the steam integration.
+# enabled = true
+
+## Determines the base steam command to run. When launching games directly,
+## "steam://rungameid/<appid>" will be appended.
+steam_command = ["steam", "-gamepadui"]
+
+## See the isolate_home and shared_home_name app config options above. These
+## control where your steam games are installed.
+isolate_home = true
+shared_home_name = "steam"
+
+## -- Legendary (Epic Games Store)
+## Enable the legendary integration to add games from the Epic Games Store as
+## launchable apps. `legendary` must be executable and on the PATH for this
+## integration to function. It can be installed from the following repo:
+##   https://github.com/derrod/legendary
+[integrations.legendary]
+
+## Uncomment this to enable the legendary integration.
+# enabled = true
+
+## If unset, defaults to $HOME/.config/legendary.
+# config_location = "/home/myuser/.config/legendary"
+
+## See the isolate_home and shared_home_name app config options above. You
+## probably want to set isolate_home to false, because legendary installs its
+## games in $HOME by default.
+isolate_home = false
+shared_home_name = "legendary"
+
+## -- Remote Desktop
+## The desktop integration will add *.desktop files from /usr/share/applications
+## and /usr/share/wayland-sessions as launchable apps.
+[integrations.remote-desktop]
+
+## Uncomment this to enable the remote desktop integration.
+# enabled = true
+
+## Which paths to search for *.desktop files.
+search_paths = ["/usr/share/applications/", "/usr/share/wayland-sessions/"]
