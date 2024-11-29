@@ -72,6 +72,10 @@ mdns = true
 ## unset, or ignored if 'mdns = false'.
 # mdns_hostname = "mycomputer.local."
 
+## The instance name to advertise over mDNS. Defaults to the unqualified value of
+## mdns_hostname, converted to uppercase.
+# mdns_instance_name = "MYCOMPUTER"
+
 ## ***-------------------------***
 ## *** Configured Applications ***
 ## ***-------------------------***

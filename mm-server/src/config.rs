@@ -90,6 +90,7 @@ mod parsed {
         pub(super) max_connections: Option<MaxConnections>,
         pub(super) mdns: Option<bool>,
         pub(super) mdns_hostname: Option<String>,
+        pub(super) mdns_instance_name: Option<String>,
     }
 
     #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
@@ -135,6 +136,7 @@ pub struct ServerConfig {
     pub max_connections: Option<NonZeroU32>,
     pub mdns: bool,
     pub mdns_hostname: Option<String>,
+    pub mdns_instance_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -228,6 +230,7 @@ impl Config {
                 },
                 mdns: server.mdns.unwrap(),
                 mdns_hostname: server.mdns_hostname,
+                mdns_instance_name: server.mdns_instance_name,
             },
             data_home: data_home.clone(),
             apps: BTreeMap::new(), // Handled below.

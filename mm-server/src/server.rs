@@ -143,7 +143,11 @@ impl Server {
 
         let addr = socket.local_addr()?;
         let mdns = if server_config.mdns {
-            match mdns::MdnsService::new(addr, server_config.mdns_hostname.as_deref()) {
+            match mdns::MdnsService::new(
+                addr,
+                server_config.mdns_hostname.as_deref(),
+                server_config.mdns_instance_name.as_deref(),
+            ) {
                 Ok(sd) => Some(sd),
                 Err(e) => {
                     error!("failed to enable mDNS service discovery: {e:#}");

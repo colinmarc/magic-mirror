@@ -13,7 +13,11 @@ pub struct MdnsService {
 }
 
 impl MdnsService {
-    pub fn new(addr: SocketAddr, hostname: Option<&str>) -> anyhow::Result<Self> {
+    pub fn new(
+        addr: SocketAddr,
+        hostname: Option<&str>,
+        instance_name: Option<&str>,
+    ) -> anyhow::Result<Self> {
         let daemon = mdns_sd::ServiceDaemon::new()?;
 
         let txt = [(
@@ -26,6 +30,11 @@ impl MdnsService {
             None => mdns_hostname()?,
         };
 
+        let instance_name = match instance_name {
+            Some(s) => s.to_owned(),
+            None => mdns_instance_name(&hostname)?,
+        };
+
         let ip = addr.ip();
         let (ip, ip_auto) = if ip.is_unspecified() {
             (vec![], true)
@@ -35,7 +44,7 @@ impl MdnsService {
 
         let mut service_info = mdns_sd::ServiceInfo::new(
             "_magic-mirror._udp.local.",
-            "Magic Mirror",
+            &instance_name,
             &hostname,
             &ip[..],
             addr.port(),
@@ -49,7 +58,7 @@ impl MdnsService {
         let service_name = service_info.get_fullname().to_owned();
         daemon.register(service_info)?;
 
-        debug!(hostname, ip = ?ip.first(), ip_auto, "advertizing service");
+        debug!(hostname, instance_name, ip = ?ip.first(), ip_auto, "advertizing service");
 
         Ok(Self {
             daemon,
@@ -88,6 +97,10 @@ fn mdns_hostname() -> anyhow::Result<String> {
     let uname = rustix::system::uname();
 
     let hostname = uname.nodename().to_str()?;
+    if hostname.is_empty() {
+        bail!("empty hostname");
+    }
+
     if hostname.ends_with(".local") {
         return Ok(format!("{hostname}."));
     } else if hostname.contains('.') {
@@ -95,4 +108,17 @@ fn mdns_hostname() -> anyhow::Result<String> {
     }
 
     Ok(format!("{hostname}.local."))
+}
+
+fn mdns_instance_name(hostname: &str) -> anyhow::Result<String> {
+    if hostname.is_empty() {
+        bail!("empty hostname");
+    }
+
+    let hostname = match hostname.split_once('.') {
+        Some((host, _)) => host,
+        None => hostname,
+    };
+
+    Ok(hostname.to_uppercase())
 }
