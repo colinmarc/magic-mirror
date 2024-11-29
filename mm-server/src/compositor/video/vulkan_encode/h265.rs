@@ -184,10 +184,10 @@ impl H265Encoder {
 
         let aligned_width = params
             .width
-            .next_multiple_of(caps.encode_caps.encode_input_picture_granularity.width as u32);
+            .next_multiple_of(caps.encode_caps.encode_input_picture_granularity.width);
         let aligned_height = params
             .height
-            .next_multiple_of(caps.encode_caps.encode_input_picture_granularity.height as u32);
+            .next_multiple_of(caps.encode_caps.encode_input_picture_granularity.height);
 
         trace!(
             min_ctb,
