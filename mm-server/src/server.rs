@@ -719,7 +719,8 @@ impl ClientConnection {
         scratch: &mut BytesMut,
     ) -> anyhow::Result<bool> {
         scratch.resize(protocol::MAX_MESSAGE_SIZE, 0);
-        let len = protocol::encode_message(&msg, scratch)?;
+        let len =
+            protocol::encode_message(&msg, scratch).context(format!("failed to encode {}", msg))?;
 
         trace!(len, "sending {}", msg);
 
