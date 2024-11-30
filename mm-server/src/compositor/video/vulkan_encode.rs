@@ -1006,32 +1006,21 @@ fn single_profile_list_info<'a>(
     }
 }
 
-fn default_structure(
-    _max_layers: u32,
-    max_dpb_slots: u32,
-    device_vendor: Vendor,
-) -> anyhow::Result<HierarchicalP> {
+fn default_structure(_max_layers: u32, max_dpb_slots: u32) -> anyhow::Result<HierarchicalP> {
     // Temporal layers don't work yet.
     // let mut layers = std::cmp::min(4, max_layers);
     let mut layers = 1;
 
     const DEFAULT_GOP_SIZE: u32 = 256;
 
-    // TODO: Radv has a bug that causes the encoder to truncate POC.
-    let gop_size = if device_vendor == Vendor::Amd {
-        32
-    } else {
-        DEFAULT_GOP_SIZE
-    };
-
-    let mut structure = HierarchicalP::new(layers as u32, gop_size);
+    let mut structure = HierarchicalP::new(layers as u32, DEFAULT_GOP_SIZE);
     while structure.required_dpb_size() as u32 > max_dpb_slots {
         layers -= 1;
         if layers == 0 {
             bail!("max_dpb_slots too low");
         }
 
-        structure = HierarchicalP::new(layers as u32, gop_size);
+        structure = HierarchicalP::new(layers as u32, DEFAULT_GOP_SIZE);
     }
 
     Ok(structure)

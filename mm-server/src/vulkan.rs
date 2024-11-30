@@ -28,6 +28,13 @@ pub enum Vendor {
     Other,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DriverVersion {
+    MesaRadv { major: u32, minor: u32, patch: u32 },
+    // TODO nvidia proprietary is also supported
+    Other(String),
+}
+
 pub struct VkContext {
     pub entry: ash::Entry,
     pub push_ds_api: khr::PushDescriptor,
@@ -113,6 +120,7 @@ pub struct VkDeviceInfo {
     pub device_name: CString,
     pub device_type: vk::PhysicalDeviceType,
     pub device_vendor: Vendor,
+    pub driver_version: DriverVersion,
     pub limits: vk::PhysicalDeviceLimits,
     pub drm_node: libc::dev_t,
     pub graphics_family: u32,
@@ -130,9 +138,11 @@ impl VkDeviceInfo {
     fn query(instance: &ash::Instance, device: vk::PhysicalDevice) -> Result<Self> {
         let mut drm_props = vk::PhysicalDeviceDrmPropertiesEXT::default();
         let mut host_mem_props = vk::PhysicalDeviceExternalMemoryHostPropertiesEXT::default();
+        let mut driver_props = vk::PhysicalDeviceDriverPropertiesKHR::default();
         let mut props = vk::PhysicalDeviceProperties2::default()
             .push_next(&mut drm_props)
-            .push_next(&mut host_mem_props);
+            .push_next(&mut host_mem_props)
+            .push_next(&mut driver_props);
         unsafe { instance.get_physical_device_properties2(device, &mut props) };
 
         let limits = props.properties.limits;
@@ -143,6 +153,22 @@ impl VkDeviceInfo {
             0x1002 => Vendor::Amd,
             0x10de => Vendor::Nvidia,
             _ => Vendor::Other,
+        };
+
+        let version = props.properties.driver_version;
+        let driver_version = match driver_props.driver_id {
+            vk::DriverId::MESA_RADV => DriverVersion::MesaRadv {
+                major: vk::api_version_major(version),
+                minor: vk::api_version_minor(version),
+                patch: vk::api_version_patch(version),
+            },
+            _ => DriverVersion::Other(
+                CStr::from_bytes_with_nul(&driver_props.driver_info.map(|x| x as u8)[..])
+                    .unwrap_or(c"unknown")
+                    .to_str()
+                    .unwrap_or("unknown")
+                    .to_owned(),
+            ),
         };
 
         if drm_props.render_major != 226 || drm_props.render_minor < 128 {
@@ -297,6 +323,7 @@ impl VkDeviceInfo {
             device_name,
             device_type,
             device_vendor,
+            driver_version,
             limits,
             drm_node,
             graphics_family,

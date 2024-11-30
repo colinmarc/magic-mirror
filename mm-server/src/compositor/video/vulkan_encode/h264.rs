@@ -127,7 +127,6 @@ impl H264Encoder {
         let structure = super::default_structure(
             caps.h264_caps.max_temporal_layer_count,
             caps.video_caps.max_dpb_slots,
-            vk.device_info.device_vendor,
         )?;
 
         // TODO check more caps

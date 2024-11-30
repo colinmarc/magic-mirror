@@ -125,10 +125,10 @@ impl H265Encoder {
             "h265 quality level properties: {:#?}",
             quality_props.h265_props
         );
+
         let structure = super::default_structure(
             caps.h265_caps.max_sub_layer_count,
             caps.video_caps.max_dpb_slots,
-            vk.device_info.device_vendor,
         )?;
 
         let rc_mode = super::rate_control::select_rc_mode(params, &caps.encode_caps);

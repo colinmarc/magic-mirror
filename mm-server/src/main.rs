@@ -115,7 +115,6 @@ fn main() -> Result<()> {
         cfg.server.bind_systemd = true;
     }
 
-
     let sock = if cfg.server.bind_systemd {
         let mut listenfd = listenfd::ListenFd::from_env();
         if let Some(sock) = listenfd.take_udp_socket(0)? {
@@ -196,13 +195,30 @@ fn preflight_checks(cfg: &config::Config, vk: &vulkan::VkContext) -> anyhow::Res
         _ => (),
     }
 
+    match vk.device_info.driver_version {
+        vulkan::DriverVersion::MesaRadv {
+            major,
+            minor,
+            patch,
+        } => {
+            if major < 24 || (major == 24 && minor < 3) {
+                bail!("mesa >= 24.3 required, have {major}.{minor}.{patch}");
+            }
+        }
+        vulkan::DriverVersion::Other(ref driver) => {
+            warn!(driver, "using potentially unsupported vulkan driver")
+        }
+    }
+
     std::fs::create_dir_all(&cfg.data_home).context(format!(
         "failed to initialize data_home ({})",
         cfg.data_home.display(),
     ))?;
 
     if !vk.device_info.supports_h264 || !vk.device_info.supports_h265 {
-        warn!("no/partial support for hardware encoding! performance may be significantly decreased");
+        warn!(
+            "no/partial support for hardware encoding! performance may be significantly decreased"
+        );
     }
 
     Ok(())
