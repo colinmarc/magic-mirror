@@ -17,7 +17,6 @@ use self::gop_structure::HierarchicalP;
 use super::begin_cb;
 use crate::codec::VideoCodec;
 use crate::compositor::{CompositorEvent, CompositorHandle, VideoStreamParams, EPOCH};
-use crate::vulkan::video::VideoQueueExt;
 use crate::vulkan::*;
 
 mod dpb;
@@ -118,7 +117,7 @@ impl EncoderInner {
             bail!("no vulkan video support")
         }
 
-        let (video_loader, _encode_loader) = vk.video_apis.as_ref().unwrap();
+        let video_exts = vk.video_exts.as_ref().unwrap();
         let encode_family = vk.device_info.encode_family.unwrap();
 
         if capabilities.max_coded_extent.width < width
@@ -132,7 +131,7 @@ impl EncoderInner {
         }
 
         let format_info = list_format_props(
-            video_loader,
+            video_exts,
             vk.device_info.pdevice,
             profile,
             vk::ImageUsageFlags::VIDEO_ENCODE_SRC_KHR,
@@ -164,14 +163,14 @@ impl EncoderInner {
                 .std_header_version(&capabilities.std_header_version);
 
             unsafe {
-                video_loader
+                video_exts
+                    .video_queue
                     .create_video_session(&create_info, None)
                     .context("vkCreateVideoSessionKHR")?
             }
         };
 
-        let session_memory =
-            bind_session_memory(video_loader, &vk.device, &vk.device_info, session)?;
+        let session_memory = bind_session_memory(video_exts, &vk.device, &vk.device_info, session)?;
 
         let session_params = {
             let create_info = vk::VideoSessionParametersCreateInfoKHR::default()
@@ -179,7 +178,8 @@ impl EncoderInner {
                 .push_next(session_params);
 
             unsafe {
-                video_loader
+                video_exts
+                    .video_queue
                     .create_video_session_parameters(&create_info, None)
                     .context("vkCreateVideoSessionParametersKHR")?
             }
@@ -343,7 +343,7 @@ impl EncoderInner {
             bail!("session parameters not yet created");
         }
 
-        let (video_loader, encode_loader) = self.vk.video_apis.as_ref().unwrap();
+        let video_exts = self.vk.video_exts.as_ref().unwrap();
         let encode_queue_family = self.vk.encode_queue.as_ref().unwrap().family;
 
         // "Acquire" a buffer to copy to. This provides backpressure if the
@@ -427,7 +427,9 @@ impl EncoderInner {
             }
 
             unsafe {
-                video_loader.cmd_begin_video_coding(frame.encode_cb, &begin_info);
+                video_exts
+                    .video_queue
+                    .cmd_begin_video_coding(frame.encode_cb, &begin_info);
             };
         }
 
@@ -441,7 +443,9 @@ impl EncoderInner {
                 .push_next(rc_info);
 
             unsafe {
-                video_loader.cmd_control_video_coding(frame.encode_cb, &ctrl_info);
+                video_exts
+                    .video_queue
+                    .cmd_control_video_coding(frame.encode_cb, &ctrl_info);
             };
         }
 
@@ -551,7 +555,9 @@ impl EncoderInner {
             }
 
             unsafe {
-                encode_loader.cmd_encode_video(frame.encode_cb, &encode_info);
+                video_exts
+                    .video_encode_queue
+                    .cmd_encode_video(frame.encode_cb, &encode_info);
             };
         }
 
@@ -565,7 +571,9 @@ impl EncoderInner {
                 vk::VideoEndCodingInfoKHR::default().flags(vk::VideoEndCodingFlagsKHR::empty());
 
             unsafe {
-                video_loader.cmd_end_video_coding(frame.encode_cb, &end_info);
+                video_exts
+                    .video_queue
+                    .cmd_end_video_coding(frame.encode_cb, &end_info);
             };
         }
 
@@ -657,7 +665,7 @@ impl Drop for EncoderInner {
             }
         }
 
-        let (video_loader, _) = self.vk.video_apis.as_ref().unwrap();
+        let video_exts = self.vk.video_exts.as_ref().unwrap();
 
         unsafe {
             self.vk
@@ -665,8 +673,12 @@ impl Drop for EncoderInner {
                 .queue_wait_idle(self.vk.encode_queue.as_ref().unwrap().queue)
                 .unwrap();
 
-            video_loader.destroy_video_session(self.session, None);
-            video_loader.destroy_video_session_parameters(self.session_params, None);
+            video_exts
+                .video_queue
+                .destroy_video_session(self.session, None);
+            video_exts
+                .video_queue
+                .destroy_video_session_parameters(self.session_params, None);
 
             for memory in self.session_memory.drain(..) {
                 self.vk.device.free_memory(memory, None);
@@ -895,7 +907,7 @@ fn writer_thread(
 }
 
 fn list_format_props<'a>(
-    video_loader: &'a VideoQueueExt,
+    video_exts: &'a VideoQueueExts,
     pdevice: vk::PhysicalDevice,
     profile: &mut vk::VideoProfileInfoKHR,
     usage: vk::ImageUsageFlags,
@@ -906,22 +918,28 @@ fn list_format_props<'a>(
         .push_next(&mut profile_list_info);
 
     let props = unsafe {
-        video_loader
+        video_exts
+            .video_queue_instance
             .get_physical_device_video_format_properties(pdevice, &format_info)
-            .context("vkGetVideoFormatPropertiesKHR")?
+            .context("vkGetPhysicalDeviceVideoFormatPropertiesKHR")?
     };
 
     Ok(props)
 }
 
 fn bind_session_memory(
-    video_loader: &VideoQueueExt,
+    video_exts: &VideoQueueExts,
     device: &ash::Device,
     device_info: &VkDeviceInfo,
     session: vk::VideoSessionKHR,
 ) -> anyhow::Result<Vec<vk::DeviceMemory>> {
     let mut session_memory = Vec::new();
-    let reqs = unsafe { video_loader.get_video_session_memory_requirements(session)? };
+    let reqs = unsafe {
+        video_exts
+            .video_queue
+            .get_video_session_memory_requirements(session)
+            .context("vkGetVideoSessionMemoryRequirementsKHR")?
+    };
 
     let mut binds = Vec::new();
     for req in reqs.into_iter() {
@@ -965,8 +983,9 @@ fn bind_session_memory(
     }
 
     unsafe {
-        video_loader
-            .bind_video_session_memory(device, session, &binds)
+        video_exts
+            .video_queue
+            .bind_video_session_memory(session, &binds)
             .context("vkBindVideoSessionMemory")?
     }
 

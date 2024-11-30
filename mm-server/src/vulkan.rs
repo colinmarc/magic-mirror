@@ -6,20 +6,16 @@
 
 mod chain;
 mod timeline;
-pub mod video;
 
 use std::ffi::{c_void, CStr, CString};
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
-use ash::extensions::{ext, khr};
-use ash::vk;
+use ash::{ext, khr, vk};
 pub(crate) use chain::*;
 use cstr::cstr;
 pub use timeline::*;
 use tracing::{debug, error, info, warn};
-
-use self::video::{VideoEncodeQueueExt, VideoQueueExt};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Vendor {
@@ -35,12 +31,19 @@ pub enum DriverVersion {
     Other(String),
 }
 
+pub struct VideoQueueExts {
+    pub video_queue_instance: khr::video_queue::Instance,
+    pub video_queue: khr::video_queue::Device,
+    pub video_encode_queue_instance: khr::video_encode_queue::Instance,
+    pub video_encode_queue: khr::video_encode_queue::Device,
+}
+
 pub struct VkContext {
     pub entry: ash::Entry,
-    pub push_ds_api: khr::PushDescriptor,
-    pub external_memory_api: khr::ExternalMemoryFd,
-    pub external_semaphore_api: khr::ExternalSemaphoreFd,
-    pub video_apis: Option<(VideoQueueExt, VideoEncodeQueueExt)>,
+    pub push_ds_api: khr::push_descriptor::Device,
+    pub external_memory_api: khr::external_memory_fd::Device,
+    pub external_semaphore_api: khr::external_semaphore_fd::Device,
+    pub video_exts: Option<VideoQueueExts>,
 
     pub instance: ash::Instance,
     pub debug: Option<VkDebugContext>,
@@ -52,7 +55,7 @@ pub struct VkContext {
 }
 
 pub struct VkDebugContext {
-    debug: ext::DebugUtils,
+    debug: ext::debug_utils::Instance,
     messenger: vk::DebugUtilsMessengerEXT,
 }
 
@@ -216,14 +219,14 @@ impl VkDeviceInfo {
 
         let mut selected_extensions = vec![
             // Push descriptors for compositing.
-            vk::KhrPushDescriptorFn::NAME.to_owned(),
+            khr::push_descriptor::NAME.to_owned(),
             // All required for dma-buf import.
-            vk::KhrExternalMemoryFdFn::NAME.to_owned(),
-            vk::KhrExternalSemaphoreFdFn::NAME.to_owned(),
-            vk::ExtExternalMemoryDmaBufFn::NAME.to_owned(),
-            vk::ExtImageDrmFormatModifierFn::NAME.to_owned(),
-            vk::ExtPhysicalDeviceDrmFn::NAME.to_owned(),
-            vk::ExtQueueFamilyForeignFn::NAME.to_owned(),
+            khr::external_memory_fd::NAME.to_owned(),
+            khr::external_semaphore_fd::NAME.to_owned(),
+            ext::external_memory_dma_buf::NAME.to_owned(),
+            ext::image_drm_format_modifier::NAME.to_owned(),
+            ext::physical_device_drm::NAME.to_owned(),
+            ext::queue_family_foreign::NAME.to_owned(),
         ];
 
         for ext in selected_extensions.iter() {
@@ -232,14 +235,12 @@ impl VkDeviceInfo {
             }
         }
 
-        let ext_video_queue = vk::KhrVideoQueueFn::NAME;
-        let ext_video_encode_queue = vk::KhrVideoEncodeQueueFn::NAME;
+        let ext_video_queue = khr::video_queue::NAME;
+        let ext_video_encode_queue = khr::video_encode_queue::NAME;
+        let ext_h264 = khr::video_encode_h264::NAME;
+        let ext_h265 = khr::video_encode_h265::NAME;
 
-        // TODO: ash hasn't picked up the promoted names yet.
-        let ext_h264 = cstr!("VK_KHR_video_encode_h264");
-        let ext_h265 = cstr!("VK_KHR_video_encode_h265");
-
-        // This doesn't exist yet.
+        // Ash hasn't picked this up yet.
         let ext_av1 = cstr!("VK_EXT_video_encode_av1");
 
         let mut supports_h264 = false;
@@ -385,7 +386,7 @@ impl VkContext {
         if enable_debug {
             if !available_extensions
                 .iter()
-                .any(|ext| ext.as_c_str() == ext::DebugUtils::NAME)
+                .any(|ext| ext.as_c_str() == ext::debug_utils::NAME)
             {
                 return Err(anyhow::anyhow!(
                     "debug utils extension requested, but not available"
@@ -393,7 +394,7 @@ impl VkContext {
             }
 
             warn!("vulkan validation layers enabled!");
-            extensions.push(ext::DebugUtils::NAME.as_ptr());
+            extensions.push(ext::debug_utils::NAME.as_ptr());
 
             unsafe {
                 let validation_layer = cstr!("VK_LAYER_KHRONOS_validation");
@@ -419,7 +420,7 @@ impl VkContext {
 
         // Enable validation layers and a debugging callback, if requested.
         let debug_utils = if enable_debug {
-            let debug_utils = ext::DebugUtils::new(&entry, &instance);
+            let debug_utils = ext::debug_utils::Instance::new(&entry, &instance);
 
             let create_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
                 .message_severity(
@@ -568,19 +569,27 @@ impl VkContext {
             warn!("no cache-coherent memory type found on device!");
         }
 
-        let external_memory_api = khr::ExternalMemoryFd::new(&instance, &device);
-        let external_semaphore_api = khr::ExternalSemaphoreFd::new(&instance, &device);
+        let external_memory_api = khr::external_memory_fd::Device::new(&instance, &device);
+        let external_semaphore_api = khr::external_semaphore_fd::Device::new(&instance, &device);
 
         let video_apis = if device_info.encode_family.is_some() {
-            let video_queue = VideoQueueExt::new(&entry, &instance, &device);
-            let video_encode_queue = VideoEncodeQueueExt::new(&entry, &instance, &device);
+            let video_queue_instance = khr::video_queue::Instance::new(&entry, &instance);
+            let video_queue = khr::video_queue::Device::new(&instance, &device);
+            let video_encode_queue_instance =
+                khr::video_encode_queue::Instance::new(&entry, &instance);
+            let video_encode_queue = khr::video_encode_queue::Device::new(&instance, &device);
 
-            Some((video_queue, video_encode_queue))
+            Some(VideoQueueExts {
+                video_queue_instance,
+                video_queue,
+                video_encode_queue_instance,
+                video_encode_queue,
+            })
         } else {
             None
         };
 
-        let push_ds_api = khr::PushDescriptor::new(&instance, &device);
+        let push_ds_api = khr::push_descriptor::Device::new(&instance, &device);
 
         let descriptor_pool = {
             let pool_sizes = [
@@ -605,7 +614,7 @@ impl VkContext {
             push_ds_api,
             external_memory_api,
             external_semaphore_api,
-            video_apis,
+            video_exts: video_apis,
             instance,
             device,
             device_info,

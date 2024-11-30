@@ -136,14 +136,14 @@ mod tests {
             pub struct H264EncodeProfile<'a> {
                 pub profile: vk::VideoProfileInfoKHR<'a>,
                 pub encode_usage_info: vk::VideoEncodeUsageInfoKHR<'a>,
-                pub h264_profile: vk::VideoEncodeH264ProfileInfoEXT<'a>,
+                pub h264_profile: vk::VideoEncodeH264ProfileInfoKHR<'a>,
             }
         }
 
         let mut chain = H264EncodeProfile::new(
             vk::VideoProfileInfoKHR::default(),
             vk::VideoEncodeUsageInfoKHR::default(),
-            vk::VideoEncodeH264ProfileInfoEXT::default(),
+            vk::VideoEncodeH264ProfileInfoKHR::default(),
         );
 
         chain.with_encode_usage_info(|info| {

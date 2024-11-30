@@ -103,7 +103,7 @@ const DEV_BIND_MOUNTS: &[DevBindMount] = &[
 struct UnbufferedStderr<'a>(BorrowedFd<'a>);
 
 #[cfg(debug_assertions)]
-impl<'a> std::fmt::Write for UnbufferedStderr<'a> {
+impl std::fmt::Write for UnbufferedStderr<'_> {
     fn write_str(&mut self, s: &str) -> std::fmt::Result {
         write(self.0, s.as_bytes()).map_err(|_| std::fmt::Error)?;
         Ok(())

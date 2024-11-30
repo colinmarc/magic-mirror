@@ -778,7 +778,7 @@ fn iter_chunks(
     mut buf: bytes::Bytes,
     chunk_size: usize,
 ) -> impl Iterator<Item = (u32, u32, bytes::Bytes)> {
-    let num_chunks = ((buf.len() + chunk_size - 1) / chunk_size) as u32;
+    let num_chunks = buf.len().div_ceil(chunk_size) as u32;
     let mut next_chunk: u32 = 0;
 
     std::iter::from_fn(move || {
