@@ -411,11 +411,11 @@ impl fuse::Filesystem for UdevFs {
                 .join(&dev.devname)
                 .join(name);
             debug!(?dst, "returning from readlink");
-            return reply.data(dst.as_os_str().as_encoded_bytes());
+            reply.data(dst.as_os_str().as_encoded_bytes());
         } else if entry.path.starts_with("/sys/devices")
             && entry.path.file_name() == Some(Path::new("subsystem").as_os_str())
         {
-            return reply.data(b"/sys/class/input");
+            reply.data(b"/sys/class/input");
         } else {
             warn!(path = ?entry.path, dev = ?entry.dev, "readlink failed");
             reply.error(ENOENT);
