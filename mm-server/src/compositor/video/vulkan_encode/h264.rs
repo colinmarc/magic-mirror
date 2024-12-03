@@ -26,7 +26,7 @@ vk_chain! {
     pub struct H264EncodeProfile<'a> {
         pub profile_info: vk::VideoProfileInfoKHR<'a>,
         pub encode_usage_info: vk::VideoEncodeUsageInfoKHR<'a>,
-        pub h264_profile: vk::VideoEncodeH264ProfileInfoKHR<'a>,
+        pub h264_profile: vk::VideoEncodeH264ProfileInfoEXT<'a>,
     }
 }
 
@@ -34,14 +34,14 @@ vk_chain! {
     pub struct H264EncodeCapabilities<'a> {
         pub video_caps: vk::VideoCapabilitiesKHR<'a>,
         pub encode_caps: vk::VideoEncodeCapabilitiesKHR<'a>,
-        pub h264_caps: vk::VideoEncodeH264CapabilitiesKHR<'a>,
+        pub h264_caps: vk::VideoEncodeH264CapabilitiesEXT<'a>,
     }
 }
 
 vk_chain! {
     pub struct H264QualityLevelProperties<'a> {
         pub props: vk::VideoEncodeQualityLevelPropertiesKHR<'a>,
-        pub h264_props: vk::VideoEncodeH264QualityLevelPropertiesKHR<'a>,
+        pub h264_props: vk::VideoEncodeH264QualityLevelPropertiesEXT<'a>,
     }
 }
 
@@ -72,16 +72,16 @@ impl H264Encoder {
         params: VideoStreamParams,
         framerate: u32,
     ) -> anyhow::Result<Self> {
-        let video_exts = vk.video_exts.as_ref().unwrap();
+        let (video_loader, encode_loader) = vk.video_apis.as_ref().unwrap();
 
-        let op = vk::VideoCodecOperationFlagsKHR::ENCODE_H264;
+        let op = vk::VideoCodecOperationFlagsKHR::ENCODE_H264_EXT;
         let (profile, profile_idc) = match params.profile {
             VideoProfile::Hd => (super::default_profile(op), 100),
             VideoProfile::Hdr10 => (super::default_hdr10_profile(op), 110),
         };
 
         let h264_profile_info =
-            vk::VideoEncodeH264ProfileInfoKHR::default().std_profile_idc(profile_idc);
+            vk::VideoEncodeH264ProfileInfoEXT::default().std_profile_idc(profile_idc);
 
         let mut profile =
             H264EncodeProfile::new(profile, super::default_encode_usage(), h264_profile_info);
@@ -89,8 +89,7 @@ impl H264Encoder {
         let mut caps = H264EncodeCapabilities::default();
 
         unsafe {
-            video_exts
-                .video_queue_instance
+            video_loader
                 .get_physical_device_video_capabilities(
                     vk.device_info.pdevice,
                     &profile.profile_info,
@@ -225,10 +224,10 @@ impl H264Encoder {
         let sps = [sps];
         let pps = [pps];
 
-        let h264_add_info = vk::VideoEncodeH264SessionParametersAddInfoKHR::default()
+        let h264_add_info = vk::VideoEncodeH264SessionParametersAddInfoEXT::default()
             .std_sp_ss(&sps)
             .std_pp_ss(&pps);
-        let mut session_params = vk::VideoEncodeH264SessionParametersCreateInfoKHR::default()
+        let mut session_params = vk::VideoEncodeH264SessionParametersCreateInfoEXT::default()
             .parameters_add_info(&h264_add_info)
             .max_std_pps_count(1)
             .max_std_sps_count(1);
@@ -248,12 +247,12 @@ impl H264Encoder {
 
         // Generate encoded stream headers.
         let headers = unsafe {
-            let mut h264_get_info = vk::VideoEncodeH264SessionParametersGetInfoKHR::default()
+            let mut h264_get_info = vk::VideoEncodeH264SessionParametersGetInfoEXT::default()
                 .write_std_sps(true)
                 .write_std_pps(true);
 
             let mut h264_feedback_info =
-                vk::VideoEncodeH264SessionParametersFeedbackInfoKHR::default();
+                vk::VideoEncodeH264SessionParametersFeedbackInfoEXT::default();
 
             let mut feedback_info = vk::VideoEncodeSessionParametersFeedbackInfoKHR::default()
                 .push_next(&mut h264_feedback_info);
@@ -262,8 +261,7 @@ impl H264Encoder {
                 .video_session_parameters(inner.session_params)
                 .push_next(&mut h264_get_info);
 
-            video_exts
-                .video_encode_queue
+            encode_loader
                 .get_encoded_video_session_parameters(&get_info, &mut feedback_info)
                 .context("vkGetEncodedVideoSessionParametersKHR")?
         };
@@ -301,9 +299,9 @@ impl H264Encoder {
         }
 
         let pattern = if self.structure.layers > 1 {
-            vk::VideoEncodeH264RateControlFlagsKHR::TEMPORAL_LAYER_PATTERN_DYADIC
+            vk::VideoEncodeH264RateControlFlagsEXT::TEMPORAL_LAYER_PATTERN_DYADIC
         } else {
-            vk::VideoEncodeH264RateControlFlagsKHR::REFERENCE_PATTERN_FLAT
+            vk::VideoEncodeH264RateControlFlagsEXT::REFERENCE_PATTERN_FLAT
         };
 
         let mut h264_rc_layers = Vec::new();
@@ -312,15 +310,15 @@ impl H264Encoder {
         if let RateControlMode::Vbr(settings) = self.rc_mode {
             for _ in 0..self.structure.layers {
                 h264_rc_layers.push(
-                    vk::VideoEncodeH264RateControlLayerInfoKHR::default()
+                    vk::VideoEncodeH264RateControlLayerInfoEXT::default()
                         .use_min_qp(true)
                         .use_max_qp(true)
-                        .min_qp(vk::VideoEncodeH264QpKHR {
+                        .min_qp(vk::VideoEncodeH264QpEXT {
                             qp_i: settings.min_qp as i32,
                             qp_p: settings.min_qp as i32,
                             qp_b: settings.min_qp as i32,
                         })
-                        .max_qp(vk::VideoEncodeH264QpKHR {
+                        .max_qp(vk::VideoEncodeH264QpEXT {
                             qp_i: settings.max_qp as i32,
                             qp_p: settings.max_qp as i32,
                             qp_b: settings.max_qp as i32,
@@ -341,12 +339,12 @@ impl H264Encoder {
                 .collect::<Vec<_>>();
         }
 
-        let mut h264_rc_info = vk::VideoEncodeH264RateControlInfoKHR::default()
+        let mut h264_rc_info = vk::VideoEncodeH264RateControlInfoEXT::default()
             .gop_frame_count(self.structure.gop_size)
             .idr_period(self.structure.gop_size)
             .consecutive_b_frame_count(0)
             .temporal_layer_count(rc_layers.len() as u32)
-            .flags(vk::VideoEncodeH264RateControlFlagsKHR::REGULAR_GOP | pattern);
+            .flags(vk::VideoEncodeH264RateControlFlagsEXT::REGULAR_GOP | pattern);
 
         let vbv_size = match self.rc_mode {
             RateControlMode::Vbr(settings) => settings.vbv_size_ms,
@@ -385,7 +383,7 @@ impl H264Encoder {
         // Per the spec, this indicates that all slices in the picture are the same.
         std_slice_header.slice_type += 5;
 
-        let nalu_slice_entries = [vk::VideoEncodeH264NaluSliceInfoKHR::default()
+        let nalu_slice_entries = [vk::VideoEncodeH264NaluSliceInfoEXT::default()
             .std_slice_header(&std_slice_header)
             .constant_qp(if let RateControlMode::ConstantQp(qp) = self.rc_mode {
                 qp as i32
@@ -436,7 +434,7 @@ impl H264Encoder {
             .flags
             .set_is_reference((frame_state.forward_ref_count > 0) as u32);
 
-        let mut h264_pic_info = vk::VideoEncodeH264PictureInfoKHR::default()
+        let mut h264_pic_info = vk::VideoEncodeH264PictureInfoEXT::default()
             .nalu_slice_entries(&nalu_slice_entries)
             .std_picture_info(&std_pic_info);
 
@@ -453,7 +451,7 @@ impl H264Encoder {
 
         let mut ref_info = std_ref_infos
             .iter_mut()
-            .map(|info| vk::VideoEncodeH264DpbSlotInfoKHR::default().std_reference_info(info))
+            .map(|info| vk::VideoEncodeH264DpbSlotInfoEXT::default().std_reference_info(info))
             .collect::<Vec<_>>();
 
         let setup_std_ref_info = vk::native::StdVideoEncodeH264ReferenceInfo {
@@ -470,7 +468,7 @@ impl H264Encoder {
         );
 
         let mut setup_info =
-            vk::VideoEncodeH264DpbSlotInfoKHR::default().std_reference_info(&setup_std_ref_info);
+            vk::VideoEncodeH264DpbSlotInfoEXT::default().std_reference_info(&setup_std_ref_info);
 
         let insert = if frame_state.stream_position == 0 {
             Some(self.headers.clone())

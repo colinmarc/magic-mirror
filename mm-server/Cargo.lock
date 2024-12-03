@@ -92,8 +92,8 @@ checksum = "86fdf8605db99b54d3cd748a44c6d04df638eb5dafb219b135d0149bd0db01f6"
 
 [[package]]
 name = "ash"
-version = "0.38.0+1.3.296"
-source = "git+https://github.com/colinmarc/ash?rev=38a0383f625e0db645fed70ca7fea43743c87d46#38a0383f625e0db645fed70ca7fea43743c87d46"
+version = "0.37.0+1.3.271"
+source = "git+https://github.com/ash-rs/ash?rev=92084df65f52aa15b704279fb6d8d26a3ee71809#92084df65f52aa15b704279fb6d8d26a3ee71809"
 dependencies = [
  "libloading",
 ]

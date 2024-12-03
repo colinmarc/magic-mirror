@@ -78,8 +78,8 @@ wayland-server = { version = "0.31", features = ["log"] }
 x11rb = { version = "0.13", features = ["composite"] }
 
 [dependencies.ash]
-git = "https://github.com/colinmarc/ash"
-rev = "38a0383f625e0db645fed70ca7fea43743c87d46"
+git = "https://github.com/ash-rs/ash"
+rev = "92084df65f52aa15b704279fb6d8d26a3ee71809"
 
 [dependencies.fuser]
 git = "https://github.com/colinmarc/fuser"

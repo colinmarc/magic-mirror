@@ -28,7 +28,7 @@ vk_chain! {
     pub struct H265EncodeProfile<'a> {
         pub profile_info: vk::VideoProfileInfoKHR<'a>,
         pub encode_usage_info: vk::VideoEncodeUsageInfoKHR<'a>,
-        pub h265_profile: vk::VideoEncodeH265ProfileInfoKHR<'a>,
+        pub h265_profile: vk::VideoEncodeH265ProfileInfoEXT<'a>,
     }
 }
 
@@ -36,14 +36,14 @@ vk_chain! {
     pub struct H265EncodeCapabilities<'a> {
         pub video_caps: vk::VideoCapabilitiesKHR<'a>,
         pub encode_caps: vk::VideoEncodeCapabilitiesKHR<'a>,
-        pub h265_caps: vk::VideoEncodeH265CapabilitiesKHR<'a>,
+        pub h265_caps: vk::VideoEncodeH265CapabilitiesEXT<'a>,
     }
 }
 
 vk_chain! {
     pub struct H265QualityLevelProperties<'a> {
         pub props: vk::VideoEncodeQualityLevelPropertiesKHR<'a>,
-        pub h265_props: vk::VideoEncodeH265QualityLevelPropertiesKHR<'a>,
+        pub h265_props: vk::VideoEncodeH265QualityLevelPropertiesEXT<'a>,
     }
 }
 
@@ -75,16 +75,16 @@ impl H265Encoder {
         params: VideoStreamParams,
         framerate: u32,
     ) -> anyhow::Result<Self> {
-        let video_exts = vk.video_exts.as_ref().unwrap();
+        let (video_loader, encode_loader) = vk.video_apis.as_ref().unwrap();
 
-        let op = vk::VideoCodecOperationFlagsKHR::ENCODE_H265;
+        let op = vk::VideoCodecOperationFlagsKHR::ENCODE_H265_EXT;
         let (profile, profile_idc) = match params.profile {
             VideoProfile::Hd => (super::default_profile(op), 1), // Main
             VideoProfile::Hdr10 => (super::default_hdr10_profile(op), 2), // Main10
         };
 
         let h265_profile_info =
-            vk::VideoEncodeH265ProfileInfoKHR::default().std_profile_idc(profile_idc);
+            vk::VideoEncodeH265ProfileInfoEXT::default().std_profile_idc(profile_idc);
 
         let mut profile =
             H265EncodeProfile::new(profile, super::default_encode_usage(), h265_profile_info);
@@ -92,8 +92,7 @@ impl H265Encoder {
         let mut caps = H265EncodeCapabilities::default();
 
         unsafe {
-            video_exts
-                .video_queue_instance
+            video_loader
                 .get_physical_device_video_capabilities(
                     vk.device_info.pdevice,
                     &profile.profile_info,
@@ -114,13 +113,11 @@ impl H265Encoder {
                 .video_profile(&profile.profile_info)
                 .quality_level(quality_level);
 
-            video_exts
-                .video_encode_queue_instance
-                .get_physical_device_video_encode_quality_level_properties(
-                    vk.device_info.pdevice,
-                    &get_info,
-                    quality_props.as_mut(),
-                )?;
+            encode_loader.get_physical_device_video_encode_quality_level_properties(
+                vk.device_info.pdevice,
+                &get_info,
+                quality_props.as_mut(),
+            )?;
         }
 
         trace!("quality level properties: {:#?}", quality_props.props);
@@ -144,10 +141,10 @@ impl H265Encoder {
             bail!("video resolution too large for hardware");
         }
 
-        const CTB_SIZES: [(vk::VideoEncodeH265CtbSizeFlagsKHR, usize); 3] = [
-            (vk::VideoEncodeH265CtbSizeFlagsKHR::TYPE_16, 16),
-            (vk::VideoEncodeH265CtbSizeFlagsKHR::TYPE_32, 32),
-            (vk::VideoEncodeH265CtbSizeFlagsKHR::TYPE_64, 64),
+        const CTB_SIZES: [(vk::VideoEncodeH265CtbSizeFlagsEXT, usize); 3] = [
+            (vk::VideoEncodeH265CtbSizeFlagsEXT::TYPE_16, 16),
+            (vk::VideoEncodeH265CtbSizeFlagsEXT::TYPE_32, 32),
+            (vk::VideoEncodeH265CtbSizeFlagsEXT::TYPE_64, 64),
         ];
 
         let min_ctb = CTB_SIZES
@@ -164,11 +161,11 @@ impl H265Encoder {
             .max()
             .expect("no ctb size found");
 
-        const TBS_SIZES: [(vk::VideoEncodeH265TransformBlockSizeFlagsKHR, usize); 4] = [
-            (vk::VideoEncodeH265TransformBlockSizeFlagsKHR::TYPE_4, 4),
-            (vk::VideoEncodeH265TransformBlockSizeFlagsKHR::TYPE_8, 8),
-            (vk::VideoEncodeH265TransformBlockSizeFlagsKHR::TYPE_16, 16),
-            (vk::VideoEncodeH265TransformBlockSizeFlagsKHR::TYPE_32, 32),
+        const TBS_SIZES: [(vk::VideoEncodeH265TransformBlockSizeFlagsEXT, usize); 4] = [
+            (vk::VideoEncodeH265TransformBlockSizeFlagsEXT::TYPE_4, 4),
+            (vk::VideoEncodeH265TransformBlockSizeFlagsEXT::TYPE_8, 8),
+            (vk::VideoEncodeH265TransformBlockSizeFlagsEXT::TYPE_16, 16),
+            (vk::VideoEncodeH265TransformBlockSizeFlagsEXT::TYPE_32, 32),
         ];
 
         let min_tbs = TBS_SIZES
@@ -293,7 +290,7 @@ impl H265Encoder {
         if caps
             .h265_caps
             .std_syntax_flags
-            .contains(vk::VideoEncodeH265StdFlagsKHR::SAMPLE_ADAPTIVE_OFFSET_ENABLED_FLAG_SET)
+            .contains(vk::VideoEncodeH265StdFlagsEXT::SAMPLE_ADAPTIVE_OFFSET_ENABLED_FLAG_SET)
         {
             sps.flags.set_sample_adaptive_offset_enabled_flag(1);
         }
@@ -301,7 +298,7 @@ impl H265Encoder {
         if caps
             .h265_caps
             .std_syntax_flags
-            .contains(vk::VideoEncodeH265StdFlagsKHR::TRANSFORM_SKIP_ENABLED_FLAG_SET)
+            .contains(vk::VideoEncodeH265StdFlagsEXT::TRANSFORM_SKIP_ENABLED_FLAG_SET)
         {
             sps.flags.set_transform_skip_context_enabled_flag(1);
         }
@@ -314,11 +311,11 @@ impl H265Encoder {
         let pps = [pps];
         let vps = [vps];
 
-        let h265_add_info = vk::VideoEncodeH265SessionParametersAddInfoKHR::default()
+        let h265_add_info = vk::VideoEncodeH265SessionParametersAddInfoEXT::default()
             .std_vp_ss(&vps)
             .std_sp_ss(&sps)
             .std_pp_ss(&pps);
-        let mut session_params = vk::VideoEncodeH265SessionParametersCreateInfoKHR::default()
+        let mut session_params = vk::VideoEncodeH265SessionParametersCreateInfoEXT::default()
             .parameters_add_info(&h265_add_info)
             .max_std_vps_count(1)
             .max_std_pps_count(1)
@@ -339,13 +336,13 @@ impl H265Encoder {
 
         // Generate encoded stream headers.
         let headers = unsafe {
-            let mut h265_get_info = vk::VideoEncodeH265SessionParametersGetInfoKHR::default()
+            let mut h265_get_info = vk::VideoEncodeH265SessionParametersGetInfoEXT::default()
                 .write_std_vps(true)
                 .write_std_sps(true)
                 .write_std_pps(true);
 
             let mut h265_feedback_info =
-                vk::VideoEncodeH265SessionParametersFeedbackInfoKHR::default();
+                vk::VideoEncodeH265SessionParametersFeedbackInfoEXT::default();
 
             let mut feedback_info = vk::VideoEncodeSessionParametersFeedbackInfoKHR::default()
                 .push_next(&mut h265_feedback_info);
@@ -354,8 +351,7 @@ impl H265Encoder {
                 .video_session_parameters(inner.session_params)
                 .push_next(&mut h265_get_info);
 
-            video_exts
-                .video_encode_queue
+            encode_loader
                 .get_encoded_video_session_parameters(&get_info, &mut feedback_info)
                 .context("vkGetEncodedVideoSessionParametersKHR")?
         };
@@ -393,9 +389,9 @@ impl H265Encoder {
         }
 
         let pattern = if self.structure.layers > 1 {
-            vk::VideoEncodeH265RateControlFlagsKHR::TEMPORAL_SUB_LAYER_PATTERN_DYADIC
+            vk::VideoEncodeH265RateControlFlagsEXT::TEMPORAL_SUB_LAYER_PATTERN_DYADIC
         } else {
-            vk::VideoEncodeH265RateControlFlagsKHR::REFERENCE_PATTERN_FLAT
+            vk::VideoEncodeH265RateControlFlagsEXT::REFERENCE_PATTERN_FLAT
         };
 
         let mut h265_rc_layers = Vec::new();
@@ -404,15 +400,15 @@ impl H265Encoder {
         if let RateControlMode::Vbr(settings) = self.rc_mode {
             for _ in 0..self.structure.layers {
                 h265_rc_layers.push(
-                    vk::VideoEncodeH265RateControlLayerInfoKHR::default()
+                    vk::VideoEncodeH265RateControlLayerInfoEXT::default()
                         .use_min_qp(true)
                         .use_max_qp(true)
-                        .min_qp(vk::VideoEncodeH265QpKHR {
+                        .min_qp(vk::VideoEncodeH265QpEXT {
                             qp_i: settings.min_qp as i32,
                             qp_p: settings.min_qp as i32,
                             qp_b: settings.min_qp as i32,
                         })
-                        .max_qp(vk::VideoEncodeH265QpKHR {
+                        .max_qp(vk::VideoEncodeH265QpEXT {
                             qp_i: settings.max_qp as i32,
                             qp_p: settings.max_qp as i32,
                             qp_b: settings.max_qp as i32,
@@ -432,12 +428,12 @@ impl H265Encoder {
             }
         }
 
-        let mut h265_rc_info = vk::VideoEncodeH265RateControlInfoKHR::default()
+        let mut h265_rc_info = vk::VideoEncodeH265RateControlInfoEXT::default()
             .gop_frame_count(self.structure.gop_size)
             .idr_period(self.structure.gop_size)
             .consecutive_b_frame_count(0)
             .sub_layer_count(rc_layers.len() as u32)
-            .flags(vk::VideoEncodeH265RateControlFlagsKHR::REGULAR_GOP | pattern);
+            .flags(vk::VideoEncodeH265RateControlFlagsEXT::REGULAR_GOP | pattern);
 
         let vbv_size = match self.rc_mode {
             RateControlMode::Vbr(settings) => settings.vbv_size_ms,
@@ -477,7 +473,7 @@ impl H265Encoder {
             ..std::mem::zeroed()
         };
 
-        let slice_segment_info = [vk::VideoEncodeH265NaluSliceSegmentInfoKHR::default()
+        let slice_segment_info = [vk::VideoEncodeH265NaluSliceSegmentInfoEXT::default()
             .std_slice_segment_header(&std_slice_header)
             .constant_qp(if let RateControlMode::ConstantQp(qp) = self.rc_mode {
                 qp as i32
@@ -569,7 +565,7 @@ impl H265Encoder {
             std_pic_info.flags.set_no_output_of_prior_pics_flag(1);
         }
 
-        let mut h265_pic_info = vk::VideoEncodeH265PictureInfoKHR::default()
+        let mut h265_pic_info = vk::VideoEncodeH265PictureInfoEXT::default()
             .std_picture_info(&std_pic_info)
             .nalu_slice_segment_entries(&slice_segment_info);
 
@@ -586,7 +582,7 @@ impl H265Encoder {
 
         let mut ref_info = std_ref_infos
             .iter_mut()
-            .map(|info| vk::VideoEncodeH265DpbSlotInfoKHR::default().std_reference_info(info))
+            .map(|info| vk::VideoEncodeH265DpbSlotInfoEXT::default().std_reference_info(info))
             .collect::<Vec<_>>();
 
         let setup_std_ref_info = vk::native::StdVideoEncodeH265ReferenceInfo {
@@ -597,7 +593,7 @@ impl H265Encoder {
         };
 
         let mut setup_info =
-            vk::VideoEncodeH265DpbSlotInfoKHR::default().std_reference_info(&setup_std_ref_info);
+            vk::VideoEncodeH265DpbSlotInfoEXT::default().std_reference_info(&setup_std_ref_info);
 
         let insert = if frame_state.stream_position == 0 {
             Some(self.headers.clone())
