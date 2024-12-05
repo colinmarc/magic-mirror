@@ -1,7 +1,7 @@
 # Magic Mirror 🪞✨
 [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/colinmarc/magic-mirror/tests.yaml)](https://github.com/colinmarc/magic-mirror/actions/workflows/tests.yaml)
 [![Discord](https://img.shields.io/discord/1284975819222945802?style=flat&label=discord&color=7289DA)](https://discord.gg/v22G644DzS)
-[![Server Release](https://img.shields.io/github/v/release/colinmarc/magic-mirror?filter=mmserver*&display_name=tag&label=download)](https://github.com/colinmarc/magic-mirror/releases/tag/mmserver-v0.5.4)
+[![Server Release](https://img.shields.io/github/v/release/colinmarc/magic-mirror?filter=mmserver*&display_name=tag&label=download)](https://github.com/colinmarc/magic-mirror/releases/tag/mmserver-v0.5.5)
 [![Client Release](https://img.shields.io/github/v/release/colinmarc/magic-mirror?filter=mmclient*&display_name=tag&label=download)](https://github.com/colinmarc/magic-mirror/releases/tag/mmclient-v0.4.1)
 
 This is a game streaming and remote desktop tool for Linux, featuring:

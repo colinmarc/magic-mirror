@@ -1,3 +1,22 @@
+## [mmserver-v0.5.5] - 2024-12-05
+
+### New Features
+
+- MDNS service discovery (152d82ca7595063aa77db7470e1dfdace9ae7ac2)
+- Add 'app_path' for organizing apps (b417559625c97e182dc074a5732ea35617332f36)
+- Make the mDNS instance name configurable (17e632ccbee15132e2420a5fc162c94171d4a34a)
+- Add header images to the application list (756bfa866020da57be18d383367e0a2b189051aa)
+
+### Bugfixes
+
+- Align h265 bitstreams correctly (fc0543889b70eb0a151084d6a117e464cbeaaca0)
+- Improve error message when using self-signed certs (211dbcded77dc6fd0d97f19a415ca4b286327fb9)
+- Handle differing width/height in encode granularity (6b4b2dac3473d3631da6daa31fd09dc1bd3e2059)
+- Update the maximum message size to reflect the protocol docs (c517624d3683b7ad1e37fc7ea6a18d86c09ccb75)
+- Remove unecessary casts (d28b0b4335eb3e220b004421395e1f7d1d874939)
+- Warn when no hardware encoder is available (bef772948bbb7ff04788016fe74a84eefa7dee8c)
+- Bail early on mesa 24.2 (17758e3269ba661541ee2e94616606f2d935c626)
+
 ## [mmserver-v0.5.4] - 2024-11-18
 
 ### Bugfixes
