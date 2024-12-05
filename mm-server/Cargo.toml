@@ -31,7 +31,7 @@ ffmpeg-next = { version = "7", optional = true }
 ffmpeg-sys-next = { version = "7", optional = true }
 git-version = "0.3"
 glam = "0.24"
-hashbrown = "0.14"
+hashbrown = "0.15"
 image = { version = "0.25", default-features = false, features = ["png"] }
 ip_rfc = "0.1"
 lazy_static = "1.4"
