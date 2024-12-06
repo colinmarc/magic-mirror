@@ -4,6 +4,7 @@
 
 use std::{
     ffi::{OsStr, OsString},
+    path::Path,
     sync::Arc,
 };
 
@@ -148,12 +149,14 @@ impl InputDeviceManager {
 
             // Headless servers won't have /sys/devices/virtual/input, and we
             // can't mkdir the mount point, because it's sysfs.
-            c.fs_mount(
-                "/sys/devices/virtual",
-                "tmpfs",
-                rustix::mount::MountAttrFlags::empty(),
-                [(c"mode", c"0777")],
-            )?;
+            if !Path::new("/sys/devices/virtual/input").exists() {
+                c.fs_mount(
+                    "/sys/devices/virtual",
+                    "tmpfs",
+                    rustix::mount::MountAttrFlags::empty(),
+                    [(c"mode", c"0777")],
+                )?;
+            }
 
             Ok(())
         });
@@ -163,9 +166,14 @@ impl InputDeviceManager {
             "/sys/devices/virtual/input",
         );
         container.internal_bind_mount(udevfs_path.join("sys/class/input"), "/sys/class/input");
-        container.internal_bind_mount(udevfs_path.join("sys/class/hidraw"), "/sys/class/hidraw");
         container.internal_bind_mount(udevfs_path.join("run/udev"), "/run/udev");
         container.internal_bind_mount(southpaw_path, "/dev/input");
+
+        // Shadow /sys/class/hidraw.
+        if Path::new("/sys/class/hidraw").exists() {
+            container
+                .internal_bind_mount(udevfs_path.join("sys/class/hidraw"), "/sys/class/hidraw");
+        }
 
         // Without this, udev refuses to accept our FUSE filesystem.
         container.set_env("SYSTEMD_DEVICE_VERIFY_SYSFS", "false");

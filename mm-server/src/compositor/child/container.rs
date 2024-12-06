@@ -16,8 +16,8 @@ use std::{
     time,
 };
 
-use anyhow::{anyhow, Context as _};
-use pathsearch::find_executable_in_path;
+use anyhow::{anyhow, bail, Context as _};
+use pathsearch::{find_executable_in_path, unix::is_executable};
 use rand::distributions::{Alphanumeric, DistString as _};
 use rustix::{
     fs::{mkdirat, openat, symlinkat, FileType, Gid, Mode, OFlags, Uid, CWD as AT_FDCWD},
@@ -201,10 +201,7 @@ impl Container {
         mut args: Vec<OsString>,
         home_isolation_mode: HomeIsolationMode,
     ) -> anyhow::Result<Self> {
-        let exe = args.remove(0);
-        let exe_path =
-            find_executable_in_path(&exe).ok_or(anyhow!("command {:?} not in PATH", &exe))?;
-
+        let exe_path = validate_exe(args.remove(0))?;
         let mut envs = Vec::new();
 
         let mut child_cmd = Command::new(exe_path);
@@ -897,12 +894,35 @@ fn make_putenv(k: impl AsRef<OsStr>, v: impl AsRef<OsStr>) -> CString {
     .unwrap()
 }
 
+/// Validates an executable path, and returns the canonical version.
+fn validate_exe(p: impl AsRef<Path>) -> anyhow::Result<PathBuf> {
+    let p = p.as_ref();
+    if p.components().count() == 1 {
+        return find_executable_in_path(p)
+            .ok_or(anyhow!("command {:?} is not in PATH", p.display()));
+    }
+
+    if !p.is_absolute() {
+        bail!("path {:?} must be absolute", p.display());
+    } else if !p.exists() {
+        bail!("path {:?} does not exist", p.display());
+    } else if !is_executable(p)? {
+        bail!("path {:?} is not executable", p.display());
+    }
+
+    match p.canonicalize() {
+        Ok(p) => Ok(p),
+        Err(_) => bail!("invalid path: {:?}", p.display()),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::{fs::File, io::Read as _};
 
     use rustix::pipe::{pipe_with, PipeFlags};
 
+    use super::validate_exe;
     use crate::compositor::{child::container::HomeIsolationMode, Container};
 
     #[test_log::test]
@@ -920,5 +940,32 @@ mod test {
 
         pretty_assertions::assert_eq!(buf, "done\n");
         Ok(())
+    }
+
+    #[test]
+    fn test_validate_exe() {
+        let cat = pathsearch::find_executable_in_path("cat").unwrap();
+        assert_eq!(cat, validate_exe("cat").unwrap());
+
+        assert_eq!(
+            validate_exe("nonexistent").unwrap_err().to_string(),
+            "command \"nonexistent\" is not in PATH",
+        );
+
+        assert_eq!(
+            validate_exe("foo/../bar").unwrap_err().to_string(),
+            "path \"foo/../bar\" must be absolute",
+        );
+
+        assert_eq!(
+            validate_exe("/nonexistent").unwrap_err().to_string(),
+            "path \"/nonexistent\" does not exist",
+        );
+
+        let f = mktemp::Temp::new_file().unwrap();
+        assert_eq!(
+            validate_exe(&f).unwrap_err().to_string(),
+            format!("path {:?} is not executable", f.as_path().display())
+        )
     }
 }
