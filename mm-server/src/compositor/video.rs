@@ -229,6 +229,8 @@ impl EncodePipeline {
         frame.tp_render_done = &frame.tp_staging_done + 1;
         frame.tp_clear = &frame.tp_render_done + 1;
 
+        frame.use_staging = false;
+
         begin_cb(device, frame.staging_cb)?;
         begin_cb(device, frame.render_cb)?;
 
