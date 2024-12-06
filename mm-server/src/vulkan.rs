@@ -31,7 +31,7 @@ pub enum Vendor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DriverVersion {
     MesaRadv { major: u32, minor: u32, patch: u32 },
-    // TODO nvidia proprietary is also supported
+    NvidiaProprietary { major: u32, minor: u32 },
     Other(String),
 }
 
@@ -161,6 +161,10 @@ impl VkDeviceInfo {
                 major: vk::api_version_major(version),
                 minor: vk::api_version_minor(version),
                 patch: vk::api_version_patch(version),
+            },
+            vk::DriverId::NVIDIA_PROPRIETARY => DriverVersion::NvidiaProprietary {
+                major: (version >> 22) & 0x3ff,
+                minor: (version >> 14) & 0x0ff,
             },
             _ => DriverVersion::Other(
                 CStr::from_bytes_with_nul(&driver_props.driver_info.map(|x| x as u8)[..])
