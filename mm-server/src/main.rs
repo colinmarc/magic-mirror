@@ -205,6 +205,11 @@ fn preflight_checks(cfg: &config::Config, vk: &vulkan::VkContext) -> anyhow::Res
                 bail!("mesa >= 24.3 required, have {major}.{minor}.{patch}");
             }
         }
+        vulkan::DriverVersion::NvidiaProprietary { major, minor } => {
+            if major < 550 {
+                bail!("driver version >= 550.x required, have {major}.{minor}");
+            }
+        }
         vulkan::DriverVersion::Other(ref driver) => {
             warn!(driver, "using potentially unsupported vulkan driver")
         }
