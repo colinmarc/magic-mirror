@@ -278,6 +278,7 @@ impl EncodePipeline {
                 dirty,
                 staging_buffer,
                 image,
+                format,
                 ..
             } => {
                 if *dirty {
@@ -316,7 +317,14 @@ impl EncodePipeline {
                     );
 
                     // Upload from the staging buffer to the texture.
-                    cmd_upload_shm(device, frame.staging_cb, staging_buffer, image);
+                    cmd_upload_shm(
+                        device,
+                        frame.staging_cb,
+                        staging_buffer,
+                        image,
+                        format.stride / format.bpp as u32,
+                        format.height,
+                    );
                 }
 
                 // Transition the image to be readable (in the second command buffer).
@@ -743,8 +751,12 @@ pub unsafe fn cmd_upload_shm(
     cb: vk::CommandBuffer,
     buffer: &VkHostBuffer,
     image: &VkImage,
+    stride: u32, // In texels.
+    height: u32, // In texels.
 ) {
     let region = vk::BufferImageCopy::default()
+        .buffer_row_length(stride)
+        .buffer_image_height(height)
         .image_subresource(vk::ImageSubresourceLayers {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             mip_level: 0,

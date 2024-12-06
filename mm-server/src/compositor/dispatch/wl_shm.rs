@@ -14,7 +14,7 @@ use wayland_server::{
 };
 
 use crate::compositor::{
-    buffers::{import_shm_buffer, validate_buffer_parameters, PlaneMetadata},
+    buffers::{fourcc_bpp, import_shm_buffer, validate_buffer_parameters, PlaneMetadata},
     shm::{Pool, ShmPool, ShmPoolKey},
     State,
 };
@@ -114,7 +114,12 @@ impl wayland_server::Dispatch<wl_shm_pool::WlShmPool, ShmPoolKey> for State {
                     }
                 };
 
-                if let Err(msg) = validate_buffer_parameters(offset, width, height, stride, 4) {
+                let Some(bpp) = fourcc_bpp(format) else {
+                    resource.post_error(wl_shm::Error::InvalidFormat, "Invalid format.");
+                    return;
+                };
+
+                if let Err(msg) = validate_buffer_parameters(offset, width, height, stride, bpp) {
                     resource.post_error(wl_shm::Error::InvalidStride, msg);
                     return;
                 }
@@ -128,6 +133,7 @@ impl wayland_server::Dispatch<wl_shm_pool::WlShmPool, ShmPoolKey> for State {
 
                 let format = PlaneMetadata {
                     format,
+                    bpp,
                     width: width as u32,
                     height: height as u32,
                     stride: stride as u32,

@@ -94,6 +94,7 @@ pub enum BufferBacking {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct PlaneMetadata {
     pub format: drm_fourcc::DrmFourcc,
+    pub bpp: usize,
     pub width: u32,
     pub height: u32,
     pub stride: u32,
@@ -162,6 +163,8 @@ pub fn import_shm_buffer(
     };
 
     let len = format.stride * format.height;
+    trace!(?format, len, "importing shm buffer");
+
     let staging_buffer = VkHostBuffer::new(
         vk.clone(),
         vk.device_info.host_visible_mem_type_index,
@@ -208,6 +211,7 @@ pub fn import_dmabuf_buffer(
         height,
         stride,
         offset,
+        ..
     } = format;
 
     let (vk_format, ignore_alpha) = match modifiers::fourcc_to_vk(fourcc) {

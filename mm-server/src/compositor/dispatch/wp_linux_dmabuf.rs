@@ -262,6 +262,7 @@ fn validate_create(
 
     Ok(PlaneMetadata {
         format,
+        bpp,
         width: width as u32,
         height: height as u32,
         stride: *stride,
