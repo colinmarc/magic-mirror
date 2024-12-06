@@ -204,10 +204,6 @@ impl Container {
         let exe_path = validate_exe(args.remove(0))?;
         let mut envs = Vec::new();
 
-        let mut child_cmd = Command::new(exe_path);
-        child_cmd.current_dir("/");
-        child_cmd.args(args);
-
         for key in [
             "PATH",
             "USER",
@@ -258,6 +254,18 @@ impl Container {
                 (Some(path), true)
             }
         };
+
+        if clear_home && exe_path.starts_with(&intern_home_path) {
+            bail!(
+                "command {:?} will be unavailable in container (set isolate_home = false to avoid \
+                 this error)",
+                exe_path.display(),
+            );
+        }
+
+        let mut child_cmd = Command::new(exe_path);
+        child_cmd.current_dir("/");
+        child_cmd.args(args);
 
         Ok(Self {
             child_cmd,
