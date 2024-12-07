@@ -21,7 +21,6 @@ pub struct XWayland {
     pub display_socket: PathBuf,
     pub displayfd_recv: mio::unix::pipe::Receiver,
     pub child: super::child::ChildHandle,
-    pub output: std::io::BufReader<mio::unix::pipe::Receiver>,
 
     xwm_socket: Option<mio::net::UnixStream>,
 }
@@ -33,15 +32,8 @@ impl XWayland {
     pub fn spawn(
         dh: &mut wayland_server::DisplayHandle,
         xdg_runtime_dir: impl AsRef<Path>,
+        stdio: impl AsFd,
     ) -> anyhow::Result<Self> {
-        // Used to capture stdout and stderr.
-        let (output_send, output_recv) = mio::unix::pipe::new()?;
-
-        // These get dropped when we return, closing the write side (in this process)
-        let stdout = output_send.as_fd().try_clone_to_owned()?;
-        let stderr = output_send.as_fd().try_clone_to_owned()?;
-        drop(output_send);
-
         let (xwm_xwayland, xwm_compositor) = mio::net::UnixStream::pair()?;
         let (wayland_xwayland, wayland_compositor) = mio::net::UnixStream::pair()?;
 
@@ -82,8 +74,8 @@ impl XWayland {
             format!("{}", wayland_xwayland.as_raw_fd()),
         );
 
-        container.set_stdout(stdout)?;
-        container.set_stderr(stderr)?;
+        container.set_stdout(stdio.as_fd())?;
+        container.set_stderr(stdio.as_fd())?;
 
         unsafe {
             container.pre_exec(move || {
@@ -113,7 +105,6 @@ impl XWayland {
             display_socket: socket_path,
             displayfd_recv,
             child,
-            output: std::io::BufReader::new(output_recv),
 
             xwm_socket: Some(xwm_compositor),
         })

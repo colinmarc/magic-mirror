@@ -301,17 +301,31 @@ impl Compositor {
         )?;
 
         // Spawn Xwayland, if we're using it.
-        let (xwayland, xwayland_debug_log) = if app_config.xwayland {
-            let xwayland_debug_log = if let Some(bug_report_dir) = bug_report_dir.as_ref() {
+        let (xwayland, xwayland_recv, xwayland_debug_log) = if app_config.xwayland {
+            let mut xwayland_debug_log = if let Some(bug_report_dir) = bug_report_dir.as_ref() {
                 let path = bug_report_dir.join("xwayland.log");
                 Some(std::fs::File::create(path).context("failed to create xwayland logfile")?)
             } else {
                 None
             };
 
-            let mut xwayland =
-                xwayland::XWayland::spawn(&mut display.handle(), container.extern_run_path())
-                    .context("spawning Xwayland")?;
+            let (output_send, mut output_recv) = mio::unix::pipe::new()?;
+            let mut xwayland = match xwayland::XWayland::spawn(
+                &mut display.handle(),
+                container.extern_run_path(),
+                output_send,
+            ) {
+                Ok(xw) => xw,
+                Err(e) => {
+                    // Make sure we save any errors.
+                    dump_child_output(
+                        &mut BufReader::new(&mut output_recv),
+                        &mut xwayland_debug_log,
+                    );
+
+                    return Err(e).context("spawning Xwayland");
+                }
+            };
 
             // Xwayland writes to this pipe when it's ready.
             poll.registry().register(
@@ -321,15 +335,12 @@ impl Compositor {
             )?;
 
             // Stderr/stdout of the xwayland process.
-            poll.registry().register(
-                xwayland.output.get_mut(),
-                XWAYLAND,
-                mio::Interest::READABLE,
-            )?;
+            poll.registry()
+                .register(&mut output_recv, XWAYLAND, mio::Interest::READABLE)?;
 
-            (Some(xwayland), xwayland_debug_log)
+            (Some(xwayland), Some(output_recv), xwayland_debug_log)
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         // Spawn the client with a pipe as stdout/stderr.
@@ -351,9 +362,19 @@ impl Compositor {
         // Shadow pipewire, just in case.
         container.set_env("PIPEWIRE_REMOTE", "(null)");
 
-        let child = container
-            .spawn()
-            .context("starting application container")?;
+        let child = match container.spawn() {
+            Ok(ch) => ch,
+            Err(e) => {
+                // Make sure we pump the child stdio and catch any container-related
+                // error.
+                let mut debug_log = bug_report_dir
+                    .as_ref()
+                    .and_then(|dir| std::fs::File::create(dir.join("child.log")).ok());
+                let mut child_output = BufReader::new(&mut pipe_recv);
+                dump_child_output(&mut child_output, &mut debug_log);
+                return Err(e).context("starting application container");
+            }
+        };
 
         poll.registry().register(
             &mut mio::unix::SourceFd(&child.pidfd().as_raw_fd()),
@@ -413,12 +434,13 @@ impl Compositor {
             shutting_down: false,
         };
 
-        compositor.main_loop(pipe_recv)
+        compositor.main_loop(pipe_recv, xwayland_recv)
     }
 
     fn main_loop(
         &mut self,
         mut child_pipe: mio::unix::pipe::Receiver,
+        mut xwayland_pipe: Option<mio::unix::pipe::Receiver>,
     ) -> Result<(), anyhow::Error> {
         let mut events = mio::Events::with_capacity(64);
 
@@ -427,6 +449,7 @@ impl Compositor {
 
         let start = time::Instant::now();
         let mut child_output = BufReader::new(&mut child_pipe);
+        let mut xwayland_output = xwayland_pipe.as_mut().map(BufReader::new);
 
         loop {
             trace_span!("poll").in_scope(|| self.poll.poll(&mut events, None))?;
@@ -511,7 +534,7 @@ impl Compositor {
                     }
                     XWAYLAND if event.is_readable() => {
                         dump_child_output(
-                            &mut self.xwayland.as_mut().unwrap().output,
+                            xwayland_output.as_mut().unwrap(),
                             &mut self.xwayland_debug_log,
                         );
                     }
