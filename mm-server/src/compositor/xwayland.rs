@@ -26,7 +26,8 @@ pub struct XWayland {
 }
 
 // Where the socket gets mounted inside the container.
-pub const SOCKET_PATH: &str = "/tmp/.X11-magic-mirror";
+const SOCKET_PATH: &str = "/tmp/.X11-unix/X1";
+const DISPLAY: &str = ":1";
 
 impl XWayland {
     pub fn spawn(
@@ -41,10 +42,11 @@ impl XWayland {
         // it's ready.
         let (displayfd_send, displayfd_recv) = mio::unix::pipe::new()?;
 
-        // Rather than messing with global /tmp, we create a scoped X11 socket. At
-        // some point in the past, X11 didn't support this, but clients should
-        // support arbitrary paths by now.
-        let socket_path = xdg_runtime_dir.as_ref().join(".X11-magic-mirror");
+        // Put the socket in a folder, so we can bind-mount that to
+        // /tmp/.X11-unix inside the container.
+        let socket_path = xdg_runtime_dir
+            .as_ref()
+            .join(Path::new(SOCKET_PATH).strip_prefix("/tmp").unwrap());
         std::fs::create_dir_all(socket_path.parent().unwrap())?;
 
         let socket = mio::net::UnixListener::bind(&socket_path)?;
@@ -131,6 +133,14 @@ impl XWayland {
         }
 
         Ok(None)
+    }
+
+    pub fn prepare_socket(&self, container: &mut Container) {
+        container.bind_mount(
+            self.display_socket.parent().unwrap(),
+            Path::new(SOCKET_PATH).parent().unwrap(),
+        );
+        container.set_env("DISPLAY", DISPLAY);
     }
 }
 

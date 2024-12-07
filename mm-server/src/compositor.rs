@@ -351,12 +351,10 @@ impl Compositor {
 
         // Set the wayland socket and X11 sockets. The wayland socket is a
         // relative path inside XDG_RUNTIME_DIR. The X11 socket is special
-        // and has to be in /tmp (even if we set DISPLAY to an absolute path,
-        // that path has to be rooted in /tmp).
+        // and has to be in a specific location for XCB to work on all systems.
         container.set_env("WAYLAND_DISPLAY", &socket_name);
         if let Some(xwayland) = &xwayland {
-            container.bind_mount(&xwayland.display_socket, xwayland::SOCKET_PATH);
-            container.set_env("DISPLAY", xwayland::SOCKET_PATH);
+            xwayland.prepare_socket(&mut container);
         }
 
         // Shadow pipewire, just in case.
