@@ -2039,8 +2039,8 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "svt"
-version = "0.2.0"
-source = "git+https://github.com/colinmarc/svt-rs?rev=30ad2c31d3730881a62325f0c868a1ad84addba7#30ad2c31d3730881a62325f0c868a1ad84addba7"
+version = "0.2.1"
+source = "git+https://github.com/colinmarc/svt-rs?rev=e03f08deb5291bfc4b90130fa5c2d08c3129924f#e03f08deb5291bfc4b90130fa5c2d08c3129924f"
 dependencies = [
  "bitflags 2.6.0",
  "svt-av1-sys",
@@ -2050,8 +2050,8 @@ dependencies = [
 
 [[package]]
 name = "svt-av1-sys"
-version = "2.0.0"
-source = "git+https://github.com/colinmarc/svt-rs?rev=30ad2c31d3730881a62325f0c868a1ad84addba7#30ad2c31d3730881a62325f0c868a1ad84addba7"
+version = "2.3.0"
+source = "git+https://github.com/colinmarc/svt-rs?rev=e03f08deb5291bfc4b90130fa5c2d08c3129924f#e03f08deb5291bfc4b90130fa5c2d08c3129924f"
 dependencies = [
  "anyhow",
  "bindgen 0.69.5",
@@ -2063,7 +2063,7 @@ dependencies = [
 [[package]]
 name = "svt-hevc-sys"
 version = "0.1.0"
-source = "git+https://github.com/colinmarc/svt-rs?rev=30ad2c31d3730881a62325f0c868a1ad84addba7#30ad2c31d3730881a62325f0c868a1ad84addba7"
+source = "git+https://github.com/colinmarc/svt-rs?rev=e03f08deb5291bfc4b90130fa5c2d08c3129924f#e03f08deb5291bfc4b90130fa5c2d08c3129924f"
 dependencies = [
  "anyhow",
  "bindgen 0.69.5",
