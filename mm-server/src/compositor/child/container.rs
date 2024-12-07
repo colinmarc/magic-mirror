@@ -97,6 +97,31 @@ const DEV_BIND_MOUNTS: &[DevBindMount] = &[
         path: "/dev/fuse",
         is_dir: false,
     },
+    // Needed for NVIDIA proprietary drivers.
+    DevBindMount {
+        path: "/dev/nvidiactl",
+        is_dir: false,
+    },
+    DevBindMount {
+        path: "/dev/nvidia0",
+        is_dir: false,
+    },
+    DevBindMount {
+        path: "/dev/nvidia-modeset",
+        is_dir: false,
+    },
+    DevBindMount {
+        path: "/dev/nvidia-uvm",
+        is_dir: false,
+    },
+    DevBindMount {
+        path: "/dev/nvidia-uvm-tools",
+        is_dir: false,
+    },
+    DevBindMount {
+        path: "/dev/nvidia-caps",
+        is_dir: true,
+    },
 ];
 
 #[cfg(debug_assertions)]
@@ -454,9 +479,10 @@ impl Container {
         // instead.
         preexec_debug!("collecting detached bind mounts");
         for (src_path, _, _, ref mut device_fd) in bind_mounts.iter_mut() {
-            let fd = must!(detach_mount(src_path,));
-
-            *device_fd = Some(fd)
+            if src_path.exists() {
+                let fd = must!(detach_mount(src_path,));
+                *device_fd = Some(fd)
+            }
         }
 
         // Grab a detached mount for the temporary dir we're going to mount as
@@ -580,21 +606,21 @@ impl Container {
 
         // Attach detached bind mounts, now that the filesystem is prepared.
         for (_src_path, dst_path, is_dir, mount_fd) in bind_mounts {
-            preexec_debug!(
-                "bind-mounting {} (outside) to {} (inside)",
-                _src_path.display(),
-                dst_path.display()
-            );
+            if let Some(detached_mount_fd) = mount_fd.take() {
+                preexec_debug!(
+                    "bind-mounting {} (outside) to {} (inside)",
+                    _src_path.display(),
+                    dst_path.display()
+                );
 
-            let detached_mount_fd = mount_fd.take().unwrap();
+                if *is_dir {
+                    let _ = mkdirat(AT_FDCWD, &*dst_path, Mode::empty());
+                } else {
+                    must!(touch(&*dst_path, Mode::empty()));
+                }
 
-            if *is_dir {
-                let _ = mkdirat(AT_FDCWD, &*dst_path, Mode::empty());
-            } else {
-                must!(touch(&*dst_path, Mode::empty()));
+                must!(reattach_mount(detached_mount_fd, dst_path));
             }
-
-            must!(reattach_mount(detached_mount_fd, dst_path));
         }
 
         preexec_debug!("finished initial setup, waiting for mmserver");
