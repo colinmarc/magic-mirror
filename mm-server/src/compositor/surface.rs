@@ -300,10 +300,6 @@ impl State {
                 }
 
                 buffer.needs_release = true;
-                surface.content = Some(ContentUpdate {
-                    buffer: buffer_id,
-                    wp_presentation_feedback: feedback,
-                });
 
                 // In the case of shm buffer, we do a copy and immediately release it.
                 if let BufferBacking::Shm {
@@ -314,6 +310,14 @@ impl State {
                     ..
                 } = &mut buffer.backing
                 {
+                    // A large shm buffer is probably a sign that something has gone wrong.
+                    if format.width > 500 && format.height > 500 && surface.content.is_none() {
+                        warn!(
+                            "client appears to be using software rendering; performance may be \
+                             degraded"
+                        );
+                    }
+
                     let len = (format.stride * format.height) as usize;
                     let pool = pool.read().unwrap();
                     let contents = pool.data(format.offset as usize, len);
@@ -323,6 +327,11 @@ impl State {
                     buffer.needs_release = false;
                     buffer.wl_buffer.release();
                 }
+
+                surface.content = Some(ContentUpdate {
+                    buffer: buffer_id,
+                    wp_presentation_feedback: feedback,
+                });
             }
             None => (),
         }
