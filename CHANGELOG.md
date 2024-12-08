@@ -1,3 +1,23 @@
+## [mmserver-v0.5.6] - 2024-12-08
+
+### New Features
+
+- Warn if the client is using shm buffers (461e8913d9645c240d30a2ce1d269f8ba8aa0e39)
+- Support wp_fractional_scale (2a267e102add6fb72504652375d9ea48ec2c6484)
+
+### Bugfixes
+
+- Handle invalid executables more comprehensively (f51174eb1509cecc73c10ab57cf991ee12a5cce7)
+- Throw an error if the app exe would be shadowed (cc6ee7e3df086bba443bb41471d671a2bd1b191b)
+- Reset staging query state each frame (982afb811ec062ddb6cc498a9cb92e6a4b5472ef)
+- Handle stride of shm buffers correctly (e8e1ee5eeba71d767c543ae83c4fa09b381beba1)
+- Log when container setup fails (83ea7b46fb95e1f1811cf516c55343622f9d9d35)
+- Put the XWayland socket in a canonical location (76056acbdc084307c6d71a66d2c7a343adea9b77)
+- Never discard surface content (f28e947201bc53be91ed13a53ad0221c27f931fb)
+- Handle xdg_popups more gracefully (03e392506a52349a4fdb075f4a4e53008a237958)
+- Translate surface coordinates correctly (9107636d2cb835409df3f604c47eed2d7397e819)
+- Shadow /run/user but not /run (c810f24305a169d896cbe92b57d53fd732bdef09)
+
 ## [mmserver-v0.5.5] - 2024-12-05
 
 ### New Features
