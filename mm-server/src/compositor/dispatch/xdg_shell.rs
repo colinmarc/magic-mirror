@@ -151,12 +151,23 @@ impl wayland_server::Dispatch<xdg_popup::XdgPopup, ()> for State {
     fn request(
         _state: &mut Self,
         _client: &wayland_server::Client,
-        _resource: &xdg_popup::XdgPopup,
-        _request: xdg_popup::Request,
+        resource: &xdg_popup::XdgPopup,
+        request: xdg_popup::Request,
         _data: &(),
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, Self>,
     ) {
+        match request {
+            xdg_popup::Request::Grab { .. } => {
+                // Immediately dismiss the popup, because we don't support popups.
+                // resource.post_error(xdg_popup::Error::InvalidGrab, "Popups are not
+                // supported.");
+                resource.popup_done();
+            }
+            xdg_popup::Request::Reposition { .. } => (),
+            xdg_popup::Request::Destroy => (),
+            _ => unreachable!(),
+        }
         // TODO we don't support popups at present.
     }
 }
