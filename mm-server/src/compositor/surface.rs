@@ -8,6 +8,7 @@ use tracing::{debug, trace, warn};
 use wayland_protocols::{
     wp::{
         fractional_scale::v1::server::wp_fractional_scale_v1,
+        linux_drm_syncobj::v1::server::wp_linux_drm_syncobj_surface_v1,
         presentation_time::server::wp_presentation_feedback,
     },
     xdg::shell::server::{xdg_surface, xdg_toplevel},
@@ -23,11 +24,12 @@ use crate::{
         xwayland, DisplayParams, State,
     },
     pixel_scale::PixelScale,
+    vulkan::VkTimelinePoint,
 };
 
 slotmap::new_key_type! { pub struct SurfaceKey; }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct Surface {
     pub wl_surface: wl_surface::WlSurface,
 
@@ -38,6 +40,10 @@ pub struct Surface {
     pub frame_callback: DoubleBuffered<wl_callback::WlCallback>,
     pub buffer_scale: DoubleBuffered<PixelScale>,
     pub content: Option<ContentUpdate>,
+
+    pub wp_syncobj_surface: Option<wp_linux_drm_syncobj_surface_v1::WpLinuxDrmSyncobjSurfaceV1>,
+    pub pending_acquire_point: Option<VkTimelinePoint>,
+    pub pending_release_point: Option<VkTimelinePoint>,
 
     pub role: DoubleBuffered<SurfaceRole>,
     pub sent_configuration: Option<SurfaceConfiguration>,
@@ -59,6 +65,10 @@ impl Surface {
             frame_callback: DoubleBuffered::default(),
             buffer_scale: DoubleBuffered::default(),
             content: None,
+
+            wp_syncobj_surface: None,
+            pending_acquire_point: None,
+            pending_release_point: None,
 
             role: DoubleBuffered::default(),
             sent_configuration: None,
@@ -264,9 +274,12 @@ pub enum PendingBuffer {
     Detach,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct ContentUpdate {
     pub buffer: BufferKey,
+
+    /// Used for explicit sync.
+    pub explicit_sync: Option<(VkTimelinePoint, VkTimelinePoint)>,
 
     /// The real dimensions of the buffer. This is how surface coordinates are
     /// determined in wayland.
@@ -355,8 +368,38 @@ impl State {
                     buffer.wl_buffer.release();
                 }
 
+                // Check for explicit sync.
+                let explicit_sync =
+                    surface
+                        .wp_syncobj_surface
+                        .as_ref()
+                        .and_then(|wp_syncobj_surface| {
+                            let Some(acquire_point) = surface.pending_acquire_point.take() else {
+                                wp_syncobj_surface.post_error(
+                                    wp_linux_drm_syncobj_surface_v1::Error::NoAcquirePoint,
+                                    "No acquire point set.",
+                                );
+                                return None;
+                            };
+
+                            let Some(release_point) = surface.pending_release_point.take() else {
+                                wp_syncobj_surface.post_error(
+                                    wp_linux_drm_syncobj_surface_v1::Error::NoReleasePoint,
+                                    "No release point set.",
+                                );
+                                return None;
+                            };
+
+                            Some((acquire_point, release_point))
+                        });
+
+                if let Some((_, release)) = explicit_sync.as_ref() {
+                    buffer.release_signal = Some(release.clone());
+                }
+
                 surface.content = Some(ContentUpdate {
                     buffer: buffer_id,
+                    explicit_sync,
                     dimensions: buffer.dimensions(),
                     wp_presentation_feedback: feedback,
                 });

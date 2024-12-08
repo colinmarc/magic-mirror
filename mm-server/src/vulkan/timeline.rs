@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use std::sync::Arc;
+use std::{
+    os::fd::{IntoRawFd as _, OwnedFd},
+    sync::Arc,
+};
 
 use ash::vk;
 use tracing::instrument;
@@ -62,6 +65,22 @@ impl VkTimelineSemaphore {
         };
 
         Ok(Self(Arc::new(Inner { vk, sema })))
+    }
+
+    pub fn from_syncobj_fd(vk: Arc<VkContext>, fd: OwnedFd) -> anyhow::Result<Self> {
+        let sema = Self::new(vk.clone(), 0)?;
+
+        let import_info = vk::ImportSemaphoreFdInfoKHR::default()
+            .semaphore(sema.as_semaphore())
+            .handle_type(vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_FD)
+            .fd(fd.into_raw_fd()); // Vulkan owns the fd now.
+
+        unsafe {
+            vk.external_semaphore_api
+                .import_semaphore_fd(&import_info)?;
+        }
+
+        Ok(sema)
     }
 
     pub fn new_point(&self, value: u64) -> VkTimelinePoint {

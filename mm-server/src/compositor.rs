@@ -47,6 +47,7 @@ use wayland_protocols::{
     wp::{
         fractional_scale::v1::server::wp_fractional_scale_manager_v1,
         linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1,
+        linux_drm_syncobj::v1::server::wp_linux_drm_syncobj_manager_v1,
         pointer_constraints::zv1::server::zwp_pointer_constraints_v1,
         presentation_time::server::{wp_presentation, wp_presentation_feedback},
         relative_pointer::zv1::server::zwp_relative_pointer_manager_v1,
@@ -111,6 +112,7 @@ pub struct State {
     buffers: SlotMap<buffers::BufferKey, buffers::Buffer>,
     shm_pools: SlotMap<shm::ShmPoolKey, shm::ShmPool>,
     cached_dmabuf_feedback: buffers::CachedDmabufFeedback,
+    imported_buffer_timelines: SlotMap<buffers::BufferTimelineKey, buffers::BufferTimeline>,
     pending_presentation_feedback: Vec<(
         wp_presentation_feedback::WpPresentationFeedback,
         VkTimelinePoint,
@@ -213,6 +215,7 @@ impl Compositor {
         create_global::<wl_shm::WlShm>(&dh, 1);
         create_global::<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>(&dh, 5);
         create_global::<wp_presentation::WpPresentation>(&dh, 1);
+        create_global::<wp_linux_drm_syncobj_manager_v1::WpLinuxDrmSyncobjManagerV1>(&dh, 1);
 
         create_global::<xwayland_shell_v1::XwaylandShellV1>(&dh, 1);
         create_global::<wl_drm::WlDrm>(&dh, 2);
@@ -252,6 +255,7 @@ impl Compositor {
             buffers: SlotMap::default(),
             shm_pools: SlotMap::default(),
             cached_dmabuf_feedback,
+            imported_buffer_timelines: SlotMap::default(),
             pending_presentation_feedback: Vec::new(),
 
             surface_stack: Vec::new(),
@@ -825,6 +829,10 @@ impl Compositor {
             let buffer = &mut self.state.buffers[content.buffer];
 
             let sync = match &mut buffer.backing {
+                buffers::BufferBacking::Dmabuf { .. } if content.explicit_sync.is_some() => {
+                    let (acquire, _) = content.explicit_sync.as_ref().unwrap();
+                    Some(video::TextureSync::TimelineAcquire(acquire.clone()))
+                }
                 buffers::BufferBacking::Dmabuf {
                     fd,
                     interop_sema,

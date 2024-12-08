@@ -15,13 +15,14 @@ use drm_fourcc::DrmModifier;
 use hashbrown::HashSet;
 pub use modifiers::*;
 use tracing::trace;
+use wayland_protocols::wp::linux_drm_syncobj::v1::server::wp_linux_drm_syncobj_timeline_v1;
 use wayland_server::{protocol::wl_buffer, Resource as _};
 
 use crate::{
-    compositor::shm::Pool,
-    compositor::State,
+    compositor::{shm::Pool, State},
     vulkan::{
         create_image_view, select_memory_type, VkContext, VkHostBuffer, VkImage, VkTimelinePoint,
+        VkTimelineSemaphore,
     },
 };
 
@@ -37,6 +38,10 @@ pub struct Buffer {
     /// If set, we should wait on this timeline point before releasing the
     /// buffer.
     pub release_wait: Option<VkTimelinePoint>,
+
+    /// If set, we should signal this timeline point when we're done with
+    /// the buffer (instead of using the normal wl_buffer.release signal).
+    pub release_signal: Option<VkTimelinePoint>,
 
     /// Next time we release this buffer, we should destroy it as well.
     pub needs_destruction: bool,
@@ -101,6 +106,13 @@ pub struct PlaneMetadata {
     pub offset: u32,
 }
 
+slotmap::new_key_type! { pub struct BufferTimelineKey; }
+
+pub struct BufferTimeline {
+    pub _wp_syncobj_timeline: wp_linux_drm_syncobj_timeline_v1::WpLinuxDrmSyncobjTimelineV1,
+    pub sema: VkTimelineSemaphore,
+}
+
 impl State {
     pub fn release_buffers(&mut self) -> anyhow::Result<()> {
         let mut used_buffers = HashSet::new();
@@ -128,7 +140,14 @@ impl State {
                 "releasing buffer"
             );
 
-            buffer.wl_buffer.release();
+            if let Some(tp) = &buffer.release_signal.take() {
+                unsafe {
+                    tp.signal()?;
+                }
+            } else {
+                buffer.wl_buffer.release();
+            }
+
             buffer.needs_release = false;
             buffer.release_wait = None;
             if buffer.needs_destruction {
@@ -194,6 +213,7 @@ pub fn import_shm_buffer(
         },
         needs_release: false,
         release_wait: None,
+        release_signal: None,
         needs_destruction: false,
     })
 }
@@ -347,6 +367,7 @@ pub fn import_dmabuf_buffer(
         },
         needs_release: false,
         release_wait: None,
+        release_signal: None,
         needs_destruction: false,
     })
 }

@@ -99,6 +99,7 @@ pub struct SwapFrame {
     convert_ds: vk::DescriptorSet, // Should be dropped first.
     draws: Vec<(vk::ImageView, glam::Vec2, glam::Vec2)>,
     texture_semas: Vec<vk::Semaphore>,
+    texture_acquire_points: Vec<VkTimelinePoint>,
 
     /// An RGBA image to composite to.
     blend_image: VkImage,
@@ -124,7 +125,7 @@ pub struct SwapFrame {
 
 pub enum TextureSync {
     BinaryAcquire(vk::Semaphore),
-    // Timeline
+    TimelineAcquire(VkTimelinePoint),
 }
 
 pub struct EncodePipeline {
@@ -378,9 +379,13 @@ impl EncodePipeline {
             }
         };
 
-        if let Some(TextureSync::BinaryAcquire(semaphore)) = sync {
-            frame.texture_semas.push(semaphore);
-        }
+        match sync {
+            Some(TextureSync::TimelineAcquire(acquire)) => {
+                frame.texture_acquire_points.push(acquire)
+            }
+            Some(TextureSync::BinaryAcquire(semaphore)) => frame.texture_semas.push(semaphore),
+            None => (),
+        };
 
         // Convert the destination rect into clip coordinates.
         let display_size: glam::UVec2 =
@@ -555,6 +560,16 @@ impl EncodePipeline {
             );
         }
 
+        // Wait on explicit sync acquire points before sampling.
+        for acquire in frame.texture_acquire_points.drain(..) {
+            render_wait_infos.push(
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(acquire.timeline().as_semaphore())
+                    .value(acquire.value())
+                    .stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER),
+            )
+        }
+
         let render_submit_info = vk::SubmitInfo2::default()
             .command_buffer_infos(&render_cb_infos)
             .wait_semaphore_infos(&render_wait_infos)
@@ -696,6 +711,7 @@ fn new_swapframe(
     Ok(SwapFrame {
         convert_ds,
         texture_semas: Vec::new(),
+        texture_acquire_points: Vec::new(),
         draws: Vec::new(),
         blend_image,
         encode_image,
