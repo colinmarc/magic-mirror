@@ -707,7 +707,6 @@ impl Compositor {
                     // Discharge any pending frame callbacks, since we won't
                     // render the current content, and some clients get stuck
                     // otherwise.
-                    surf.content = None;
                     if let Some(cb) = surf.frame_callback.current.take() {
                         cb.done(now);
                     }
