@@ -524,17 +524,11 @@ impl Container {
 
         must!(mount_fs(
             c"tmpfs",
-            c"/run",
+            c"/run/user",
             MountAttrFlags::MOUNT_ATTR_NOSUID
                 | MountAttrFlags::MOUNT_ATTR_NODEV
                 | MountAttrFlags::MOUNT_ATTR_RELATIME,
             &[(c"mode", c"0700"), (c"size", c"1g")],
-        ));
-
-        must!(mkdirat(
-            AT_FDCWD,
-            "/run/user",
-            Mode::from_bits(0o700).unwrap()
         ));
 
         must!(mount_fs(
