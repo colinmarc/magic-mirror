@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: BUSL-1.1
 
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 use wayland_server::Resource as _;
 
 use crate::compositor::{
     buffers::BufferKey,
-    surface::{self, buffer_vector_to_surface, SurfaceKey, SurfaceRole},
+    surface::{self, SurfaceKey, SurfaceRole},
     State,
 };
 
@@ -26,7 +26,7 @@ impl State {
 
         trace!(?surface, ?buffer_size, "mapping surface");
         if buffer_size != config.size {
-            warn!(
+            debug!(
                 expected = ?(config.size.x, config.size.y),
                 actual = ?(buffer_size.x, buffer_size.y),
                 "unexpected buffer dimensions"
@@ -181,24 +181,17 @@ impl State {
 
         for id in self.surface_stack.iter().rev() {
             let surf = &self.surfaces[*id];
-            let fullscreen = surf.configuration.map_or(true, |conf| conf.fullscreen);
 
-            if fullscreen || surf.contains(coords.round().as_uvec2()) {
-                let conf = surf.configuration.unwrap();
-                let coords = buffer_vector_to_surface(
-                    coords - conf.topleft.as_dvec2(),
-                    surf.effective_scale(),
-                );
-
-                return Some((*id, coords));
+            if let Some(surface_coords) = surf.surface_coords(coords.round().as_uvec2()) {
+                return Some((*id, surface_coords));
             }
         }
 
         None
     }
 
-    /// Returns true if all visible surfaces is settled (with no configure
-    /// pending) and has content.
+    /// Returns true if all visible surfaces have settled (with no configure
+    /// pending) and have content.
     pub fn surfaces_ready(&self) -> bool {
         if self.surface_stack.is_empty() {
             return false;
@@ -215,6 +208,7 @@ impl State {
             let surf = &self.surfaces[*id];
             if surf.content.is_none() || surf.pending_configure.is_some() {
                 debug!(
+                    ?surf,
                     pending_attachments = self.pending_attachments.len(),
                     content_is_some = surf.content.is_some(),
                     pending_configure = ?surf.pending_configure,

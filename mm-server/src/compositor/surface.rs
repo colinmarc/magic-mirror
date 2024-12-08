@@ -112,17 +112,34 @@ impl Surface {
         self.configuration = conf;
     }
 
-    pub fn contains(&self, coords: impl Into<glam::UVec2>) -> bool {
-        if let Some(conf) = self.configuration {
-            let coords = coords.into();
-            let bottomright = conf.topleft + conf.size;
+    /// Takes a point in the physical configuration space, and returns
+    /// wayland-specific logical surface coordinates.
+    pub fn surface_coords(&self, coords: impl Into<glam::DVec2>) -> Option<glam::DVec2> {
+        let conf = self.configuration?;
+        let buffer_size = self
+            .content
+            .as_ref()
+            .map(|content| content.dimensions.as_dvec2())?;
 
-            coords.x >= conf.topleft.x
-                && coords.y >= conf.topleft.y
+        let coords = coords.into();
+        let topleft = conf.topleft.as_dvec2();
+        let bottomright = topleft + conf.size.as_dvec2();
+
+        if conf.fullscreen
+            || (coords.x >= topleft.x
+                && coords.y >= topleft.y
                 && coords.x < bottomright.x
-                && coords.y < bottomright.y
+                && coords.y < bottomright.y)
+        {
+            let offset_coords = coords - conf.topleft.as_dvec2();
+
+            let buffer_coords = offset_coords * (buffer_size / conf.size.as_dvec2());
+            Some(buffer_vector_to_surface(
+                buffer_coords,
+                self.effective_scale(),
+            ))
         } else {
-            false
+            None
         }
     }
 
@@ -244,6 +261,10 @@ pub enum PendingBuffer {
 #[derive(Clone, Eq, PartialEq)]
 pub struct ContentUpdate {
     pub buffer: BufferKey,
+
+    /// The real dimensions of the buffer. This is how surface coordinates are
+    /// determined in wayland.
+    pub dimensions: glam::UVec2,
     pub wp_presentation_feedback: Option<wp_presentation_feedback::WpPresentationFeedback>,
 }
 
@@ -330,6 +351,7 @@ impl State {
 
                 surface.content = Some(ContentUpdate {
                     buffer: buffer_id,
+                    dimensions: buffer.dimensions(),
                     wp_presentation_feedback: feedback,
                 });
             }
