@@ -45,6 +45,7 @@ use slotmap::SlotMap;
 use tracing::{debug, trace, trace_span};
 use wayland_protocols::{
     wp::{
+        fractional_scale::v1::server::wp_fractional_scale_manager_v1,
         linux_dmabuf::zv1::server::zwp_linux_dmabuf_v1,
         pointer_constraints::zv1::server::zwp_pointer_constraints_v1,
         presentation_time::server::{wp_presentation, wp_presentation_feedback},
@@ -201,6 +202,7 @@ impl Compositor {
         create_global::<protocol::wl_compositor::WlCompositor>(&dh, 6);
         create_global::<protocol::wl_output::WlOutput>(&dh, 4);
         create_global::<xdg_wm_base::XdgWmBase>(&dh, 6);
+        create_global::<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>(&dh, 1);
 
         create_global::<protocol::wl_seat::WlSeat>(&dh, 9);
         create_global::<protocol::wl_data_device_manager::WlDataDeviceManager>(&dh, 3);

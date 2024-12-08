@@ -9,6 +9,7 @@ mod wl_drm;
 mod wl_output;
 mod wl_seat;
 mod wl_shm;
+mod wp_fractional_scale;
 mod wp_linux_dmabuf;
 mod wp_pointer_constraints;
 mod wp_presentation;

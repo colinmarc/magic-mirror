@@ -6,7 +6,10 @@ use std::time;
 
 use tracing::{debug, trace, warn};
 use wayland_protocols::{
-    wp::presentation_time::server::wp_presentation_feedback,
+    wp::{
+        fractional_scale::v1::server::wp_fractional_scale_v1,
+        presentation_time::server::wp_presentation_feedback,
+    },
     xdg::shell::server::{xdg_surface, xdg_toplevel},
 };
 use wayland_server::{
@@ -28,6 +31,8 @@ slotmap::new_key_type! { pub struct SurfaceKey; }
 pub struct Surface {
     pub wl_surface: wl_surface::WlSurface,
 
+    pub wp_fractional_scale: Option<wp_fractional_scale_v1::WpFractionalScaleV1>,
+
     pub pending_buffer: Option<PendingBuffer>,
     pub pending_feedback: Option<wp_presentation_feedback::WpPresentationFeedback>,
     pub frame_callback: DoubleBuffered<wl_callback::WlCallback>,
@@ -47,6 +52,7 @@ impl Surface {
     pub fn new(wl_surface: wl_surface::WlSurface) -> Self {
         Self {
             wl_surface,
+            wp_fractional_scale: None,
 
             pending_buffer: None,
             pending_feedback: None,
@@ -461,6 +467,10 @@ impl State {
                     if surface.wl_surface.version() >= 6 {
                         let scale: f64 = scale.into();
                         surface.wl_surface.preferred_buffer_scale(scale as i32);
+                    }
+
+                    if let Some(wp_fractional_scale) = &surface.wp_fractional_scale {
+                        wp_fractional_scale.preferred_scale((f64::from(scale) * 120.0) as u32);
                     }
 
                     let mut states = match conf.visibility {
