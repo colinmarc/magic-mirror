@@ -26,6 +26,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           target: linux-x86_64
+          version: v2024.15.2
 
       - uses: swatinem/rust-cache@v2
         with:
