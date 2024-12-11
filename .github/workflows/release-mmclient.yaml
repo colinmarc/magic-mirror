@@ -68,7 +68,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           target: macos-aarch64
-          version: v2024.14.5
+          version: v2024.15.2
 
       - uses: swatinem/rust-cache@v2
         with:
@@ -110,7 +110,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           target: macos-x86_64
-          version: v2024.14.5
+          version: v2024.15.2
 
       - uses: swatinem/rust-cache@v2
         with:
