@@ -42,7 +42,7 @@ jobs:
       - name: replace version in files
         if: ${{ env.BUMPED_VERSION != env.CURRENT_VERSION }}
         run: |
-          git ls-files | grep -v CHANGELOG |\
+          git grep --cached -v CHANGELOG -l '' |\
             xargs sed -i -E "s/mm$COMPONENT-v[0-9]+\.[0-9]+\.[0-9]+/$BUMPED_VERSION/g"
 
       - name: replace version in Cargo.toml
