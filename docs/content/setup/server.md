@@ -7,10 +7,10 @@ toc = true
 
 ## Quickstart
 
-First, grab [the latest server release](https://github.com/colinmarc/magic-mirror/releases/tag/mmserver-v0.5.6) and untar it somewhere:
+First, grab [the latest server release](https://github.com/colinmarc/magic-mirror/releases/tag/mmserver-v0.6.0) and untar it somewhere:
 
 ```sh
-curl -fsSL "https://github.com/colinmarc/magic-mirror/releases/download/mmserver-v0.5.6/mmserver-v0.5.6-linux-amd64.tar.gz" \
+curl -fsSL "https://github.com/colinmarc/magic-mirror/releases/download/mmserver-v0.6.0/mmserver-v0.6.0-linux-amd64.tar.gz" \
     | tar zxv
 cd mmserver-0.5.6
 ```

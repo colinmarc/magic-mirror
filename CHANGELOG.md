@@ -1,3 +1,14 @@
+## [mmserver-v0.6.0] - 2024-12-11
+
+### New Features
+
+- Support wp_linux_drm_syncobj_timeline (54f311653d800cf5a7aefe1b54edd27010f219ce)
+[**breaking**] - Officially support nvidia proprietary (204126cdfcce09f4971de2e1bb9c86a4adf04d97)
+
+### Bugfixes
+
+- Bind-mount nvidia devices, if present (4bb63d3c1e85f297c5d169219943694f133bbcfa)
+
 ## [mmclient-v0.5.0] - 2024-12-11
 
 ### New Features
