@@ -3,7 +3,7 @@
 ### New Features
 
 - Support wp_linux_drm_syncobj_timeline (54f311653d800cf5a7aefe1b54edd27010f219ce)
-[**breaking**] - Officially support nvidia proprietary (204126cdfcce09f4971de2e1bb9c86a4adf04d97)
+- Officially support nvidia proprietary (204126cdfcce09f4971de2e1bb9c86a4adf04d97)
 
 ### Bugfixes
 
