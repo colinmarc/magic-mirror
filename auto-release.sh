@@ -36,7 +36,7 @@ echo "generating release notes..."
 release_notes="$(git cliff -v -c .github/workflows/cliff.toml \
 		 --tag-pattern "${component}" \
 		 --include-path "mm-${component}*/**/*" \
-		 --latest)"
+		 --unreleased --tag ${tag})"
 
 git tag ${tag} -a -m "${release_notes}" --cleanup=verbatim
 git show ${tag}
