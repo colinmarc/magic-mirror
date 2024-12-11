@@ -1,0 +1,15 @@
+base_url = "https://colinmarc.github.io/magic-mirror"
+theme = "anemone"
+compile_sass = false
+build_search_index = false
+
+[markdown]
+highlight_code = true
+
+[extra]
+twitter_card = false
+header_nav = [
+  { url = "/", name_en = "/home/"},
+  { url = "https://github.com/colinmarc/magic-mirror", name_en = "/github/"},
+  { url = "", name_en = "/discord/"},
+]

@@ -1,0 +1,78 @@
+on:
+  push:
+    branches: [main, docs]
+
+name: Build documentation site
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            mm-protocol
+            mm-client-common
+
+      - name: install protoc
+        run: |
+          sudo apt update
+          sudo apt install protobuf-compiler
+
+      - name: install zola
+        uses: taiki-e/install-action@v2
+        with:
+          tool: zola@0.19.2
+
+      - name: generate config reference
+        run: |
+          mkdir -p docs/content/reference
+          cargo run --manifest-path mm-docgen/Cargo.toml --bin config-docgen \
+            mmserver.default.toml > docs/content/reference/config.md
+
+      - name: generate protocol reference
+        run: |
+          cargo run --manifest-path mm-docgen/Cargo.toml --bin protocol-docgen \
+            mm-protocol/src/messages.proto > docs/content/reference/protocol.md
+
+      - name: zola build
+        run: zola -r docs build -o docs/build
+
+      - name: generate rustdoc for mm-protocol
+        run: |
+          cargo doc --manifest-path mm-protocol/Cargo.toml \
+            --no-deps --target-dir docs/build
+
+      - name: generate rustdoc for mm-client-common
+        run: |
+          cargo doc --manifest-path mm-client-common/Cargo.toml \
+            --no-deps --target-dir docs/build
+
+      - name: Upload static files
+        id: deployment
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/build
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+
+
+

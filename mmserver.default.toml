@@ -31,7 +31,7 @@
 ## If you're running magic-mirror as a permanent daemon, you should set this to
 ## something like /var/lib/magic-mirror.
 ##
-# data_home = /var/lib/magic-mirror
+# data_home = "/var/lib/magic-mirror"
 
 ## ***-----------------***
 ## *** Server Settings ***
@@ -42,19 +42,19 @@
 [server]
 
 ## Where the server should listen for incoming connections. IPv6 addresses are
-## supported. Use 0.0.0.0 or [::] to listen on all available interfaces.
+## supported. Use `0.0.0.0` or `[::]` to listen on all available interfaces.
 bind = "localhost:9599"
 
 ## If set, `bind` will be ignored, and the server will instead listen for
 ## incoming connections on the socket specified by the LISTEN_FDS environment
 ## variable. See the systemd documentation on "socket activation", here:
-## https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html
+## <https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html>
 bind_systemd = false
 
 ## Used for TLS. Both are required unless the host portion of the bind address
 ## resolves to a private address (as defined by RFCs 1918, 4193, and 6598) or
-## otherwise not routable, for example 127.0.0.1, 192.168.24.25, or
-## fd12:3456:789a:1::1.
+## otherwise not routable, for example `127.0.0.1`, `192.168.24.25`, or
+## `fd12:3456:789a:1::1`.
 # tls_key = "/path/to/tls.key"
 # tls_cert = "/path/to/tls.cert"
 
@@ -68,41 +68,45 @@ max_connections = 4
 ## Whether to use mDNS to allow clients to discover the server.
 mdns = true
 
-## The hostname to advertise over mDNS. Defaults to "$(uname -n).local." if left
-## unset, or ignored if 'mdns = false'.
+## The hostname to advertise over mDNS. Defaults to `"$(uname -n).local.` if left
+## unset, or ignored if `mdns` is `false`.
 # mdns_hostname = "mycomputer.local."
 
 ## The instance name to advertise over mDNS. Defaults to the unqualified value of
-## mdns_hostname, converted to uppercase.
+## `mdns_hostname`, converted to uppercase.
 # mdns_instance_name = "MYCOMPUTER"
 
 ## ***-------------------------***
 ## *** Configured Applications ***
 ## ***-------------------------***
 ##
-## Each application you want to stream must be configured in advance. An example
-## application configuration follows. (Note that unlike the rest of this file,
-## this application is not included in the default configuration.)
+## Each application you want to stream must be configured in advance, with each
+## application as its own section. Applications can, alternatively, be
+## configured as individual files. See the documentation for `include_apps`
+## above for more information. At least one application must always be
+## configured.
 ##
-## App names must be unique and only contain characters in the set [a-z0-9-_].
+## App names must be unique and only contain characters in the set `[a-z0-9-_]`.
 ## The section is structured as a dictionary, with the key as the application
 ## name.
 ##
-## Applications can, alternatively, be configured as individual files. See the
-## documentation for `include_apps` above for more information. At least one
-## application must always be configured.
-
-## A basic app definition has a command to run. You can also specify environment
-## variables to inject.
+## An example application configuration follows. (Note that unlike the rest of
+## this file, this application is not included in the default configuration.)
 # [apps.steam-big-picture]
+
+## A short name for the app.
 # description = "Steam"
+
+## The command to run. Must be in `$PATH` or absolute.
 # command = ["steam", "-gamepadui"]
+
+## Key/value pairs to set in the environment when running the command.
 # environment = { "FOO" = "bar" }
 
 ## Configure a "path" for the application. Clients can use this to group apps
 ## into folders. This has nothing to do with the local filesystem. Paths should
 ## use unix path separators. They may include characters in the set
-## [A-Za-z0-9-_ ] (including spaces).
+## `[A-Za-z0-9-_ ]` (including spaces).
 # app_path = "My Games/Puzzle Games"
 
 ## Add a header image to the app, for displaying in clients. The image must be a
@@ -112,6 +116,8 @@ mdns = true
 
 ## Enable XWayland support for this application. This is required for any
 ## applications that are built for the legacy X11 windowing system, such as Steam.
+##
+## If unset, defaults to `default_app_settings.xwayland`.
 # xwayland = true
 
 ## Force the app to run at 1x. This is useful for applications where you know in
@@ -119,18 +125,24 @@ mdns = true
 ## through XWayland. This setting will ensure that the app always renders at the
 ## full session resolution, but may result in small font sizes or other UI
 ## elements.
+##
+## If unset, defaults to `default_app_settings.force_1x_scale`.
 # force_1x_scale = false
 
 ## Isolate the home directory. If set, the application will see a clean,
-## sandboxed $HOME (and /home/$(whoami)), rather than the system-wide one.
+## sandboxed `$HOME` (and `/home/$(whoami)`), rather than the system-wide one.
 ## This home directory is saved between runs of the app to
 ## `<data_home>/homes/<shared_home_name>`.
+##
+## If unset, defaults to `default_app_settings.isolate_home`.
 # isolate_home = true
 
 ## If `isolate_home` is set to true, this sets a name for the home directory,
 ## can be shared between apps. For example, multiple apps with this option set
 ## to 'myhome' will all see the same $HOME when they run. By default, this is
 ## set to the name of the application.
+##
+## If unset, defaults to `default_app_settings.shared_home_name`.
 # shared_home_name = same as application name
 
 ## If `isolate_home` is set to true, this mounts a brand new $HOME (using tmpfs)
@@ -138,6 +150,8 @@ mdns = true
 ##
 ## Note that any data saved while the app is running will be irrevocably
 ## destroyed when it exits.
+##
+## If unset, defaults to `default_app_settings.tmp_home`.
 # tmp_home = false
 
 ## ***----------------------***

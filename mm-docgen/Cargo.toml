@@ -1,0 +1,13 @@
+[package]
+name = "mmserver-config-docgen"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "config-docgen"
+
+[[bin]]
+name = "protocol-docgen"
+
+[dependencies]
+regex = "1"
