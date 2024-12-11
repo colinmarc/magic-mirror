@@ -84,5 +84,5 @@ jobs:
           draft: true
           branch: "auto-bump-${{ matrix.component }}"
           title: ":robot: bump mm${{ matrix.component }} to ${{ env.BUMPED_VERSION }}"
-          commit-message: "chore: bump mm${{ matrix.component }} to ${{ env.BUMPED_VERSION }}"
+          commit-message: "chore: release ${{ env.BUMPED_VERSION }}"
           body-path: "${{ runner.temp }}/pr-body.txt"
