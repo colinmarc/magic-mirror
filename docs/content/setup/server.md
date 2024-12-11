@@ -12,7 +12,7 @@ First, grab [the latest server release](https://github.com/colinmarc/magic-mirro
 ```sh
 curl -fsSL "https://github.com/colinmarc/magic-mirror/releases/download/mmserver-v0.6.0/mmserver-v0.6.0-linux-amd64.tar.gz" \
     | tar zxv
-cd mmserver-0.5.6
+cd mmserver-v0.6.0
 ```
 
 Then, create a [configuration file](@/reference/config.md) with at least one application definition:
