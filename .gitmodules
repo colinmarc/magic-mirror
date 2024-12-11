@@ -1,0 +1,3 @@
+[submodule "docs/themes/anemone"]
+	path = docs/themes/anemone
+	url = https://github.com/Speyll/anemone
