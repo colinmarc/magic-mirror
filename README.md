@@ -23,8 +23,8 @@ This is a game streaming and remote desktop tool for Linux, featuring:
 ### Quick Links
 
  - [Documentation](https://colinmarc.github.io/magic-mirror)
- - [Latest Server Release [mmserver-0.5.6]](https://github.com/colinmarc/magic-mirror/releases/tag/mmserver-v0.5.6)
- - [Latest CLI Client Release [mmclient-0.4.1]](https://github.com/colinmarc/magic-mirror/releases/tag/mmclient-v0.5.0)
+ - [Latest Server Release [mmserver-v0.5.6]](https://github.com/colinmarc/magic-mirror/releases/tag/mmserver-v0.5.6)
+ - [Latest CLI Client Release [mmclient-v0.5.0]](https://github.com/colinmarc/magic-mirror/releases/tag/mmclient-v0.5.0)
  - [Latest macOS Client Release](https://github.com/colinmarc/magic-mirror-swiftui/releases/latest)
  - [Discord](https://discord.gg/v22G644DzS)
 
