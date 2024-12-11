@@ -1,3 +1,21 @@
+## [mmclient-v0.5.0] - 2024-12-11
+
+### New Features
+
+- Add 'app_path' for organizing apps (b417559625c97e182dc074a5732ea35617332f36)
+- Add header images to the application list (756bfa866020da57be18d383367e0a2b189051aa)
+
+### Bugfixes
+
+- Use Error::ServerError to communicate server errors (a857e0f186b9514cd3e1dc9b0f60df04b4abe3fe)
+- Correctly represent cursor images as optional (b08c76c9c65441fa92156f5282e9b02e98fa3ed9)
+- Be more resilient sending messages on closed streams (8e3eea65ccff2b6448dd9993b9afef9996c6650d)
+- Ensure attachment_ended is called on delegate (fd4d1c41e7da5ec949e26c91cc6171db1a41b1ce)
+- Always send pointer_left events (06010c9cf336d637526dcc308d1ee842e3a21cc1)
+- Handle ipv6 addresses correctly (9d442d2c8ad4c8cbfef96cb378289e1699d17e02)
+- Log connection errors (0ecc6ef05a5470991f1df8d0feaf18ace99b8de8)
+- Remove zone identifiers from hostnames (f9cee190718dc71aad8e9a0372b581a611551289)
+
 ## [mmserver-v0.5.6] - 2024-12-08
 
 ### New Features
