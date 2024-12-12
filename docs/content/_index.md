@@ -8,7 +8,7 @@
   <img src="header_light.png" />
 </picture>
 
-This page contains documentation for [Magic Mirror](github.com/colinmarc/magic-mirror),
+This page contains documentation for [Magic Mirror](https://github.com/colinmarc/magic-mirror),
 an open-source game streaming and remote desktop tool for linux hosts.
 
 ### Download
