@@ -2,7 +2,6 @@
 //! to the format of that file.
 
 use std::{
-    borrow::Cow,
     fs::File,
     io::{BufRead as _, BufReader},
 };
