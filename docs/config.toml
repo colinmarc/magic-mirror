@@ -9,7 +9,7 @@ highlight_code = true
 [extra]
 twitter_card = false
 header_nav = [
-  { url = "/", name_en = "/home/"},
+  { url = "https://colinmarc.github.io/magic-mirror", name_en = "/home/"},
   { url = "https://github.com/colinmarc/magic-mirror", name_en = "/github/"},
-  { url = "", name_en = "/discord/"},
+  { url = "https://discord.gg/v22G644DzS", name_en = "/discord/"},
 ]
