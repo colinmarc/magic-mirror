@@ -355,14 +355,14 @@ message Error {
 //
 // This message, which must originate from the client on a new stream, requests
 // a list of available applications to launch as sessions. The server must
-// either respond with an `012 - Application List` message or an `01 - Error`
+// either respond with an `012 - Application List` message or an `001 - Error`
 // message on the same stream.
 message ListApplications {}
 
 // ### 012 - Application List
 //
 // This message, which must originate from the server on the same stream as a
-// corresponding `11 - List Applications` message, indicates the list of
+// corresponding `011 - List Applications` message, indicates the list of
 // available applications to launch as sessions.
 message ApplicationList {
   message Application {
@@ -443,7 +443,7 @@ message SessionUpdated {}
 //
 // This message, which must originate from the client on a new stream, requests
 // a list of attachable sessions. The server must respond with either `018 -
-// Session List` or an `01 - Error` on the same stream.
+// Session List` or an `001 - Error` on the same stream.
 message ListSessions {}
 
 // ### 018 - Session List
@@ -478,7 +478,7 @@ message SessionList {
 // that the server end the named session and detach all clients.
 //
 // If a server chooses to comply, it should send `001 - Error` messages to all
-// other attached clients (with ERR_SESSION_ENDED_BY_CLIENT), and an `022 -
+// other attached clients (with ERR_SESSION_ENDED_BY_CLIENT), and an `020 -
 // Session Ended` message on this stream. Otherwise, it should send an `001 -
 // Error` message on this stream.
 message EndSession {
@@ -496,7 +496,7 @@ message SessionEnded {}
 //
 // This message, which must originate from the client on a new stream, requests
 // image metadata for an application. The Server must respond with either an
-// `022 - Application Image` message or an `01 - Error` message on the same
+// `022 - Application Image` message or an `001 - Error` message on the same
 // stream.
 message FetchApplicationImage {
   string application_id = 1;  // Required.
