@@ -80,7 +80,8 @@ package messages;
 //
 // ## Protocol Versioning
 //
-// The protocol follows Semantic Versioning rules, as defined by this document: <https://semver.org/>
+// The protocol follows Semantic Versioning rules, as defined by this document:
+// <https://semver.org/>
 //
 // As such, servers should support clients using the same major version of the
 // protocol, and vice versa, with the exception of major version 0 (the current
