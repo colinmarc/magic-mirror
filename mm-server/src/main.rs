@@ -16,6 +16,7 @@ mod waking_sender;
 use std::{
     os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
+    process::Command,
     sync::Arc,
 };
 
@@ -140,6 +141,7 @@ fn main() -> Result<()> {
     srv.run().context("server exited")?;
 
     if let Some(dir) = &bug_report_dir {
+        save_vulkaninfo(dir);
         info!("bug report files saved to: {:?}", dir);
     }
 
@@ -239,6 +241,18 @@ fn linux_version() -> Option<(u32, u32)> {
     let minor = parts.next()?;
 
     Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+fn save_vulkaninfo(bug_report_dir: impl AsRef<Path>) {
+    match Command::new("vulkaninfo").env_clear().output() {
+        Ok(output) => {
+            let _ = std::fs::write(
+                bug_report_dir.as_ref().join("vulkaninfo.log"),
+                output.stdout,
+            );
+        }
+        Err(e) => debug!("failed to run vulkaninfo: {:#}", e),
+    }
 }
 
 #[test]
