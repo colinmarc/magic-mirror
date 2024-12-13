@@ -288,28 +288,27 @@ impl DecoderInit {
             (*ptr).width = width as i32;
             (*ptr).height = height as i32;
 
-            // On macOS/iOS, we can use the ASIC decoder.
-            if cfg!(any(target_os = "macos", target_os = "ios"))
-                && vk.device_info.is_integrated()
-                && (codec.id() == ffmpeg::codec::Id::H264
-                    || codec.id() == ffmpeg::codec::Id::HEVC
-                    || codec.id() == ffmpeg::codec::Id::H265)
-            {
-                let mut hw_ctx: *mut _ = std::ptr::null_mut();
-                let res = ffmpeg_sys::av_hwdevice_ctx_create(
-                    &mut hw_ctx,
-                    ffmpeg_sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    0,
-                );
+            let mut hw_ctx: *mut _ = std::ptr::null_mut();
 
-                if res < 0 {
-                    warn!("VideoToolbox setup failed, falling back to CPU decoder");
-                } else {
-                    (*ptr).hw_device_ctx = hw_ctx;
-                    (*ptr).get_format = Some(get_hw_format_videotoolbox);
-                }
+            let device_type = if cfg!(target_vendor = "apple") {
+                ffmpeg_sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX
+            } else {
+                ffmpeg_sys::AVHWDeviceType::AV_HWDEVICE_TYPE_VULKAN
+            };
+
+            let res = ffmpeg_sys::av_hwdevice_ctx_create(
+                &mut hw_ctx,
+                device_type,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                0,
+            );
+
+            if res < 0 {
+                warn!("hardware decoding setup failed, falling back to CPU decoder");
+            } else {
+                (*ptr).hw_device_ctx = hw_ctx;
+                (*ptr).get_format = Some(get_hw_format);
             }
 
             ffmpeg::codec::context::Context::wrap(ptr, None)
@@ -360,7 +359,7 @@ impl DecoderInit {
         match self.decoder.receive_frame(&mut frame) {
             Ok(()) => {
                 self.first_frame = match frame.format() {
-                    ffmpeg::format::Pixel::VIDEOTOOLBOX => {
+                    ffmpeg::format::Pixel::VULKAN | ffmpeg_next::format::Pixel::VIDEOTOOLBOX => {
                         let sw_format = unsafe {
                             let ctx_ref = (*self.decoder.as_ptr()).hw_frames_ctx;
                             assert!(!ctx_ref.is_null());
@@ -431,11 +430,18 @@ impl DecoderInit {
             None => return Err(anyhow!("no frames received yet")),
         };
 
-        // If we're using VideoToolbox, create a "hardware" frame to use with
+        // If we're using hardware decode, create a "hardware" frame to use with
         // receive_frame.
         let output_format = first_frame.0.format();
 
         let ((mut frame, info), mut hw_frame) = match decoder_format {
+            ffmpeg::format::Pixel::VULKAN => {
+                let hw_frame =
+                    ffmpeg::frame::Video::new(ffmpeg::format::Pixel::VULKAN, width, height);
+                debug!(format = ?hw_frame.format(), "hw_frame format");
+
+                (first_frame, Some(hw_frame))
+            }
             ffmpeg::format::Pixel::VIDEOTOOLBOX => {
                 let hw_frame =
                     ffmpeg::frame::Video::new(ffmpeg::format::Pixel::VIDEOTOOLBOX, width, height);
@@ -450,6 +456,10 @@ impl DecoderInit {
         // swscale to convert to a matching intermediate format.
         let (intermediate_format, texture_format) = match output_format {
             ffmpeg::format::Pixel::YUV420P => (None, vk::Format::G8_B8_R8_3PLANE_420_UNORM),
+            ffmpeg::format::Pixel::NV12 => (None, vk::Format::G8_B8R8_2PLANE_420_UNORM),
+            ffmpeg::format::Pixel::P010LE => {
+                (None, vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16)
+            }
             ffmpeg::format::Pixel::YUV420P10 | ffmpeg::format::Pixel::YUV420P10LE => (
                 Some(ffmpeg::format::Pixel::P010LE),
                 vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16,
@@ -812,6 +822,7 @@ impl CPUDecoder {
         {
             let num_planes = match self.video_texture.format {
                 vk::Format::G8_B8_R8_3PLANE_420_UNORM => 3,
+                vk::Format::G8_B8R8_2PLANE_420_UNORM => 2,
                 vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 => 2,
                 _ => unreachable!(),
             };
@@ -835,6 +846,13 @@ impl CPUDecoder {
 
                 let texel_width = match self.video_texture.format {
                     vk::Format::G8_B8_R8_3PLANE_420_UNORM => 1,
+                    vk::Format::G8_B8R8_2PLANE_420_UNORM => {
+                        if plane == 0 {
+                            1
+                        } else {
+                            2
+                        }
+                    }
                     vk::Format::G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16 => {
                         if plane == 0 {
                             2
@@ -1005,7 +1023,7 @@ fn copy_frame(
 }
 
 #[no_mangle]
-unsafe extern "C" fn get_hw_format_videotoolbox(
+unsafe extern "C" fn get_hw_format(
     ctx: *mut ffmpeg_sys::AVCodecContext,
     list: *const ffmpeg_sys::AVPixelFormat,
 ) -> ffmpeg_sys::AVPixelFormat {
@@ -1014,14 +1032,16 @@ unsafe extern "C" fn get_hw_format_videotoolbox(
     let sw_pix_fmt = (*ctx).sw_pix_fmt;
     let formats = read_format_list(list);
 
-    if formats.contains(&ffmpeg::format::Pixel::VIDEOTOOLBOX) {
+    debug!(?formats, ?sw_pix_fmt, "get_hw_format");
+
+    if formats.contains(&ffmpeg::format::Pixel::VULKAN) {
+        return AV_PIX_FMT_VULKAN;
+    } else if formats.contains(&ffmpeg::format::Pixel::VIDEOTOOLBOX) {
         let frames_ctx_ref = ffmpeg_sys::av_hwframe_ctx_alloc((*ctx).hw_device_ctx);
         if frames_ctx_ref.is_null() {
             error!("call to av_hwframe_ctx_alloc failed");
             return sw_pix_fmt;
         }
-
-        debug!(?formats, sw_pix_fmt = ?sw_pix_fmt, "get_hw_format_videotoolbox");
 
         let frames_ctx = (*frames_ctx_ref).data as *mut ffmpeg_sys::AVHWFramesContext;
         (*frames_ctx).width = (*ctx).width;
@@ -1037,6 +1057,7 @@ unsafe extern "C" fn get_hw_format_videotoolbox(
 
         debug!("using VideoToolbox hardware encoder");
         (*ctx).hw_frames_ctx = frames_ctx_ref;
+
         return AV_PIX_FMT_VIDEOTOOLBOX;
     }
 
