@@ -1124,7 +1124,7 @@ fn dump_child_output(pipe: &mut impl BufRead, debug_log: &mut Option<std::fs::Fi
     loop {
         buf.clear();
         match pipe.read_line(&mut buf) {
-            Ok(_) => {
+            Ok(1..) => {
                 if let Some(debug_log) = debug_log {
                     let _ = std::io::Write::write_all(debug_log, buf.as_bytes());
                 }
@@ -1134,6 +1134,7 @@ fn dump_child_output(pipe: &mut impl BufRead, debug_log: &mut Option<std::fs::Fi
                     trace!(target: "mmserver::compositor::child", "{}", buf);
                 }
             }
+            Ok(0) => break,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(e) => {
                 debug!("child error: {:?}", e);
