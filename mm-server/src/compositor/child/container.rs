@@ -834,7 +834,7 @@ pub(super) fn fuse_mount_into(
             c"",
             AT_FDCWD,
             dst.as_ref(),
-            MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH | MoveMountFlags::MOVE_MOUNT_T_EMPTY_PATH,
+            MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH,
         )?;
 
         Ok(())
