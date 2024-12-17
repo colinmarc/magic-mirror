@@ -1,3 +1,9 @@
+## [mmclient-v0.5.1] - 2024-12-17
+
+### New Features
+
+- Support ffmpeg vulkan decode (5c76b29273d3c0b29edb9e34e33096af76814398)
+
 ## [mmserver-v0.6.1] - 2024-12-17
 
 ### New Features
