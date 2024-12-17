@@ -1,3 +1,13 @@
+## [mmserver-v0.6.1] - 2024-12-17
+
+### New Features
+
+- Save vulkaninfo for --bug-report (6deae3feb5a72a7e0099edd4983814d7fc873f15)
+
+### Bugfixes
+
+- Avoid an endless loop when printing child output (7d700dfa4b9ef6d02e58c4a32151e69055fa3929)
+
 ## [mmserver-v0.6.0] - 2024-12-11
 
 ### New Features
