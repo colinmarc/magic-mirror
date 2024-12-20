@@ -901,7 +901,7 @@ fn mount_fs(
         c"",
         AT_FDCWD,
         dst,
-        MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH | MoveMountFlags::MOVE_MOUNT_T_EMPTY_PATH,
+        MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH,
     )?;
 
     Ok(())
