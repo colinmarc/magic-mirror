@@ -1,3 +1,10 @@
+## [mmserver-v0.6.2] - 2024-12-20
+
+### Bugfixes
+
+- Pass correct flags to move_mount (af519eebc5a8f251624b3d063a7241910cddf2cc)
+- Pass correct flags to move_mount (take 2) (2e6053675a229dba4fc012b5de4afb723e9a0aca)
+
 ## [mmserver-v0.6.1] - 2024-12-17
 
 ### New Features
