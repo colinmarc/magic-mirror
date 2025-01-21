@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
-use mm_protocol as protocol;
 use std::collections::VecDeque;
 
+use mm_protocol as protocol;
 use tracing::warn;
 
 use super::Packet;
@@ -204,7 +204,7 @@ impl PacketRing {
 
 pub(crate) struct DrainCompleted<'a>(&'a mut PacketRing, u64);
 
-impl<'a> Iterator for DrainCompleted<'a> {
+impl Iterator for DrainCompleted<'_> {
     type Item = Packet;
 
     fn next(&mut self) -> Option<Self::Item> {

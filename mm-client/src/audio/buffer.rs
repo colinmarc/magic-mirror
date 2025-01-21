@@ -75,7 +75,7 @@ where
     buffer: &'a mut PlaybackBuffer<F>,
 }
 
-impl<'a, F> Iterator for Draining<'a, F>
+impl<F> Iterator for Draining<'_, F>
 where
     F: dasp::Frame,
 {

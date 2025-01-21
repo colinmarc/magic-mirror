@@ -19,7 +19,7 @@ impl std::error::Error for MalformedHostPort {}
 ///  - "[host]"
 ///  - "host:port"
 ///  - "[host]:port"
-
+///
 ///  # References
 ///
 ///  https://cs.opensource.google/go/go/+/refs/tags/go1.23.3:src/net/ipsock.go;l=165
