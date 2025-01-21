@@ -28,6 +28,13 @@ impl PixelScale {
     pub fn is_fractional(&self) -> bool {
         (self.numerator % self.denominator) != 0
     }
+
+    pub fn round_up(self) -> Self {
+        Self {
+            numerator: self.numerator.next_multiple_of(self.denominator) / self.denominator,
+            denominator: 1,
+        }
+    }
 }
 
 impl std::fmt::Display for PixelScale {

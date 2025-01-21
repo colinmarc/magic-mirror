@@ -650,6 +650,7 @@ impl Compositor {
         let old = self.state.display_params;
 
         let old_ui_scale = self.state.ui_scale;
+
         let new_ui_scale = if self.state.app_config.force_1x_scale {
             PixelScale::ONE
         } else {

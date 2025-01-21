@@ -23,7 +23,7 @@ use mm_client::{
 use mm_client_common as client;
 use mm_protocol as protocol;
 use pollster::FutureExt as _;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::Layer as _;
 use winit::{event_loop::ControlFlow, window};
 
@@ -1042,7 +1042,7 @@ fn init_logging() -> anyhow::Result<()> {
 }
 
 fn determine_ui_scale(scale_factor: f64) -> client::pixel_scale::PixelScale {
-    match scale_factor {
+    let scale = match scale_factor {
         x if x < 1.0 => client::pixel_scale::PixelScale::ONE,
         _ => {
             // Multiplying by 6/6 captures most possible fractional scales.
@@ -1054,7 +1054,20 @@ fn determine_ui_scale(scale_factor: f64) -> client::pixel_scale::PixelScale {
                 client::pixel_scale::PixelScale::new(numerator, denominator)
             }
         }
+    };
+
+    if scale.is_fractional() {
+        let rounded = scale.round_up();
+        warn!(
+            requested = %scale,
+            using = %rounded,
+            "fractional scale not supported, rounding up"
+        );
+
+        return rounded;
     }
+
+    scale
 }
 
 fn determine_resolution(resolution: Resolution, width: u32, height: u32) -> (u32, u32) {
