@@ -17,7 +17,8 @@ use bytes::Bytes;
 use tracing::{debug, trace};
 
 use super::gop_structure::HierarchicalP;
-use super::rate_control::RateControlMode;
+use super::rate_control::{self, RateControlMode};
+use crate::codec::VideoCodec;
 use crate::color::VideoProfile;
 use crate::{
     compositor::{CompositorHandle, VideoStreamParams},
@@ -130,11 +131,19 @@ impl H265Encoder {
         );
 
         let structure = super::default_structure(
+            VideoCodec::H265,
             caps.h265_caps.max_sub_layer_count,
             caps.video_caps.max_dpb_slots,
         )?;
 
-        let rc_mode = super::rate_control::select_rc_mode(params, &caps.encode_caps);
+        let rc_mode = rate_control::select_rc_mode(
+            params,
+            &caps.encode_caps,
+            caps.h265_caps.min_qp.try_into().unwrap_or(17),
+            caps.h265_caps.max_qp.try_into().unwrap_or(50),
+            &structure,
+        );
+
         debug!(?rc_mode, "selected rate control mode");
 
         // TODO check more caps
@@ -400,8 +409,12 @@ impl H265Encoder {
         let mut h265_rc_layers = Vec::new();
         let mut rc_layers = Vec::new();
 
-        if let RateControlMode::Vbr(settings) = self.rc_mode {
-            for _ in 0..self.structure.layers {
+        if let RateControlMode::Vbr(vbr) = self.rc_mode {
+            let layer_settings = (0..self.structure.layers)
+                .map(|layer| vbr.layer(layer))
+                .collect::<Vec<_>>();
+
+            for settings in &layer_settings {
                 h265_rc_layers.push(
                     vk::VideoEncodeH265RateControlLayerInfoEXT::default()
                         .use_min_qp(true)
@@ -419,14 +432,22 @@ impl H265Encoder {
                 );
             }
 
-            for h265_layer in h265_rc_layers.iter_mut() {
+            for (layer, (settings, h265_rc_layer)) in layer_settings
+                .iter()
+                .zip(h265_rc_layers.iter_mut())
+                .enumerate()
+            {
+                let (fps_numerator, fps_denominator) = self
+                    .structure
+                    .layer_framerate(layer as u32, self.inner.framerate);
+
                 rc_layers.push(
                     vk::VideoEncodeRateControlLayerInfoKHR::default()
                         .max_bitrate(settings.peak_bitrate)
                         .average_bitrate(settings.average_bitrate)
-                        .frame_rate_numerator(self.inner.framerate)
-                        .frame_rate_denominator(1)
-                        .push_next(h265_layer),
+                        .frame_rate_numerator(fps_numerator)
+                        .frame_rate_denominator(fps_denominator)
+                        .push_next(h265_rc_layer),
                 );
             }
         }
@@ -479,7 +500,7 @@ impl H265Encoder {
         let slice_segment_info = [vk::VideoEncodeH265NaluSliceSegmentInfoEXT::default()
             .std_slice_segment_header(&std_slice_header)
             .constant_qp(if let RateControlMode::ConstantQp(qp) = self.rc_mode {
-                qp as i32
+                qp.layer(frame_state.id) as i32
             } else {
                 0
             })];

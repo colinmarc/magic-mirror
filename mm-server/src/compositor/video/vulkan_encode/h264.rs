@@ -15,7 +15,8 @@ use bytes::Bytes;
 use tracing::{debug, trace};
 
 use super::gop_structure::HierarchicalP;
-use super::rate_control::RateControlMode;
+use super::rate_control::{self, RateControlMode};
+use crate::codec::VideoCodec;
 use crate::{
     color::VideoProfile,
     compositor::{CompositorHandle, VideoStreamParams},
@@ -124,13 +125,20 @@ impl H264Encoder {
         //     quality_props.h264_props
         // );
 
-        let rc_mode = super::rate_control::select_rc_mode(params, &caps.encode_caps);
-        debug!(?rc_mode, "selected rate control mode");
-
         let structure = super::default_structure(
+            VideoCodec::H264,
             caps.h264_caps.max_temporal_layer_count,
             caps.video_caps.max_dpb_slots,
         )?;
+
+        let rc_mode = rate_control::select_rc_mode(
+            params,
+            &caps.encode_caps,
+            caps.h264_caps.min_qp.try_into().unwrap_or(17),
+            caps.h264_caps.max_qp.try_into().unwrap_or(50),
+            &structure,
+        );
+        debug!(?rc_mode, "selected rate control mode");
 
         // TODO check more caps
         // TODO autoselect level
@@ -310,8 +318,12 @@ impl H264Encoder {
         let mut h264_rc_layers = Vec::new();
         let mut rc_layers = Vec::new();
 
-        if let RateControlMode::Vbr(settings) = self.rc_mode {
-            for _ in 0..self.structure.layers {
+        if let RateControlMode::Vbr(vbr) = self.rc_mode {
+            let layer_settings = (0..self.structure.layers)
+                .map(|layer| vbr.layer(layer))
+                .collect::<Vec<_>>();
+
+            for settings in &layer_settings {
                 h264_rc_layers.push(
                     vk::VideoEncodeH264RateControlLayerInfoEXT::default()
                         .use_min_qp(true)
@@ -329,17 +341,27 @@ impl H264Encoder {
                 );
             }
 
-            rc_layers = h264_rc_layers
-                .iter_mut()
-                .map(|h264_layer| {
+            // We can't do this in one step because the borrow checker doesn't
+            // like the way push_next borrows.
+            // TODO: Ash 0.39 may make this easier.
+            for (layer, (settings, h264)) in layer_settings
+                .iter()
+                .zip(h264_rc_layers.iter_mut())
+                .enumerate()
+            {
+                let (fps_numerator, fps_denominator) = self
+                    .structure
+                    .layer_framerate(layer as u32, self.inner.framerate);
+
+                rc_layers.push(
                     vk::VideoEncodeRateControlLayerInfoKHR::default()
                         .max_bitrate(settings.peak_bitrate)
                         .average_bitrate(settings.average_bitrate)
-                        .frame_rate_numerator(self.inner.framerate)
-                        .frame_rate_denominator(1)
-                        .push_next(h264_layer)
-                })
-                .collect::<Vec<_>>();
+                        .frame_rate_numerator(fps_numerator)
+                        .frame_rate_denominator(fps_denominator)
+                        .push_next(h264),
+                );
+            }
         }
 
         let mut h264_rc_info = vk::VideoEncodeH264RateControlInfoEXT::default()
@@ -350,7 +372,7 @@ impl H264Encoder {
             .flags(vk::VideoEncodeH264RateControlFlagsEXT::REGULAR_GOP | pattern);
 
         let vbv_size = match self.rc_mode {
-            RateControlMode::Vbr(settings) => settings.vbv_size_ms,
+            RateControlMode::Vbr(vbr) => vbr.vbv_size_ms,
             _ => 0,
         };
 
@@ -389,7 +411,7 @@ impl H264Encoder {
         let nalu_slice_entries = [vk::VideoEncodeH264NaluSliceInfoEXT::default()
             .std_slice_header(&std_slice_header)
             .constant_qp(if let RateControlMode::ConstantQp(qp) = self.rc_mode {
-                qp as i32
+                qp.layer(frame_state.id) as i32
             } else {
                 0
             })];

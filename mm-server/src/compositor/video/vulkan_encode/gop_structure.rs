@@ -29,6 +29,7 @@ pub struct GopFrame {
 pub struct HierarchicalP {
     pub layers: u32,
     pub gop_size: u32,
+    pub mini_gop_size: u32,
     frame_num: u64,
 }
 
@@ -43,14 +44,13 @@ impl HierarchicalP {
         Self {
             layers,
             gop_size,
+            mini_gop_size,
             frame_num: 0,
         }
     }
 
     pub fn next_frame(&mut self) -> GopFrame {
-        let mini_gop_size = 2_u32.pow(self.layers - 1);
-
-        let mini_gop_pos = (self.frame_num % mini_gop_size as u64) as u32;
+        let mini_gop_pos = (self.frame_num % self.mini_gop_size as u64) as u32;
         let (layer, ref_layer) = if mini_gop_pos == 0 {
             (0, 0)
         } else {
@@ -96,6 +96,19 @@ impl HierarchicalP {
         // We should have one slot for each layer.
         std::cmp::max(self.layers as usize, 2)
     }
+
+    /// Returns the number of frames per second belonging to a particular layer
+    /// as a fractional number, given the layer and the total framerate.
+    pub fn layer_framerate(&self, layer: u32, base_framerate: u32) -> (u32, u32) {
+        if self.layers == 1 {
+            return (base_framerate, 1);
+        }
+
+        let frames_per_mini_gop = 2_u32.pow(layer.saturating_sub(1)); // 1, 1, 2, 4, 8, 16...
+        assert!(frames_per_mini_gop <= self.mini_gop_size / 2);
+
+        (base_framerate * frames_per_mini_gop, self.mini_gop_size)
+    }
 }
 
 fn temporal_layer(frame: u32, layers: u32) -> u32 {
@@ -125,6 +138,8 @@ mod test {
     #[test]
     fn test_gop() {
         let mut structure = HierarchicalP::new(3, 60);
+        assert_eq!(structure.gop_size, 60);
+        assert_eq!(structure.mini_gop_size, 4);
 
         let expected = [
             GopFrame {

@@ -11,7 +11,7 @@ use anyhow::{anyhow, bail, Context};
 use ash::vk;
 use bytes::Bytes;
 use crossbeam_channel as crossbeam;
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 
 use self::gop_structure::HierarchicalP;
 use super::begin_cb;
@@ -23,6 +23,7 @@ use crate::vulkan::{self, *};
 mod dpb;
 mod gop_structure;
 mod rate_control;
+mod stats;
 
 mod h264;
 use h264::H264Encoder;
@@ -97,6 +98,8 @@ struct EncoderInner {
     height: u32,
     framerate: u32,
     input_format: vk::Format,
+
+    stats: stats::EncodeStats,
 
     vk: Arc<VkContext>,
 }
@@ -212,6 +215,8 @@ impl EncoderInner {
             )?
         };
 
+        let stats = stats::EncodeStats::default();
+
         let (submitted_frames_tx, submitted_frames_rx) = crossbeam::bounded(1);
         let (done_frames_tx, done_frames_rx) = crossbeam::unbounded();
 
@@ -228,6 +233,7 @@ impl EncoderInner {
         // }
 
         let vk_clone = vk.clone();
+        let stats_clone = stats.clone();
         let handle = std::thread::spawn(move || {
             writer_thread(
                 vk_clone,
@@ -235,6 +241,7 @@ impl EncoderInner {
                 stream_seq,
                 submitted_frames_rx,
                 done_frames_tx,
+                stats_clone,
             )
         });
 
@@ -253,6 +260,8 @@ impl EncoderInner {
             height,
             framerate,
             input_format,
+
+            stats,
 
             vk,
         })
@@ -624,6 +633,7 @@ impl EncoderInner {
         }
 
         frame.hierarchical_layer = frame_state.id;
+        frame.is_keyframe = frame_state.is_keyframe;
         if let Some(submitted_frames) = &self.submitted_frames {
             // Tell the other thread to copy out the finished packet when it's
             // finished. Optionally insert headers.
@@ -657,6 +667,8 @@ impl Drop for EncoderInner {
             }
         }
 
+        debug!("stream stats: \n{:#?}", self.stats);
+
         let (video_loader, _) = self.vk.video_apis.as_ref().unwrap();
 
         unsafe {
@@ -683,6 +695,7 @@ struct EncoderOutputFrame {
     query_pool: vk::QueryPool,
 
     hierarchical_layer: u32,
+    is_keyframe: bool,
 
     timeline: VkTimelineSemaphore,
     tp_encoded: VkTimelinePoint,
@@ -765,6 +778,7 @@ impl EncoderOutputFrame {
             query_pool,
 
             hierarchical_layer: 0,
+            is_keyframe: false,
 
             tp_encoded: timeline.new_point(0),
             tp_copied: timeline.new_point(0),
@@ -814,6 +828,7 @@ fn writer_thread(
     stream_seq: u64,
     input: crossbeam::Receiver<WriterInput>,
     done: crossbeam::Sender<EncoderOutputFrame>,
+    stats: stats::EncodeStats,
 ) -> anyhow::Result<()> {
     let device = &vk.device;
     let mut seq = 0;
@@ -866,6 +881,11 @@ fn writer_thread(
         }
 
         trace!(len = results[0].size, "encoded packet");
+        stats.record_frame_size(
+            frame.is_keyframe,
+            frame.hierarchical_layer,
+            results[0].size as usize,
+        );
 
         let packet = unsafe {
             let ptr = frame.copy_buffer.access as *const u8;
@@ -1018,12 +1038,20 @@ fn single_profile_list_info<'a>(
     }
 }
 
-fn default_structure(_max_layers: u32, max_dpb_slots: u32) -> anyhow::Result<HierarchicalP> {
-    // Temporal layers don't work yet.
-    // let mut layers = std::cmp::min(4, max_layers);
-    let mut layers = 1;
-
+fn default_structure(
+    codec: VideoCodec,
+    max_codec_layers: u32,
+    max_dpb_slots: u32,
+) -> anyhow::Result<HierarchicalP> {
+    const MAX_LAYERS: u32 = 4;
     const DEFAULT_GOP_SIZE: u32 = 256;
+
+    // Disable hierarchical coding on H264, because it's broken.
+    let mut layers = if codec == VideoCodec::H264 {
+        1
+    } else {
+        std::cmp::min(MAX_LAYERS, max_codec_layers)
+    };
 
     let mut structure = HierarchicalP::new(layers as u32, DEFAULT_GOP_SIZE);
     while structure.required_dpb_size() as u32 > max_dpb_slots {
