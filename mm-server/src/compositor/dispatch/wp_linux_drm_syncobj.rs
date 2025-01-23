@@ -156,6 +156,7 @@ impl
         surface_key: &SurfaceKey,
     ) {
         if let Some(surface) = state.surfaces.get_mut(*surface_key) {
+            surface.wp_syncobj_surface = None;
             surface.pending_acquire_point = None;
             surface.pending_release_point = None;
         }
