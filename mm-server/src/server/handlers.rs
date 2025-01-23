@@ -488,11 +488,14 @@ fn attach(
                         match m {
                             protocol::MessageType::KeepAlive(_) => {},
                             protocol::MessageType::Detach(_) => return,
+                            protocol::MessageType::RequestVideoRefresh(ev) => {
+                                 handle.control.send(ControlMessage::RequestVideoRefresh(ev.stream_seq)).ok();
+
+                            }
                             protocol::MessageType::KeyboardInput(ev) => {
                                 use protocol::keyboard_input::KeyState;
 
                                 trace!(ev.key, ev.state, "received keyboard event: {:?}", ev);
-
 
                                 let state = match ev.state.try_into() {
                                     Ok(KeyState::Unknown) | Err(_) => {
@@ -700,7 +703,7 @@ fn attach(
                             return;
                         }
                     }
-                    Ok(CompositorEvent::VideoFrame { stream_seq, seq, ts, frame, .. }) => {
+                    Ok(CompositorEvent::VideoFrame { stream_seq, seq, ts, frame, hierarchical_layer, .. }) => {
                         let duration = last_video_frame_recv.elapsed();
                         if duration > time::Duration::from_millis(2 * 1000 / display_params.framerate as u64) {
                             debug!(dur = ?duration, "slow video frame");
@@ -744,6 +747,7 @@ fn attach(
                                 data,
                                 chunk,
                                 num_chunks,
+                                frame_optional: hierarchical_layer != 0,
                                 timestamp: ts,
                             };
 

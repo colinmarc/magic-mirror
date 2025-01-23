@@ -27,6 +27,7 @@ impl<T: From<AttachmentEvent> + std::fmt::Debug + Send + 'static> AttachmentProx
 pub enum AttachmentEvent {
     VideoStreamStart(u64, client::VideoStreamParams),
     VideoPacket(Arc<client::Packet>),
+    DroppedVideoPacket(client::DroppedPacket),
     AudioStreamStart(u64, client::AudioStreamParams),
     AudioPacket(Arc<client::Packet>),
     UpdateCursor {
@@ -52,6 +53,13 @@ impl std::fmt::Debug for AttachmentEvent {
             }
             AttachmentEvent::VideoPacket(packet) => {
                 write!(f, "VideoPacket({}, {})", packet.stream_seq(), packet.seq())
+            }
+            AttachmentEvent::DroppedVideoPacket(dropped) => {
+                write!(
+                    f,
+                    "DroppedVideoPacket({}, {}, optional={})",
+                    dropped.stream_seq, dropped.seq, dropped.optional
+                )
             }
             AttachmentEvent::AudioStreamStart(stream_seq, _) => {
                 write!(f, "AudioStreamStart({})", stream_seq)
@@ -90,6 +98,10 @@ impl<T: From<AttachmentEvent> + std::fmt::Debug + Send + 'static> client::Attach
 
     fn video_packet(&self, packet: Arc<client::Packet>) {
         self.proxy(AttachmentEvent::VideoPacket(packet))
+    }
+
+    fn dropped_video_packet(&self, dropped: client::DroppedPacket) {
+        self.proxy(AttachmentEvent::DroppedVideoPacket(dropped))
     }
 
     fn audio_stream_start(&self, stream_seq: u64, params: client::AudioStreamParams) {

@@ -119,6 +119,7 @@ message_types! {
     33 => SessionParametersChanged,
     35 => Detach,
     51 => VideoChunk,
+    52 => RequestVideoRefresh,
     56 => AudioChunk,
     60 => KeyboardInput,
     61 => PointerEntered,
@@ -254,6 +255,7 @@ mod tests {
         num_chunks: 4,
         data: bytes::Bytes::from(vec![9; 52]),
         timestamp: 1234,
+        frame_optional: false,
     });
 
     test_roundtrip!(test_roundtrip_frame: VideoChunk {
@@ -265,6 +267,7 @@ mod tests {
         num_chunks: 4,
         data: bytes::Bytes::from(vec![9; 1200]),
         timestamp: 1234,
+        frame_optional: false,
     });
 
     #[test]

@@ -80,6 +80,13 @@ impl VulkanEncoder {
             Self::H265(encoder) => encoder.create_input_image(),
         }
     }
+
+    pub fn request_refresh(&mut self) {
+        match self {
+            VulkanEncoder::H264(encoder) => encoder.request_refresh(),
+            VulkanEncoder::H265(encoder) => encoder.request_refresh(),
+        }
+    }
 }
 
 struct EncoderInner {
@@ -841,7 +848,7 @@ fn writer_thread(
                     seq,
                     ts: EPOCH.elapsed().as_nanos() as u64,
                     frame: header,
-                    _hierarchical_layer: 0,
+                    hierarchical_layer: 0,
                 });
 
                 seq += 1;
@@ -900,7 +907,7 @@ fn writer_thread(
             seq,
             ts: capture_ts,
             frame: Bytes::copy_from_slice(packet),
-            _hierarchical_layer: frame.hierarchical_layer,
+            hierarchical_layer: frame.hierarchical_layer,
         });
         seq += 1;
 

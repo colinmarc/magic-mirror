@@ -306,6 +306,9 @@ impl H264Encoder {
         let frame_state = self.structure.next_frame();
         if frame_state.is_keyframe {
             self.idr_num += 1;
+        }
+
+        if frame_state.gop_position == 0 {
             self.frame_num = 0;
         }
 
@@ -495,7 +498,7 @@ impl H264Encoder {
         let mut setup_info =
             vk::VideoEncodeH264DpbSlotInfoEXT::default().std_reference_info(&setup_std_ref_info);
 
-        let insert = if frame_state.stream_position == 0 {
+        let insert = if frame_state.is_keyframe {
             Some(self.headers.clone())
         } else {
             None
@@ -533,5 +536,9 @@ impl H264Encoder {
 
     pub fn create_input_image(&mut self) -> anyhow::Result<VkImage> {
         self.inner.create_input_image(self.profile.as_mut())
+    }
+
+    pub fn request_refresh(&mut self) {
+        self.structure.request_refresh()
     }
 }

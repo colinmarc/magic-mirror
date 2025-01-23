@@ -93,6 +93,13 @@ impl Encoder {
             Self::Vulkan(enc) => enc.create_input_image(),
         }
     }
+
+    pub fn request_refresh(&mut self) {
+        match self {
+            Encoder::Cpu(enc) => enc.request_refresh(),
+            Encoder::Vulkan(enc) => enc.request_refresh(),
+        }
+    }
 }
 
 pub struct SwapFrame {
@@ -601,6 +608,10 @@ impl EncodePipeline {
         self.swap_idx = (self.swap_idx + 1) % swap_len;
 
         Ok(tp_clear)
+    }
+
+    pub fn request_refresh(&mut self) {
+        self.encoder.request_refresh()
     }
 }
 

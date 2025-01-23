@@ -28,7 +28,7 @@ pub mod pixel_scale;
 
 pub use attachment::*;
 pub use logging::*;
-pub use packet::Packet;
+pub use packet::*;
 pub use session::*;
 
 uniffi::setup_scaffolding!();

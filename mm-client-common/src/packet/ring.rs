@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use mm_protocol as protocol;
 use tracing::warn;
 
-use super::Packet;
+use super::{DroppedPacket, Packet};
 
 const RING_TARGET_SIZE: usize = 5;
 
@@ -18,6 +18,7 @@ pub(crate) trait Chunk {
     fn num_chunks(&self) -> u32;
     fn data(&self) -> bytes::Bytes;
     fn pts(&self) -> u64;
+    fn frame_optional(&self) -> bool;
 }
 
 impl Chunk for protocol::VideoChunk {
@@ -43,6 +44,10 @@ impl Chunk for protocol::VideoChunk {
 
     fn pts(&self) -> u64 {
         self.timestamp
+    }
+
+    fn frame_optional(&self) -> bool {
+        self.frame_optional
     }
 }
 
@@ -70,6 +75,10 @@ impl Chunk for protocol::AudioChunk {
     fn pts(&self) -> u64 {
         self.timestamp
     }
+
+    fn frame_optional(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug)]
@@ -77,6 +86,7 @@ struct WipPacket {
     stream_seq: u64,
     seq: u64,
     pts: u64,
+    frame_optional: bool,
     chunks: Vec<Option<bytes::Bytes>>,
 }
 
@@ -110,13 +120,12 @@ pub(crate) enum PacketRingError {
 pub(crate) struct PacketRing {
     // Oldest frames at the front, newest at the back.
     ring: VecDeque<WipPacket>,
+    dropped: VecDeque<DroppedPacket>,
 }
 
 impl PacketRing {
     pub(crate) fn new() -> Self {
-        Self {
-            ring: VecDeque::new(),
-        }
+        Self::default()
     }
 
     pub(crate) fn recv_chunk(&mut self, incoming: impl Chunk) -> Result<(), PacketRingError> {
@@ -142,6 +151,7 @@ impl PacketRing {
                     stream_seq: incoming.stream_seq(),
                     seq: incoming.seq(),
                     pts: incoming.pts(),
+                    frame_optional: incoming.frame_optional(),
                     chunks: vec![None; incoming.num_chunks().max(1) as usize],
                 };
 
@@ -169,13 +179,22 @@ impl PacketRing {
                     // If the oldest frame is incomplete, drop it to make room.
                     if !front.is_complete() {
                         let dropped = self.ring.pop_front().unwrap();
+
                         warn!(
                             seq = dropped.seq,
                             stream_seq = dropped.stream_seq,
                             num_chunks = dropped.chunks.len(),
                             missing_chunks = dropped.chunks.iter().filter(|c| c.is_none()).count(),
+                            frame_optional = dropped.frame_optional,
                             "dropped packet!",
                         );
+
+                        self.dropped.push_back(DroppedPacket {
+                            pts: dropped.pts,
+                            seq: dropped.seq,
+                            stream_seq: dropped.stream_seq,
+                            optional: dropped.frame_optional,
+                        })
                     } else {
                         break;
                     }
@@ -205,17 +224,26 @@ impl PacketRing {
 pub(crate) struct DrainCompleted<'a>(&'a mut PacketRing, u64);
 
 impl Iterator for DrainCompleted<'_> {
-    type Item = Packet;
+    type Item = Result<Packet, DroppedPacket>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let ring = &mut self.0.ring;
+        let dropped = self
+            .0
+            .dropped
+            .iter()
+            .position(|p| p.stream_seq == self.1)
+            .and_then(|idx| self.0.dropped.remove(idx));
+        if let Some(dropped) = dropped {
+            return Some(Err(dropped));
+        }
 
+        let ring = &mut self.0.ring;
         match ring
             .iter()
             .enumerate()
             .find(|(_, wip)| wip.stream_seq == self.1)
         {
-            Some((idx, v)) if v.is_complete() => Some(ring.remove(idx).unwrap().complete()),
+            Some((idx, v)) if v.is_complete() => Some(Ok(ring.remove(idx).unwrap().complete())),
             _ => None,
         }
     }
@@ -234,6 +262,7 @@ mod tests {
             assert_eq!(s.len(), completed.len());
 
             for (expected_seq, actual) in s.iter().zip(completed.into_iter()) {
+                let actual = actual.expect("no dropped packet");
                 assert_eq!(actual.seq, *expected_seq);
                 assert_eq!(&actual.data(), &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
             }
@@ -285,14 +314,27 @@ mod tests {
             ring.recv_chunk(chunks[0].clone()).unwrap();
         }
 
-        // The ring should have dropped the partial frames and should now return
-        // the complete one.
-        let mut completed = ring.drain_completed(0).collect::<Vec<_>>();
-        assert_eq!(1, completed.len());
-        assert_eq!(completed[0].seq, 10);
+        // The ring should have dropped the partial frames and should indicate
+        // that alongside the completed one.
+        let completed = ring.drain_completed(0).collect::<Vec<_>>();
+        assert_eq!(11, completed.len());
+        assert_eq!(completed[0].as_ref().err().unwrap().seq, 0);
+        assert_eq!(completed[1].as_ref().err().unwrap().seq, 1);
+        assert_eq!(completed[2].as_ref().err().unwrap().seq, 2);
+        assert_eq!(completed[3].as_ref().err().unwrap().seq, 3);
+        assert_eq!(completed[4].as_ref().err().unwrap().seq, 4);
+        assert_eq!(completed[5].as_ref().err().unwrap().seq, 5);
+        assert_eq!(completed[6].as_ref().err().unwrap().seq, 6);
+        assert_eq!(completed[7].as_ref().err().unwrap().seq, 7);
+        assert_eq!(completed[8].as_ref().err().unwrap().seq, 8);
+        assert_eq!(completed[9].as_ref().err().unwrap().seq, 9);
+        assert_eq!(completed[10].as_ref().unwrap().seq, 10);
 
-        let frame = completed.pop().unwrap();
-        assert_eq!(&frame.data(), &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let frame = completed.last().unwrap();
+        assert_eq!(
+            &frame.as_ref().unwrap().data(),
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        );
     }
 
     fn make_chunks(seq: u64, chunks: &[&[u8]]) -> Vec<protocol::VideoChunk> {
@@ -308,6 +350,7 @@ mod tests {
                 num_chunks: chunks.len() as u32,
                 data: bytes::Bytes::copy_from_slice(chunk),
                 timestamp: 0,
+                frame_optional: false,
             })
             .collect()
     }

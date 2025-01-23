@@ -35,6 +35,10 @@ struct VkExtMemoryFrame {
     offsets: [usize; 3],
     copy_cb: vk::CommandBuffer,
     copy_fence: vk::Fence,
+
+    /// Instructs the encoder to generate a keyframe.
+    request_refresh: bool,
+
     vk: Arc<VkContext>,
 }
 
@@ -69,6 +73,7 @@ impl VkExtMemoryFrame {
             offsets: buffer_offsets,
             copy_cb,
             copy_fence,
+            request_refresh: false,
             vk,
         })
     }
@@ -106,6 +111,9 @@ pub struct CpuEncoder {
     input_frames: Option<crossbeam::Sender<(VkTimelinePoint, VkExtMemoryFrame)>>,
     done_frames: crossbeam::Receiver<VkExtMemoryFrame>,
     graphics_queue: VkQueue,
+
+    needs_refresh: bool,
+
     vk: Arc<VkContext>,
 }
 
@@ -191,6 +199,7 @@ impl CpuEncoder {
             input_frames: Some(input_frames_tx),
             done_frames: done_frames_rx,
             graphics_queue: vk.graphics_queue.clone(),
+            needs_refresh: false,
             vk,
         })
     }
@@ -252,7 +261,7 @@ impl CpuEncoder {
     ) -> anyhow::Result<()> {
         // "Acquire" a frame to copy to. This provides backpressure if the
         // encoder can't keep up.
-        let frame = match self.done_frames.recv() {
+        let mut frame = match self.done_frames.recv() {
             Ok(frame) => frame,
             Err(_) => {
                 bail!("encoder thread died");
@@ -391,6 +400,14 @@ impl CpuEncoder {
             device.queue_submit(self.graphics_queue.queue, &[submit_info], frame.copy_fence)?;
         }
 
+        // Request a refresh from the encoder if needed.
+        if self.needs_refresh {
+            frame.request_refresh = true;
+            self.needs_refresh = false;
+        } else {
+            frame.request_refresh = false;
+        }
+
         match self
             .input_frames
             .as_ref()
@@ -404,6 +421,10 @@ impl CpuEncoder {
         }
 
         Ok(())
+    }
+
+    pub fn request_refresh(&mut self) {
+        self.needs_refresh = true
     }
 }
 
@@ -469,7 +490,7 @@ fn encode_thread(
                 seq,
                 ts: capture_ts,
                 frame: pkt,
-                _hierarchical_layer: 0, // TODO
+                hierarchical_layer: 0,
             });
             seq += 1;
         }
@@ -497,7 +518,7 @@ fn encode_thread(
             seq,
             ts: EPOCH.elapsed().as_millis() as u64,
             frame: pkt,
-            _hierarchical_layer: 0, // TODO
+            hierarchical_layer: 0,
         });
         seq += 1;
     }

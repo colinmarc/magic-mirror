@@ -137,6 +137,9 @@ struct AttachmentWindow {
     last_frame_received: time::Instant,
     resize_cooldown: Option<time::Instant>,
 
+    needs_refresh: Option<u64>,
+    refresh_cooldown: Option<time::Instant>,
+
     cursor_modifiers: winit::keyboard::ModifiersState,
     cursor_pos: Option<(f64, f64)>,
 
@@ -516,10 +519,17 @@ impl AttachmentWindow {
                         params.height,
                         params.codec,
                     )?;
+                    self.needs_refresh = None;
                 }
                 VideoPacket(packet) => {
                     self.last_frame_received = time::Instant::now();
                     self.video_stream.recv_packet(packet)?;
+                }
+                DroppedVideoPacket(dropped) => {
+                    // Only request a keyframe once every ten seconds.
+                    if !dropped.optional {
+                        self.needs_refresh = Some(dropped.stream_seq);
+                    }
                 }
                 AudioStreamStart(stream_seq, params) => {
                     self.attachment_config.audio_stream_seq_offset =
@@ -727,6 +737,20 @@ impl AttachmentWindow {
             }
 
             self.resize_cooldown = None;
+        }
+
+        // Request a video refresh if we need one, but only every ten seconds.
+        if self.needs_refresh.is_some()
+            && self
+                .refresh_cooldown
+                .is_none_or(|t| t.elapsed() > time::Duration::from_secs(10))
+        {
+            let stream_seq = self.needs_refresh.unwrap();
+
+            debug!(stream_seq, "requesting video refresh");
+            self.attachment.request_video_refresh(stream_seq);
+            self.refresh_cooldown = Some(time::Instant::now());
+            self.needs_refresh = None;
         }
 
         Ok(true)
@@ -989,6 +1013,9 @@ fn init_window(
         next_frame: now + MAX_FRAME_TIME,
         last_frame_received: now,
         resize_cooldown: None,
+
+        needs_refresh: None,
+        refresh_cooldown: None,
 
         cursor_modifiers: winit::keyboard::ModifiersState::default(),
         cursor_pos: None,

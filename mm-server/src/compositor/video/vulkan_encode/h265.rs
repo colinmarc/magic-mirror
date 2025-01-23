@@ -6,13 +6,6 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context};
 use ash::vk;
-use ash::vk::native::{
-    StdVideoEncodeH265SliceSegmentHeader,
-    StdVideoH265ChromaFormatIdc_STD_VIDEO_H265_CHROMA_FORMAT_IDC_420, StdVideoH265DecPicBufMgr,
-    StdVideoH265PictureParameterSet, StdVideoH265ProfileTierLevel,
-    StdVideoH265SequenceParameterSet, StdVideoH265SequenceParameterSetVui,
-    StdVideoH265ShortTermRefPicSet, StdVideoH265VideoParameterSet,
-};
 use bytes::Bytes;
 use tracing::{debug, trace};
 
@@ -221,7 +214,7 @@ impl H265Encoder {
             VideoProfile::Hdr10 => (9, 16, 9),
         };
 
-        let mut vui = StdVideoH265SequenceParameterSetVui {
+        let mut vui = vk::native::StdVideoH265SequenceParameterSetVui {
             colour_primaries,
             transfer_characteristics,
             matrix_coeffs,
@@ -234,7 +227,7 @@ impl H265Encoder {
         vui.flags.set_colour_description_present_flag(1);
         vui.flags.set_video_full_range_flag(0); // Narrow range.
 
-        let ptl = StdVideoH265ProfileTierLevel {
+        let ptl = vk::native::StdVideoH265ProfileTierLevel {
             general_profile_idc: profile_idc,
             general_level_idc: level_idc,
             ..unsafe { std::mem::zeroed() }
@@ -244,14 +237,14 @@ impl H265Encoder {
         // ptl.flags.set_general_interlaced_source_flag(0);
 
         let layers_minus_1 = (structure.layers - 1) as u8;
-        let mut pbm: StdVideoH265DecPicBufMgr = unsafe { std::mem::zeroed() };
+        let mut pbm: vk::native::StdVideoH265DecPicBufMgr = unsafe { std::mem::zeroed() };
         pbm.max_dec_pic_buffering_minus1[layers_minus_1 as usize] =
             (structure.required_dpb_size() - 1) as u8;
         // No picture reordering.
         pbm.max_num_reorder_pics[layers_minus_1 as usize] = 0;
         pbm.max_latency_increase_plus1[layers_minus_1 as usize] = 0;
 
-        let mut vps = StdVideoH265VideoParameterSet {
+        let mut vps = vk::native::StdVideoH265VideoParameterSet {
             vps_max_sub_layers_minus1: layers_minus_1,
             pDecPicBufMgr: &pbm,
             pHrdParameters: std::ptr::null(),
@@ -272,8 +265,9 @@ impl H265Encoder {
             VideoProfile::Hdr10 => 10,
         };
 
-        let mut sps = StdVideoH265SequenceParameterSet {
-            chroma_format_idc: StdVideoH265ChromaFormatIdc_STD_VIDEO_H265_CHROMA_FORMAT_IDC_420,
+        let mut sps = vk::native::StdVideoH265SequenceParameterSet {
+            chroma_format_idc:
+                vk::native::StdVideoH265ChromaFormatIdc_STD_VIDEO_H265_CHROMA_FORMAT_IDC_420,
             pic_width_in_luma_samples: aligned_width,
             pic_height_in_luma_samples: aligned_height,
             sps_max_sub_layers_minus1: layers_minus_1,
@@ -315,7 +309,7 @@ impl H265Encoder {
             sps.flags.set_transform_skip_context_enabled_flag(1);
         }
 
-        let pps = StdVideoH265PictureParameterSet {
+        let pps = vk::native::StdVideoH265PictureParameterSet {
             ..unsafe { std::mem::zeroed() }
         };
 
@@ -490,7 +484,7 @@ impl H265Encoder {
             vk::native::StdVideoH265PictureType_STD_VIDEO_H265_PICTURE_TYPE_P
         };
 
-        let std_slice_header = StdVideoEncodeH265SliceSegmentHeader {
+        let std_slice_header = vk::native::StdVideoEncodeH265SliceSegmentHeader {
             slice_type,
             pWeightTable: &weight_table,
             MaxNumMergeCand: 5, // Decoders complain if this is zero. The max value is 5.
@@ -524,29 +518,37 @@ impl H265Encoder {
         // For each frame, we have to tell the decoder which pictures will be
         // used as references in the future, in addition to those that are
         // references for this frame.
-        let mut ref_ids = self
-            .pic_metadata
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(id, md)| {
-                let id = id as u32;
-                if md.ref_count == 0 {
-                    None
-                } else if frame_state.ref_ids.contains(&id) {
-                    md.ref_count -= 1;
-                    Some((id, true))
-                } else {
-                    Some((id, false))
-                }
-            })
-            .collect::<Vec<_>>();
+        let mut ref_ids = if frame_state.is_keyframe {
+            // If we're outputting a keyframe, clear the forward reference counts.
+            for md in &mut self.pic_metadata {
+                md.ref_count = 0;
+            }
+
+            Vec::new()
+        } else {
+            self.pic_metadata
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(id, md)| {
+                    let id = id as u32;
+                    if md.ref_count == 0 {
+                        None
+                    } else if frame_state.ref_ids.contains(&id) {
+                        md.ref_count -= 1;
+                        Some((id, true))
+                    } else {
+                        Some((id, false))
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
 
         // Sort in descending order of POC.
         ref_ids.sort_by_key(|(id, _)| {
             std::cmp::Reverse(self.pic_metadata[*id as usize].pic_order_cnt)
         });
 
-        let mut short_term_refs = StdVideoH265ShortTermRefPicSet {
+        let mut short_term_refs = vk::native::StdVideoH265ShortTermRefPicSet {
             used_by_curr_pic_s0_flag: 0,
             num_negative_pics: ref_ids.len() as u8,
             // No forward refs.
@@ -558,7 +560,16 @@ impl H265Encoder {
         let pic_order_cnt = frame_state.gop_position as i32;
         let mut delta_poc = 0;
         for (idx, (id, is_direct_ref)) in ref_ids.into_iter().enumerate() {
-            delta_poc = (pic_order_cnt - self.pic_metadata[id as usize].pic_order_cnt) - delta_poc;
+            // delta_poc accumulates for each step backwards in time we take.
+            // So if a frame references the immediately preceding one and then a
+            // frame four frames ago, the delta_poc values are 1 and 3.
+            //
+            // Taking the modulo allows us to reference frames across a GOP
+            // boundary.
+            delta_poc = (pic_order_cnt - self.pic_metadata[id as usize].pic_order_cnt)
+                .rem_euclid(self.structure.gop_size as i32)
+                - delta_poc;
+
             short_term_refs.delta_poc_s0_minus1[idx] = (delta_poc - 1) as u16;
             if is_direct_ref {
                 short_term_refs.used_by_curr_pic_s0_flag |= 1 << idx;
@@ -658,5 +669,9 @@ impl H265Encoder {
 
     pub fn create_input_image(&mut self) -> anyhow::Result<VkImage> {
         self.inner.create_input_image(self.profile.as_mut())
+    }
+
+    pub fn request_refresh(&mut self) {
+        self.structure.request_refresh()
     }
 }

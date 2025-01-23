@@ -276,7 +276,7 @@ impl Compositor {
 
             video_pipeline: None,
             new_video_stream_params: None,
-            video_stream_seq: 1,
+            video_stream_seq: 0,
 
             audio_pipeline,
 
@@ -783,6 +783,7 @@ impl Compositor {
         }
 
         if let Some(params) = self.state.new_video_stream_params.take() {
+            self.state.video_stream_seq += 1;
             self.state.video_pipeline = Some(video::EncodePipeline::new(
                 self.state.vk.clone(),
                 self.state.video_stream_seq,
@@ -790,8 +791,6 @@ impl Compositor {
                 self.state.display_params,
                 params,
             )?);
-
-            self.state.video_stream_seq += 1;
         } else if self.state.video_pipeline.is_none() {
             return Ok(());
         }
@@ -935,6 +934,19 @@ impl Compositor {
                     self.state.audio_pipeline.stop_stream();
                     self.state.video_pipeline = None;
                     self.state.update_focus_and_visibility(false)?;
+                }
+            }
+            ControlMessage::RequestVideoRefresh(stream_seq) => {
+                if let Some(video) = &mut self.state.video_pipeline {
+                    if self.state.video_stream_seq == stream_seq {
+                        video.request_refresh();
+                    } else {
+                        debug!(
+                            requested_stream_seq = stream_seq,
+                            current_stream_seq = self.state.video_stream_seq,
+                            "ignoring refresh request"
+                        );
+                    }
                 }
             }
             ControlMessage::UpdateDisplayParams(params) => {

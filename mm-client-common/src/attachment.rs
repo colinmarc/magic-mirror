@@ -87,6 +87,9 @@ pub struct AudioStreamParams {
 pub struct Attachment {
     sid: u64,
 
+    /// Used to un-munge the stream_seq for [Attachment::request_video_refresh].
+    video_stream_seq_offset: u64,
+
     // We store a copy of these so that we can send messages on the attachment
     // stream without locking the client mutex.
     outgoing: flume::Sender<conn::OutgoingMessage>,
@@ -155,6 +158,7 @@ impl Attachment {
 
         Ok(Self {
             sid,
+            video_stream_seq_offset,
             outgoing,
             conn_waker,
             detached: detached_rx.shared(),
@@ -170,6 +174,9 @@ pub trait AttachmentDelegate: Send + Sync + std::fmt::Debug {
 
     /// A video packet is available.
     fn video_packet(&self, packet: Arc<packet::Packet>);
+
+    /// A video packet was lost.
+    fn dropped_video_packet(&self, dropped: packet::DroppedPacket);
 
     /// The audio stream is starting or restarting.
     fn audio_stream_start(&self, stream_seq: u64, params: AudioStreamParams);
@@ -223,6 +230,16 @@ impl Attachment {
 
 #[uniffi::export]
 impl Attachment {
+    /// Requests that the server generate a packet with headers and a keyframe.
+    pub fn request_video_refresh(&self, stream_seq: u64) {
+        self.send(
+            protocol::RequestVideoRefresh {
+                stream_seq: stream_seq - self.video_stream_seq_offset,
+            },
+            false,
+        )
+    }
+
     /// Sends keyboard input to the server.
     pub fn keyboard_input(&self, key: input::Key, state: input::KeyState, character: u32) {
         self.send(
@@ -397,19 +414,32 @@ impl AttachmentState {
                 }
 
                 if let Some(prev) = self.prev_video_stream_seq {
-                    for mut packet in self.video_packet_ring.drain_completed(prev) {
+                    // Ignore dropped packets on the previous stream.
+                    for mut packet in self
+                        .video_packet_ring
+                        .drain_completed(prev)
+                        .flat_map(Result::ok)
+                    {
                         packet.stream_seq += self.video_stream_seq_offset;
                         self.delegate.video_packet(Arc::new(packet));
                     }
                 }
 
                 if self.video_stream_seq != self.prev_video_stream_seq {
-                    for mut packet in self
+                    for res in self
                         .video_packet_ring
                         .drain_completed(self.video_stream_seq.unwrap())
                     {
-                        packet.stream_seq += self.video_stream_seq_offset;
-                        self.delegate.video_packet(Arc::new(packet));
+                        match res {
+                            Ok(mut packet) => {
+                                packet.stream_seq += self.video_stream_seq_offset;
+                                self.delegate.video_packet(Arc::new(packet));
+                            }
+                            Err(mut dropped) => {
+                                dropped.stream_seq += self.video_stream_seq_offset;
+                                self.delegate.dropped_video_packet(dropped);
+                            }
+                        }
                     }
                 }
             }
@@ -448,7 +478,11 @@ impl AttachmentState {
                 }
 
                 if let Some(prev) = self.prev_audio_stream_seq {
-                    for mut packet in self.audio_packet_ring.drain_completed(prev) {
+                    for mut packet in self
+                        .audio_packet_ring
+                        .drain_completed(prev)
+                        .flat_map(Result::ok)
+                    {
                         packet.stream_seq += self.audio_stream_seq_offset;
                         self.delegate.audio_packet(Arc::new(packet));
                     }
@@ -458,6 +492,7 @@ impl AttachmentState {
                     for mut packet in self
                         .audio_packet_ring
                         .drain_completed(self.audio_stream_seq.unwrap())
+                        .flat_map(Result::ok)
                     {
                         packet.stream_seq += self.audio_stream_seq_offset;
                         self.delegate.audio_packet(Arc::new(packet));

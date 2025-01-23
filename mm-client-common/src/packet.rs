@@ -15,6 +15,17 @@ pub struct Packet {
     data: VecDeque<bytes::Bytes>,
 }
 
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DroppedPacket {
+    pub pts: u64,
+    pub seq: u64,
+    pub stream_seq: u64,
+
+    /// An optional packet can be dropped without affecting the decoder's
+    /// ability to continue.
+    pub optional: bool,
+}
+
 #[uniffi::export]
 impl Packet {
     pub fn pts(&self) -> u64 {

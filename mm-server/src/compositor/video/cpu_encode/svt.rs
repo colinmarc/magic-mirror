@@ -16,7 +16,8 @@ impl<T: svt::Encoder> super::EncoderInner for SvtEncoder<T> {
     type Packet = T::Packet;
 
     fn send_picture(&mut self, frame: &super::VkExtMemoryFrame, pts: u64) -> anyhow::Result<()> {
-        self.inner.send_picture(frame, pts.try_into()?, false)?;
+        self.inner
+            .send_picture(frame, pts.try_into()?, frame.request_refresh)?;
         Ok(())
     }
 

@@ -46,6 +46,7 @@ pub enum ControlMessage {
         ready: oneshot::Sender<()>,
     },
     Detach(u64),
+    RequestVideoRefresh(u64),
     UpdateDisplayParams(DisplayParams),
     KeyboardInput {
         key_code: u32,
@@ -95,7 +96,7 @@ pub enum CompositorEvent {
         ts: u64,
         frame: bytes::Bytes,
         /// A lower value means a higher priority.
-        _hierarchical_layer: u32,
+        hierarchical_layer: u32,
     },
     AudioFrame {
         stream_seq: u64,

@@ -671,7 +671,8 @@ message Detach {}
 //  - The server may reuse an existing compression context for a new attachment,
 //    but in this case the stream must be resumable by the client within a
 //    reasonable time frame. For H.265, for example, this means sending headers
-//    with every keyframe, and keyframes every few seconds.
+//    with every keyframe, and a keyframe immediately after the attachment
+//    begins.
 //
 // ### Audio compression
 //
@@ -685,6 +686,11 @@ message Detach {}
 // This message, which must originate from the server as a datagram or on the
 // same stream as the original `030 - Attach` message, contains a part of a
 // video packet.
+//
+// Much of the metadata associated with the chunk applies to all chunks of a
+// given packet, but must be repeated on each chunk such that a client
+// receiving the first (potentially out-of-order) chunk has sufficient
+// information to deal with it.
 message VideoChunk {
   // Required unless sent on the same stream as the original attach message.
   uint64 session_id = 1;
@@ -700,6 +706,12 @@ message VideoChunk {
   uint32 chunk = 12;
   uint32 num_chunks = 13;
 
+  // If set, the frame represented by this chunk can be discarded without
+  // harming the decoder's ability to continue decoding the stream. This can be
+  // true if, for example, the encoder is using temporal scaling and this frame
+  // belongs to a higher temporal layer.
+  bool frame_optional = 14;
+
   // TODO FEC
 
   // Required. A millisecond timestamp with an arbitrary epoch, used to
@@ -707,6 +719,17 @@ message VideoChunk {
   uint64 timestamp = 20;
 
   bytes data = 99;
+}
+
+// ### 052 - Request Video Refresh
+//
+// This message, which must be sent by the client on the same stream as the
+// original `030 - Attach` message, requests that the server perform an IDR
+// refresh in the current video stream as soon as possible. The server should
+// send stream headers and a full keyframe as soon as possible, unless the
+// indicated stream is ended or restarted.
+message RequestVideoRefresh {
+  uint64 stream_seq = 1;
 }
 
 // ### 056 - Audio Chunk

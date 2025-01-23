@@ -30,7 +30,10 @@ pub struct HierarchicalP {
     pub layers: u32,
     pub gop_size: u32,
     pub mini_gop_size: u32,
+
     frame_num: u64,
+    gop_position: u64,
+    needs_refresh: bool,
 }
 
 impl HierarchicalP {
@@ -46,6 +49,8 @@ impl HierarchicalP {
             gop_size,
             mini_gop_size,
             frame_num: 0,
+            gop_position: 0,
+            needs_refresh: true,
         }
     }
 
@@ -62,12 +67,18 @@ impl HierarchicalP {
             )
         };
 
-        let gop_position = self.frame_num % self.gop_size as u64;
-        let ref_ids = if gop_position == 0 {
-            vec![]
+        let is_keyframe;
+        if self.needs_refresh && mini_gop_pos == 0 {
+            self.needs_refresh = false;
+
+            // Close the GOP, and start a new one.
+            self.gop_position = 0;
+            is_keyframe = true;
         } else {
-            vec![ref_layer]
-        };
+            is_keyframe = false;
+        }
+
+        let ref_ids = if is_keyframe { vec![] } else { vec![ref_layer] };
 
         let forward_ref_count = if layer == 0 {
             // One for each layer above, plus the next mini-GOP.
@@ -80,16 +91,22 @@ impl HierarchicalP {
         // We use the layer as the frame ID.
         let frame = GopFrame {
             stream_position: self.frame_num,
-            gop_position,
+            gop_position: self.gop_position,
 
             id: layer,
             ref_ids,
-            is_keyframe: gop_position == 0,
+            is_keyframe,
             forward_ref_count,
         };
 
         self.frame_num += 1;
+        self.gop_position = (self.gop_position + 1) % (self.gop_size as u64);
         frame
+    }
+
+    /// Causes a keyframe to be generated at the start of the next mini-GOP.
+    pub fn request_refresh(&mut self) {
+        self.needs_refresh = true
     }
 
     pub fn required_dpb_size(&self) -> usize {

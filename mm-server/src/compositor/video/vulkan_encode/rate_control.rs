@@ -67,7 +67,7 @@ impl LayeredVbr {
             return self.base;
         }
 
-        let bitrate_denominator = 2_u64.pow(layer as u32 + 1);
+        let bitrate_denominator = 2_u64.pow(layer + 1);
         let max_qp = layer_qp(self.base.max_qp, layer).clamp(self.base.min_qp, self.base.max_qp);
 
         VbrSettings {
