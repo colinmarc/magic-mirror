@@ -68,6 +68,16 @@ max_connections = 4
 ## Whether to use mDNS to allow clients to discover the server.
 mdns = true
 
+## Determines the FEC (forward error correction) ratio to use for each video
+## layer. For example, an array of values ilke `[0.20, 0.10, 0.05]` would use
+## 0.20 for the base layer, 0.10 for the second layer, etc. If a layer is not
+## covered because the array isn't long enough, the FEC ratio for that layer
+## defaults to 0.0. Use an empty array to disable FEC altogether.
+##
+## If hierarchical coding is not in use, then only the first value applies to
+## all video frames.
+video_fec_ratios = [0.15]
+
 ## The hostname to advertise over mDNS. Defaults to `"$(uname -n).local.` if left
 ## unset, or ignored if `mdns` is `false`.
 # mdns_hostname = "mycomputer.local."

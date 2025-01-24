@@ -92,6 +92,7 @@ mod parsed {
         pub(super) mdns: Option<bool>,
         pub(super) mdns_hostname: Option<String>,
         pub(super) mdns_instance_name: Option<String>,
+        pub(super) video_fec_ratios: Option<Vec<f32>>,
     }
 
     #[derive(Debug, Clone, PartialEq, Deserialize, Converge)]
@@ -139,6 +140,7 @@ pub struct ServerConfig {
     pub mdns: bool,
     pub mdns_hostname: Option<String>,
     pub mdns_instance_name: Option<String>,
+    pub video_fec_ratios: Vec<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -234,6 +236,7 @@ impl Config {
                 mdns: server.mdns.unwrap(),
                 mdns_hostname: server.mdns_hostname,
                 mdns_instance_name: server.mdns_instance_name,
+                video_fec_ratios: server.video_fec_ratios.unwrap(),
             },
             data_home: data_home.clone(),
             apps: BTreeMap::new(), // Handled below.
