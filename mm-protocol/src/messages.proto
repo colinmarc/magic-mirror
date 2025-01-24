@@ -6,7 +6,7 @@ syntax = "proto3";
 
 package messages;
 
-// # The Magic Mirror Streaming Protocol (MMSP) version 0.1.0
+// # The Magic Mirror Streaming Protocol (MMSP) version 0.2.2
 //
 // This document describes a protocol for remote application streaming. Using
 // this protocol, a client can remotely launch and/or attach an application on a
@@ -204,6 +204,33 @@ message AudioChannels {
 
   repeated Channel channels = 1;
 }
+
+// ### FEC Scheme
+//
+// Indicates a Forward Error Correction scheme used to protect packets,
+// and contains any data needed to locate a chunk within a packet.
+//
+// Definitions for the concepts can be found in RFCs 3452 and 5052.
+message FECMetadata {
+  enum FECScheme {
+    FEC_SCHEME_UNKNOWN = 0;
+
+    // Uses the RaptorQ scheme defined in RFC 6630.
+    FEC_SCHEME_RAPTORQ = 6;
+  }
+
+  // Required. Indicates the scheme used.
+  FECScheme fec_scheme = 1;
+
+  // Required. Contains the scheme-specific serialized Payload ID.
+  bytes fec_payload_id = 2;
+
+  // Required. Contains the scheme-specific serialized Object Transmission
+  // Information (OTI).
+  bytes fec_oti = 3;
+}
+
+
 
 // ### Gamepad
 //
@@ -701,8 +728,10 @@ message VideoChunk {
   uint64 stream_seq = 10;
   uint64 seq = 11;
 
-  // Required. Taken together, these represent the placement of a chunk
-  // within a packet.
+  // Required unless an FEC scheme is used. Taken together, these represent the
+  // placement of a chunk within a packet.
+  //
+  // If an `fec_metadata` is set, both these fields must be unset.
   uint32 chunk = 12;
   uint32 num_chunks = 13;
 
@@ -712,12 +741,15 @@ message VideoChunk {
   // belongs to a higher temporal layer.
   bool frame_optional = 14;
 
-  // TODO FEC
+  // Contains FEC metadata to locate the chunk within the overall packet.
+  FECMetadata fec_metadata = 15;
 
   // Required. A millisecond timestamp with an arbitrary epoch, used to
   // synchronize audio and video streams.
   uint64 timestamp = 20;
 
+  // Required. The chunk of the video packet, or, if an FEC scheme is used, a
+  // single symbol from the stream of symbols.
   bytes data = 99;
 }
 
@@ -747,17 +779,22 @@ message AudioChunk {
   uint64 stream_seq = 10;
   uint64 seq = 11;
 
-  // Required. Taken together, these represent the placement of a chunk
-  // within a packet.
+  // Required unless an FEC scheme is used. Taken together, these represent the
+  // placement of a chunk within a packet.
+  //
+  // If an `fec_metadata` is set, both these fields must be unset.
   uint32 chunk = 12;
   uint32 num_chunks = 13;
 
-  // TODO FEC
+  // Contains FEC metadata to locate the chunk within the overall packet.
+  FECMetadata fec_metadata = 15;
 
   // Required. A millisecond timestamp with an arbitrary epoch, used to
   // synchronize audio and video streams.
   uint64 timestamp = 20;
 
+  // Required. The chunk of the audio packet, or, if an FEC scheme is used, a
+  // single symbol from the stream of symbols.
   bytes data = 99;
 }
 

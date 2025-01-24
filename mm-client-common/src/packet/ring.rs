@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MIT
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 use mm_protocol as protocol;
 use tracing::warn;
@@ -19,6 +19,7 @@ pub(crate) trait Chunk {
     fn data(&self) -> bytes::Bytes;
     fn pts(&self) -> u64;
     fn frame_optional(&self) -> bool;
+    fn fec_metadata(&self) -> Option<protocol::FecMetadata>;
 }
 
 impl Chunk for protocol::VideoChunk {
@@ -48,6 +49,10 @@ impl Chunk for protocol::VideoChunk {
 
     fn frame_optional(&self) -> bool {
         self.frame_optional
+    }
+
+    fn fec_metadata(&self) -> Option<mm_protocol::FecMetadata> {
+        self.fec_metadata.clone()
     }
 }
 
@@ -79,6 +84,19 @@ impl Chunk for protocol::AudioChunk {
     fn frame_optional(&self) -> bool {
         false
     }
+
+    fn fec_metadata(&self) -> Option<mm_protocol::FecMetadata> {
+        self.fec_metadata.clone()
+    }
+}
+
+#[derive(Debug)]
+enum FECDecoder {
+    Plain(Vec<Option<bytes::Bytes>>),
+    RaptorQ {
+        dec: raptorq::Decoder,
+        res: Option<bytes::Bytes>,
+    },
 }
 
 #[derive(Debug)]
@@ -87,23 +105,119 @@ struct WipPacket {
     seq: u64,
     pts: u64,
     frame_optional: bool,
-    chunks: Vec<Option<bytes::Bytes>>,
+    decoder: FECDecoder,
 }
 
 impl WipPacket {
-    fn is_complete(&self) -> bool {
-        self.chunks.iter().all(|c| c.is_some())
+    fn new(incoming: impl Chunk) -> Result<Self, PacketRingError> {
+        let decoder = if let Some(md) = incoming.fec_metadata() {
+            if md.fec_scheme() != protocol::fec_metadata::FecScheme::Raptorq {
+                return Err(PacketRingError::UnsupportedFecScheme(md.fec_scheme));
+            }
+
+            let oti: &[u8] = &md.fec_oti;
+            let Ok(config) = oti
+                .try_into()
+                .map(raptorq::ObjectTransmissionInformation::deserialize)
+            else {
+                return Err(PacketRingError::InvalidFecMetadata);
+            };
+
+            FECDecoder::RaptorQ {
+                dec: raptorq::Decoder::new(config),
+                res: None,
+            }
+        } else {
+            FECDecoder::Plain(vec![None; incoming.num_chunks().max(1) as usize])
+        };
+
+        let mut this = Self {
+            stream_seq: incoming.stream_seq(),
+            seq: incoming.seq(),
+            pts: incoming.pts(),
+            frame_optional: incoming.frame_optional(),
+            decoder,
+        };
+
+        this.insert(incoming)?;
+        Ok(this)
     }
 
-    /// Reconstructs the completed frame. Panics if all chunks are not yet
-    /// available.
+    fn insert(&mut self, incoming: impl Chunk) -> Result<(), PacketRingError> {
+        match &mut self.decoder {
+            FECDecoder::Plain(ref mut chunks) => {
+                let chunk = incoming.chunk() as usize;
+                let num_chunks = incoming.num_chunks() as usize;
+                if num_chunks != chunks.len() || chunk >= num_chunks {
+                    return Err(PacketRingError::InvalidChunk(chunk, num_chunks));
+                } else if chunks[chunk].is_some() {
+                    return Err(PacketRingError::DuplicateChunk(chunk));
+                }
+
+                chunks[chunk] = Some(incoming.data());
+                Ok(())
+            }
+            FECDecoder::RaptorQ { dec, .. } => {
+                let Some(md) = incoming.fec_metadata() else {
+                    return Err(PacketRingError::InvalidFecMetadata);
+                };
+
+                let b: &[u8] = &md.fec_payload_id;
+                let Ok(payload_id) = b.try_into().map(raptorq::PayloadId::deserialize) else {
+                    return Err(PacketRingError::InvalidFecMetadata);
+                };
+
+                dec.add_new_packet(raptorq::EncodingPacket::new(
+                    payload_id,
+                    incoming.data().into(),
+                ));
+                Ok(())
+            }
+        }
+    }
+
+    fn is_complete(&mut self) -> bool {
+        match &mut self.decoder {
+            FECDecoder::Plain(chunks) => chunks.iter().all(|c| c.is_some()),
+            FECDecoder::RaptorQ { dec, ref mut res } => {
+                if res.is_some() {
+                    true
+                } else if let Some(data) = dec.get_result() {
+                    *res = Some(bytes::Bytes::from(data));
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Reconstructs the completed frame. Panics if the packet is not yet
+    /// recoverable.
     fn complete(self) -> Packet {
-        let data: Vec<_> = self.chunks.into_iter().map(|c| c.unwrap()).collect();
+        let data = match self.decoder {
+            FECDecoder::Plain(chunks) => {
+                let chunks: Vec<_> = chunks
+                    .into_iter()
+                    .map(|c| c.expect("packet incomplete"))
+                    .collect();
+
+                chunks.into()
+            }
+            FECDecoder::RaptorQ { dec, res } => {
+                let data = res.unwrap_or_else(|| {
+                    bytes::Bytes::from(dec.get_result().expect("packet incomplete"))
+                });
+
+                [data].into()
+            }
+        };
+
         Packet {
             pts: self.pts,
             seq: self.seq,
             stream_seq: self.stream_seq,
-            data: data.into(),
+            data,
         }
     }
 }
@@ -114,12 +228,18 @@ pub(crate) enum PacketRingError {
     InvalidChunk(usize, usize),
     #[error("duplicate chunk {0}")]
     DuplicateChunk(usize),
+    #[error("unsupported FEC scheme: {0}")]
+    UnsupportedFecScheme(i32),
+    #[error("invalid FEC metadatata")]
+    InvalidFecMetadata,
 }
 
 #[derive(Default)]
 pub(crate) struct PacketRing {
     // Oldest frames at the front, newest at the back.
     ring: VecDeque<WipPacket>,
+    min_stream_seq: u64,
+    min_seq: BTreeMap<u64, u64>, // Indexed by stream_seq.
     dropped: VecDeque<DroppedPacket>,
 }
 
@@ -129,33 +249,20 @@ impl PacketRing {
     }
 
     pub(crate) fn recv_chunk(&mut self, incoming: impl Chunk) -> Result<(), PacketRingError> {
+        let stream_seq = incoming.stream_seq();
+        let seq_floor = self.min_seq.get(&stream_seq).copied().unwrap_or_default();
+        if incoming.stream_seq() < self.min_stream_seq || incoming.seq() < seq_floor {
+            return Ok(());
+        }
+
         match self
             .ring
             .iter_mut()
             .find(|wip| wip.stream_seq == incoming.stream_seq() && wip.seq == incoming.seq())
         {
-            Some(wip) => {
-                let chunk = incoming.chunk() as usize;
-                let num_chunks = incoming.num_chunks() as usize;
-                if num_chunks != wip.chunks.len() || chunk >= num_chunks {
-                    return Err(PacketRingError::InvalidChunk(chunk, num_chunks));
-                } else if wip.chunks[chunk].is_some() {
-                    return Err(PacketRingError::DuplicateChunk(chunk));
-                }
-
-                wip.chunks[chunk] = Some(incoming.data());
-                Ok(())
-            }
+            Some(wip) => wip.insert(incoming),
             None => {
-                let mut wip = WipPacket {
-                    stream_seq: incoming.stream_seq(),
-                    seq: incoming.seq(),
-                    pts: incoming.pts(),
-                    frame_optional: incoming.frame_optional(),
-                    chunks: vec![None; incoming.num_chunks().max(1) as usize],
-                };
-
-                wip.chunks[incoming.chunk() as usize] = Some(incoming.data());
+                let wip = WipPacket::new(incoming)?;
 
                 // Insert into the ring in order with respect to packets with
                 // the same stream_seq.
@@ -170,9 +277,10 @@ impl PacketRing {
                 }
 
                 loop {
-                    let front = self.ring.front().unwrap();
+                    let len = self.ring.len();
+                    let front = self.ring.front_mut().unwrap();
 
-                    if front.is_complete() || self.ring.len() <= RING_TARGET_SIZE {
+                    if front.is_complete() || len <= RING_TARGET_SIZE {
                         break;
                     }
 
@@ -183,8 +291,6 @@ impl PacketRing {
                         warn!(
                             seq = dropped.seq,
                             stream_seq = dropped.stream_seq,
-                            num_chunks = dropped.chunks.len(),
-                            missing_chunks = dropped.chunks.iter().filter(|c| c.is_none()).count(),
                             frame_optional = dropped.frame_optional,
                             "dropped packet!",
                         );
@@ -217,7 +323,9 @@ impl PacketRing {
 
     /// Removes all packets with the same stream_seq or lower.
     pub(crate) fn discard(&mut self, stream_seq: u64) {
+        self.min_stream_seq = stream_seq + 1;
         self.ring.retain(|wip| wip.stream_seq > stream_seq);
+        self.min_seq.retain(|x, _| *x > stream_seq);
     }
 }
 
@@ -234,16 +342,24 @@ impl Iterator for DrainCompleted<'_> {
             .position(|p| p.stream_seq == self.1)
             .and_then(|idx| self.0.dropped.remove(idx));
         if let Some(dropped) = dropped {
+            self.0.min_seq.insert(dropped.stream_seq, dropped.seq + 1);
             return Some(Err(dropped));
         }
 
         let ring = &mut self.0.ring;
         match ring
-            .iter()
+            .iter_mut()
             .enumerate()
             .find(|(_, wip)| wip.stream_seq == self.1)
         {
-            Some((idx, v)) if v.is_complete() => Some(Ok(ring.remove(idx).unwrap().complete())),
+            Some((idx, ref mut v)) => {
+                if v.is_complete() {
+                    self.0.min_seq.insert(v.stream_seq, v.seq + 1);
+                    Some(Ok(ring.remove(idx).unwrap().complete()))
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -351,6 +467,7 @@ mod tests {
                 data: bytes::Bytes::copy_from_slice(chunk),
                 timestamp: 0,
                 frame_optional: false,
+                fec_metadata: None,
             })
             .collect()
     }

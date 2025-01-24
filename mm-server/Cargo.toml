@@ -27,6 +27,7 @@ ctrlc = "3"
 cursor-icon = "1"
 dasp = "0.11"
 drm-fourcc = "2"
+either = "1"
 ffmpeg-next = { version = "7", optional = true }
 ffmpeg-sys-next = { version = "7", optional = true }
 git-version = "0.3"
@@ -54,6 +55,7 @@ pathsearch = "0.2"
 protobuf = "3.2"
 quiche = { version = "0.18", features = ["boringssl-boring-crate"] }
 rand = "0.8"
+raptorq = "2.0"
 rcgen = "0.12"
 regex = "1"
 ring = "0.16"

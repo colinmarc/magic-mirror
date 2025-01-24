@@ -1879,6 +1879,7 @@ dependencies = [
  "mm-protocol",
  "prost-types",
  "quiche",
+ "raptorq",
  "ring",
  "thiserror",
  "tracing",
@@ -1888,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "mm-protocol"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "bytes",
  "octets 0.2.0",
@@ -2476,6 +2477,12 @@ checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom",
 ]
+
+[[package]]
+name = "raptorq"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90b1b1fad69672f0b901b5004863ea4307f03d168a3db5f2bcba4d3dfed88e97"
 
 [[package]]
 name = "raw-window-handle"

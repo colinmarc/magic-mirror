@@ -18,7 +18,10 @@ use crate::{
     waking_sender::{WakingOneshot, WakingSender},
 };
 
+mod chunk;
 mod validation;
+
+use chunk::*;
 use validation::*;
 
 impl From<DisplayParams> for protocol::VirtualDisplayParameters {
@@ -473,8 +476,10 @@ fn attach(
     const KEEPALIVE_TIMEOUT: time::Duration = time::Duration::from_secs(30);
     let mut keepalive_timer = crossbeam_channel::after(KEEPALIVE_TIMEOUT);
 
-    // Five varints at max 5 bytes, plus a header, works out to around 32
-    // bytes. Double for safety.
+    // max_dgram_len is our overall MTU. The MM protocol header is 2-10 bytes,
+    // and then we include seven varints (maximum 5 bytes each) and a bool of
+    // metadata, plus an optional 12-ish bytes of FEC information. 64 bytes of
+    // headroom should cover the worst case.
     let dgram_chunk_size = max_dgram_len - 64;
 
     loop {
@@ -735,20 +740,31 @@ fn attach(
 
                         last_video_frame_recv = time::Instant::now();
 
-                        // TODO FEC
 
-                        for (chunk, num_chunks, data) in iter_chunks(frame, dgram_chunk_size) {
+                        // 15% FEC overhead for the base layer.
+                        const FEC_RATIO_BASE_LAYER: f32 = 0.15;
+
+                        let optional = hierarchical_layer != 0;
+                        let fec_ratio = if optional {
+                            None
+                        } else {
+                            Some(FEC_RATIO_BASE_LAYER)
+                        };
+
+                        for chunk in iter_chunks(frame, dgram_chunk_size, fec_ratio) {
                             let msg = protocol::VideoChunk {
                                 session_id,
                                 attachment_id: handle.attachment_id,
 
                                 stream_seq,
                                 seq,
-                                data,
-                                chunk,
-                                num_chunks,
-                                frame_optional: hierarchical_layer != 0,
+                                data: chunk.data,
+                                chunk: chunk.index,
+                                num_chunks: chunk.num_chunks,
+                                frame_optional: optional,
                                 timestamp: ts,
+
+                                fec_metadata: chunk.fec_metadata,
                             };
 
                             outgoing_dgrams.send(msg.into()).ok();
@@ -762,18 +778,19 @@ fn attach(
 
                             last_audio_frame_recv = time::Instant::now();
 
-
-                            for (chunk, num_chunks, data) in iter_chunks(frame, dgram_chunk_size) {
+                            for chunk in iter_chunks(frame, dgram_chunk_size, None) {
                                 let msg = protocol::AudioChunk {
                                     session_id,
                                     attachment_id: handle.attachment_id,
 
                                     stream_seq,
                                     seq,
-                                    data,
-                                    chunk,
-                                    num_chunks,
+                                    data: chunk.data,
+                                    chunk: chunk.index,
+                                    num_chunks: chunk.num_chunks,
                                     timestamp: ts,
+
+                                    fec_metadata: chunk.fec_metadata,
                                 };
 
                                 outgoing_dgrams.send(msg.into()).ok();
@@ -857,30 +874,6 @@ fn read_file(p: impl AsRef<Path>, max_size: u64) -> anyhow::Result<Bytes> {
         }
         Err(e) => Err(e.into()),
     }
-}
-
-fn iter_chunks(
-    mut buf: bytes::Bytes,
-    chunk_size: usize,
-) -> impl Iterator<Item = (u32, u32, bytes::Bytes)> {
-    let num_chunks = buf.len().div_ceil(chunk_size) as u32;
-    let mut next_chunk: u32 = 0;
-
-    std::iter::from_fn(move || {
-        if buf.is_empty() {
-            return None;
-        }
-
-        let data = if buf.len() < chunk_size {
-            buf.split_to(buf.len())
-        } else {
-            buf.split_to(chunk_size)
-        };
-
-        let chunk = next_chunk;
-        next_chunk += 1;
-        Some((chunk, num_chunks, data))
-    })
 }
 
 fn key_to_evdev(key: protocol::keyboard_input::Key) -> Option<u32> {
@@ -1107,28 +1100,6 @@ fn cursor_icon_to_proto(icon: cursor_icon::CursorIcon) -> protocol::update_curso
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_chunk() {
-        let frame = bytes::Bytes::from(vec![9; 3536]);
-        let mut chunks = iter_chunks(frame, 1200);
-        let (chunk, num_chunks, data) = chunks.next().unwrap();
-        assert_eq!(chunk, 0);
-        assert_eq!(num_chunks, 3);
-        assert_eq!(data.len(), 1200);
-
-        let (chunk, num_chunks, data) = chunks.next().unwrap();
-        assert_eq!(chunk, 1);
-        assert_eq!(num_chunks, 3);
-        assert_eq!(data.len(), 1200);
-
-        let (chunk, num_chunks, data) = chunks.next().unwrap();
-        assert_eq!(chunk, 2);
-        assert_eq!(num_chunks, 3);
-        assert_eq!(data.len(), 1136);
-
-        assert!(chunks.next().is_none());
-    }
 
     #[test]
     fn test_read_file() -> anyhow::Result<()> {
