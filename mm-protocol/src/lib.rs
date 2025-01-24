@@ -255,7 +255,7 @@ mod tests {
         num_chunks: 4,
         data: bytes::Bytes::from(vec![9; 52]),
         timestamp: 1234,
-        frame_optional: false,
+        ..Default::default()
     });
 
     test_roundtrip!(test_roundtrip_frame: VideoChunk {
@@ -268,6 +268,7 @@ mod tests {
         data: bytes::Bytes::from(vec![9; 1200]),
         timestamp: 1234,
         frame_optional: false,
+        ..Default::default()
     });
 
     #[test]
