@@ -17,7 +17,7 @@ use ash::vk;
 pub(crate) use chain::*;
 use cstr::cstr;
 pub use timeline::*;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 
 use self::video::{VideoEncodeQueueExt, VideoQueueExt};
 
@@ -1121,6 +1121,20 @@ pub fn allocate_command_buffer(
     };
 
     Ok(cb)
+}
+
+#[instrument(level = "trace", skip_all)]
+pub unsafe fn begin_command_buffer(
+    device: &ash::Device,
+    cb: vk::CommandBuffer,
+) -> anyhow::Result<()> {
+    device.reset_command_buffer(cb, vk::CommandBufferResetFlags::empty())?;
+    device.begin_command_buffer(
+        cb,
+        &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+    )?;
+
+    Ok(())
 }
 
 pub fn insert_image_barrier(

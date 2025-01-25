@@ -6,6 +6,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use std::sync::Arc;
+use std::time;
 
 use anyhow::{anyhow, bail, Context};
 use ash::vk;
@@ -14,9 +15,8 @@ use crossbeam_channel as crossbeam;
 use tracing::{debug, error, trace};
 
 use self::gop_structure::HierarchicalP;
-use super::begin_cb;
 use crate::codec::VideoCodec;
-use crate::compositor::{CompositorEvent, CompositorHandle, VideoStreamParams, EPOCH};
+use crate::compositor::VideoStreamParams;
 use crate::vulkan::video::VideoQueueExt;
 use crate::vulkan::{self, *};
 
@@ -39,18 +39,13 @@ pub enum Encoder {
 impl Encoder {
     pub fn new(
         vk: Arc<VkContext>,
-        compositor: CompositorHandle,
-        stream_seq: u64,
         params: VideoStreamParams,
         framerate: u32,
+        sink: impl Sink,
     ) -> anyhow::Result<Self> {
         match params.codec {
-            VideoCodec::H264 => Ok(Self::H264(H264Encoder::new(
-                vk, compositor, stream_seq, params, framerate,
-            )?)),
-            VideoCodec::H265 => Ok(Self::H265(H265Encoder::new(
-                vk, compositor, stream_seq, params, framerate,
-            )?)),
+            VideoCodec::H264 => Ok(Self::H264(H264Encoder::new(vk, params, framerate, sink)?)),
+            VideoCodec::H265 => Ok(Self::H265(H265Encoder::new(vk, params, framerate, sink)?)),
             _ => bail!("unsupported codec"),
         }
     }
@@ -114,8 +109,6 @@ struct EncoderInner {
 impl EncoderInner {
     pub fn new(
         vk: Arc<VkContext>,
-        compositor: CompositorHandle,
-        stream_seq: u64,
         width: u32,
         height: u32,
         framerate: u32,
@@ -123,6 +116,7 @@ impl EncoderInner {
         profile: &mut vk::VideoProfileInfoKHR,
         capabilities: vk::VideoCapabilitiesKHR,
         session_params: &mut impl vk::ExtendsVideoSessionParametersCreateInfoKHR,
+        sink: impl Sink,
     ) -> anyhow::Result<Self> {
         if vk.encode_queue.is_none() {
             bail!("no vulkan video support")
@@ -244,10 +238,9 @@ impl EncoderInner {
         let handle = std::thread::spawn(move || {
             writer_thread(
                 vk_clone,
-                compositor,
-                stream_seq,
                 submitted_frames_rx,
                 done_frames_tx,
+                sink,
                 stats_clone,
             )
         });
@@ -371,7 +364,7 @@ impl EncoderInner {
             }
         };
 
-        begin_cb(&self.vk.device, frame.encode_cb)?;
+        begin_command_buffer(&self.vk.device, frame.encode_cb)?;
 
         // Acquire the image from the graphics queue.
         insert_image_barrier(
@@ -812,6 +805,11 @@ impl Drop for EncoderOutputFrame {
 // SAFETY: the contained pointers are nothing fancy.
 unsafe impl Send for EncoderOutputFrame {}
 
+/// Allows the caller to decide where to sink the frames.
+pub trait Sink: Send + 'static {
+    fn write_frame(&mut self, ts: time::Instant, frame: Bytes, hierarchical_layer: u32);
+}
+
 /// Allows us to intersperse arbitrary headers or other data into the bitstream.
 enum WriterInput {
     InsertBytes(Bytes),
@@ -831,33 +829,23 @@ struct QueryResults {
 /// back and forth with the main thread.
 fn writer_thread(
     vk: Arc<VkContext>,
-    compositor: CompositorHandle,
-    stream_seq: u64,
     input: crossbeam::Receiver<WriterInput>,
     done: crossbeam::Sender<EncoderOutputFrame>,
+    mut sink: impl Sink,
     stats: stats::EncodeStats,
 ) -> anyhow::Result<()> {
     let device = &vk.device;
-    let mut seq = 0;
 
     for frame in input {
         let frame = match frame {
             WriterInput::InsertBytes(header) => {
-                compositor.dispatch(CompositorEvent::VideoFrame {
-                    stream_seq,
-                    seq,
-                    ts: EPOCH.elapsed().as_nanos() as u64,
-                    frame: header,
-                    hierarchical_layer: 0,
-                });
-
-                seq += 1;
+                sink.write_frame(time::Instant::now(), header, 0);
                 continue;
             }
             WriterInput::SubmittedFrame(frame) => frame,
         };
 
-        let capture_ts = EPOCH.elapsed().as_millis() as u64;
+        let capture_ts = time::Instant::now();
 
         // Wait for the frame to finish encoding.
         unsafe {
@@ -866,7 +854,7 @@ fn writer_thread(
 
         // Wake the compositor, so it can release buffers and send presentation
         // feedback.
-        compositor.wake()?;
+        // compositor.wake()?;
 
         // Get the buffer offsets for the encoded data.
         let mut results = [QueryResults::default()];
@@ -902,14 +890,11 @@ fn writer_thread(
             )
         };
 
-        compositor.dispatch(CompositorEvent::VideoFrame {
-            stream_seq,
-            seq,
-            ts: capture_ts,
-            frame: Bytes::copy_from_slice(packet),
-            hierarchical_layer: frame.hierarchical_layer,
-        });
-        seq += 1;
+        sink.write_frame(
+            capture_ts,
+            Bytes::copy_from_slice(packet),
+            frame.hierarchical_layer,
+        );
 
         unsafe {
             frame.tp_copied.signal()?;

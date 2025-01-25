@@ -17,11 +17,7 @@ use tracing::{debug, trace};
 use super::gop_structure::HierarchicalP;
 use super::rate_control::{self, RateControlMode};
 use crate::codec::VideoCodec;
-use crate::{
-    color::VideoProfile,
-    compositor::{CompositorHandle, VideoStreamParams},
-    vulkan::*,
-};
+use crate::{color::VideoProfile, compositor::VideoStreamParams, vulkan::*};
 
 vk_chain! {
     pub struct H264EncodeProfile<'a> {
@@ -68,10 +64,9 @@ pub struct H264Encoder {
 impl H264Encoder {
     pub fn new(
         vk: Arc<VkContext>,
-        compositor: CompositorHandle,
-        stream_seq: u64,
         params: VideoStreamParams,
         framerate: u32,
+        sink: impl super::Sink,
     ) -> anyhow::Result<Self> {
         let (video_loader, encode_loader) = vk.video_apis.as_ref().unwrap();
 
@@ -245,8 +240,6 @@ impl H264Encoder {
 
         let inner = super::EncoderInner::new(
             vk.clone(),
-            compositor,
-            stream_seq,
             params.width,
             params.height,
             framerate,
@@ -254,6 +247,7 @@ impl H264Encoder {
             profile.as_mut(),
             caps.video_caps,
             &mut session_params,
+            sink,
         )?;
 
         // Generate encoded stream headers.

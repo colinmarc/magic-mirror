@@ -7,6 +7,7 @@ mod color;
 mod compositor;
 mod config;
 mod container;
+mod encoder;
 mod pixel_scale;
 mod server;
 mod session;

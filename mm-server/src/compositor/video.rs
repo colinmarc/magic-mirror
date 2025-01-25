@@ -9,17 +9,57 @@ use ash::vk;
 
 mod composite;
 mod convert;
-mod vulkan_encode;
 
 use tracing::{instrument, trace, warn};
-use vulkan_encode::Encoder;
 
 use super::{
     buffers::{Buffer, BufferBacking},
     surface::SurfaceConfiguration,
-    CompositorHandle, DisplayParams, VideoStreamParams,
+    CompositorEvent, CompositorHandle, DisplayParams, VideoStreamParams, EPOCH,
 };
-use crate::{color::ColorSpace, vulkan::*};
+use crate::{
+    color::ColorSpace,
+    encoder::{self},
+    vulkan::*,
+};
+
+struct Sink {
+    compositor: CompositorHandle,
+    stream_seq: u64,
+    seq: u64,
+}
+
+impl Sink {
+    fn new(compositor: CompositorHandle, stream_seq: u64) -> Self {
+        Self {
+            compositor,
+            stream_seq,
+            seq: 0,
+        }
+    }
+}
+
+impl encoder::Sink for Sink {
+    fn write_frame(
+        &mut self,
+        ts: std::time::Instant,
+        frame: bytes::Bytes,
+        hierarchical_layer: u32,
+    ) {
+        self.compositor.dispatch(CompositorEvent::VideoFrame {
+            stream_seq: self.stream_seq,
+            seq: self.seq,
+            ts: (ts - *EPOCH).as_millis() as u64,
+            frame,
+            hierarchical_layer,
+        });
+
+        // Wake the compositor, so it can release buffers and send presentation
+        // feedback.
+        let _ = self.compositor.wake();
+        self.seq += 1;
+    }
+}
 
 pub struct SwapFrame {
     convert_ds: vk::DescriptorSet, // Should be dropped first.
@@ -60,7 +100,7 @@ pub struct EncodePipeline {
 
     composite_pipeline: composite::CompositePipeline,
     convert_pipeline: convert::ConvertPipeline,
-    encoder: ManuallyDrop<Encoder>,
+    encoder: ManuallyDrop<encoder::Encoder>,
 
     swap: [SwapFrame; 2],
     swap_idx: usize,
@@ -73,7 +113,7 @@ impl EncodePipeline {
     pub fn new(
         vk: Arc<VkContext>,
         stream_seq: u64,
-        attachments: CompositorHandle,
+        compositor_handle: CompositorHandle,
         display_params: DisplayParams,
         streaming_params: VideoStreamParams,
     ) -> anyhow::Result<Self> {
@@ -90,13 +130,10 @@ impl EncodePipeline {
             unimplemented!()
         }
 
-        let mut encoder = Encoder::new(
-            vk.clone(),
-            attachments.clone(),
-            stream_seq,
-            streaming_params,
-            display_params.framerate,
-        )?;
+        let sink = Sink::new(compositor_handle, stream_seq);
+
+        let mut encoder =
+            encoder::Encoder::new(vk.clone(), streaming_params, display_params.framerate, sink)?;
 
         let encode_format = encoder.input_format();
 
@@ -158,8 +195,8 @@ impl EncodePipeline {
 
         frame.use_staging = false;
 
-        begin_cb(device, frame.staging_cb)?;
-        begin_cb(device, frame.render_cb)?;
+        begin_command_buffer(device, frame.staging_cb)?;
+        begin_command_buffer(device, frame.render_cb)?;
 
         // Record the start timestamp.
         frame.render_ts_pool.cmd_reset(device, frame.render_cb);
@@ -649,18 +686,6 @@ fn new_swapframe(
         render_ts_pool,
         render_span: None,
     })
-}
-
-#[instrument(level = "trace", skip_all)]
-
-unsafe fn begin_cb(device: &ash::Device, cb: vk::CommandBuffer) -> anyhow::Result<()> {
-    device.reset_command_buffer(cb, vk::CommandBufferResetFlags::empty())?;
-    device.begin_command_buffer(
-        cb,
-        &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-    )?;
-
-    Ok(())
 }
 
 fn format_is_semiplanar(format: vk::Format) -> bool {
