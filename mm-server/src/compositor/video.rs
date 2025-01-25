@@ -4,103 +4,22 @@
 
 use std::{mem::ManuallyDrop, sync::Arc};
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use ash::vk;
 
 mod composite;
 mod convert;
-mod cpu_encode;
-mod timebase;
 mod vulkan_encode;
 
-use cpu_encode::CpuEncoder;
-use tracing::{error, instrument, trace, warn};
-use vulkan_encode::VulkanEncoder;
+use tracing::{instrument, trace, warn};
+use vulkan_encode::Encoder;
 
 use super::{
     buffers::{Buffer, BufferBacking},
     surface::SurfaceConfiguration,
     CompositorHandle, DisplayParams, VideoStreamParams,
 };
-use crate::{
-    codec::VideoCodec,
-    color::{ColorSpace, VideoProfile},
-    vulkan::*,
-};
-
-pub enum Encoder {
-    Cpu(CpuEncoder),
-    Vulkan(VulkanEncoder),
-}
-
-impl Encoder {
-    pub fn select(
-        vk: Arc<VkContext>,
-        attachments: CompositorHandle,
-        stream_seq: u64,
-        params: VideoStreamParams,
-        framerate: u32,
-    ) -> anyhow::Result<Self> {
-        let use_vulkan = if cfg!(feature = "vulkan_encode") {
-            match params.codec {
-                VideoCodec::H264 if vk.device_info.supports_h264 => true,
-                VideoCodec::H265 if vk.device_info.supports_h265 => true,
-                _ => false,
-            }
-        } else {
-            false
-        };
-
-        if use_vulkan {
-            match VulkanEncoder::new(
-                vk.clone(),
-                attachments.clone(),
-                stream_seq,
-                params,
-                framerate,
-            ) {
-                Ok(enc) => return Ok(Self::Vulkan(enc)),
-                Err(e) => {
-                    error!("error creating vulkan encoder: {:#}", e);
-                    warn!("falling back to CPU encoder");
-                }
-            }
-        }
-
-        if params.profile != VideoProfile::Hd {
-            bail!("HDR requires vulkan encode")
-        }
-
-        Ok(Self::Cpu(CpuEncoder::new(
-            vk,
-            attachments,
-            stream_seq,
-            params,
-            framerate,
-        )?))
-    }
-
-    pub fn input_format(&self) -> vk::Format {
-        match self {
-            Self::Cpu(enc) => enc.input_format(),
-            Self::Vulkan(enc) => enc.input_format(),
-        }
-    }
-
-    pub fn create_input_image(&mut self) -> anyhow::Result<VkImage> {
-        match self {
-            Self::Cpu(enc) => enc.create_input_image(),
-            Self::Vulkan(enc) => enc.create_input_image(),
-        }
-    }
-
-    pub fn request_refresh(&mut self) {
-        match self {
-            Encoder::Cpu(enc) => enc.request_refresh(),
-            Encoder::Vulkan(enc) => enc.request_refresh(),
-        }
-    }
-}
+use crate::{color::ColorSpace, vulkan::*};
 
 pub struct SwapFrame {
     convert_ds: vk::DescriptorSet, // Should be dropped first.
@@ -171,7 +90,7 @@ impl EncodePipeline {
             unimplemented!()
         }
 
-        let mut encoder = Encoder::select(
+        let mut encoder = Encoder::new(
             vk.clone(),
             attachments.clone(),
             stream_seq,
@@ -439,7 +358,7 @@ impl EncodePipeline {
 
         // For Vulkan encode, acquire the encode image from the encode queue.
         // But not for the first frame.
-        if frame.tp_clear.value() > 20 && matches!(*self.encoder, Encoder::Vulkan(_)) {
+        if frame.tp_clear.value() > 20 {
             let src_queue_family = self.vk.encode_queue.as_ref().unwrap().family;
 
             insert_image_barrier(
@@ -482,23 +401,20 @@ impl EncodePipeline {
             self.streaming_params.profile,
         );
 
-        // Do a queue transfer for vulkan encode.
-        if let Encoder::Vulkan(_) = *self.encoder {
-            let dst_queue_family = self.vk.encode_queue.as_ref().unwrap().family;
-
-            insert_image_barrier(
-                device,
-                frame.render_cb,
-                frame.encode_image.image,
-                Some((self.vk.graphics_queue.family, dst_queue_family)),
-                vk::ImageLayout::GENERAL,
-                vk::ImageLayout::VIDEO_ENCODE_SRC_KHR,
-                vk::PipelineStageFlags2::COMPUTE_SHADER,
-                vk::AccessFlags2::SHADER_STORAGE_WRITE,
-                vk::PipelineStageFlags2::empty(),
-                vk::AccessFlags2::empty(),
-            );
-        }
+        // Transfer to the encode queue.
+        let dst_queue_family = self.vk.encode_queue.as_ref().unwrap().family;
+        insert_image_barrier(
+            device,
+            frame.render_cb,
+            frame.encode_image.image,
+            Some((self.vk.graphics_queue.family, dst_queue_family)),
+            vk::ImageLayout::GENERAL,
+            vk::ImageLayout::VIDEO_ENCODE_SRC_KHR,
+            vk::PipelineStageFlags2::COMPUTE_SHADER,
+            vk::AccessFlags2::SHADER_STORAGE_WRITE,
+            vk::PipelineStageFlags2::empty(),
+            vk::AccessFlags2::empty(),
+        );
 
         let mut submits = Vec::new();
 
@@ -586,18 +502,11 @@ impl EncodePipeline {
         device.queue_submit2(self.vk.graphics_queue.queue, &submits, vk::Fence::null())?;
 
         // Trigger encode.
-        match *self.encoder {
-            Encoder::Cpu(ref mut enc) => enc.submit_encode(
-                &frame.encode_image,
-                frame.tp_render_done.clone(),
-                frame.tp_clear.clone(),
-            )?,
-            Encoder::Vulkan(ref mut vkenc) => vkenc.submit_encode(
-                &frame.encode_image,
-                frame.tp_render_done.clone(),
-                frame.tp_clear.clone(),
-            )?,
-        };
+        self.encoder.submit_encode(
+            &frame.encode_image,
+            frame.tp_render_done.clone(),
+            frame.tp_clear.clone(),
+        )?;
 
         // Wait for uploads to finish before returning, so that writes to the
         // staging buffers are synchronized.

@@ -88,24 +88,17 @@ The following is required to run the server:
 
 ## Hardware/software encoding
 
-Magic Mirror uses video compression codecs to stream the game over the wire.
-Hardware encoding using the GPU is needed to get the best performance and latency.
-CPU-based encode is available as a fallback, but it's slower, albeit slightly
-higher quality.
+Magic Mirror uses hardware-based video compression codecs to stream the game over the wire.
 
 To see if your GPU supports video encoding, see the following matrix for your vendor:
  - [AMD](https://en.wikipedia.org/wiki/Unified_Video_Decoder#Format_support)
  - [NVIDIA](https://developer.nvidia.com/video-encode-and-decode-gpu-support-matrix-new)
 
-Note that with the `ffmpeg_encode` feature, linking against a system-installed `ffmpeg`
-is supported, which may allow you to use specific CPU-based codecs not considered
-in this table.
-
-| Codec | CPU | AMD | NVIDIA | Intel |
-| ----- | :-: | :-: | :----: | :---: |
-| H.264 |  ❌ |  ✅ |   ✅   |   ❔  |
-| H.265 |  ✅ |  ✅ |   ✅   |   ❔  |
-|  AV1  |  ✅ |  ❌ |   ❌   |   ❌  |
+| Codec | AMD | NVIDIA | Intel |
+| ----- | :-: | :----: | :---: |
+| H.264 |  ✅ |   ✅   |   ❔  |
+| H.265 |  ✅ |   ✅   |   ❔  |
+|  AV1  |  ❌ |   ❌   |   ❌  |
 
 ## Building `mmserver` from source
 
@@ -131,13 +124,3 @@ Then you should be good to go:
 cd mm-server
 cargo build --bin mmserver [--release]
 ```
-
-### Feature flags
-
-The following feature flags are available:
-
- - `vulkan_encode` (on by default) - enables hardware encode
- - `svt_encode` (on by default) - enables svt-av1 and svt-hevc for CPU encode
- - `ffmpeg_encode` - allows using system-installed ffmpeg to do CPU encode
-
-Note that `ffmpeg_encode` takes precedence over `svt_encode` if enabled, but the server will always choose hardware encode if available on your platform.

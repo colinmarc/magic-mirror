@@ -22,8 +22,6 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-#[cfg(feature = "ffmpeg_encode")]
-use ffmpeg_sys_next as ffmpeg_sys;
 use parking_lot::Mutex;
 use tracing::{debug, info, warn};
 use tracing_subscriber::{util::SubscriberInitExt, EnvFilter, Layer};
@@ -90,15 +88,6 @@ fn main() -> Result<()> {
 
     #[cfg(feature = "tracy")]
     warn!("tracing enabled!");
-
-    // Squash ffmpeg logs.
-    #[cfg(feature = "ffmpeg_encode")]
-    unsafe {
-        ffmpeg_sys::av_log_set_level(ffmpeg_sys::AV_LOG_QUIET);
-        // TODO: the callback has to be variadic, which means using nightly
-        // rust.
-        // ffmpeg_sys::av_log_set_callback(Some(ffmpeg_log_callback))
-    }
 
     // Load config.
     let mut cfg = config::Config::new(args.config.as_ref(), &args.include_apps)

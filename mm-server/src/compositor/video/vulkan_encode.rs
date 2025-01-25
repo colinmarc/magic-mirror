@@ -31,12 +31,12 @@ use h264::H264Encoder;
 mod h265;
 use h265::H265Encoder;
 
-pub enum VulkanEncoder {
+pub enum Encoder {
     H264(H264Encoder),
     H265(H265Encoder),
 }
 
-impl VulkanEncoder {
+impl Encoder {
     pub fn new(
         vk: Arc<VkContext>,
         compositor: CompositorHandle,
@@ -83,8 +83,8 @@ impl VulkanEncoder {
 
     pub fn request_refresh(&mut self) {
         match self {
-            VulkanEncoder::H264(encoder) => encoder.request_refresh(),
-            VulkanEncoder::H265(encoder) => encoder.request_refresh(),
+            Encoder::H264(encoder) => encoder.request_refresh(),
+            Encoder::H265(encoder) => encoder.request_refresh(),
         }
     }
 }

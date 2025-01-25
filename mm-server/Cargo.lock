@@ -572,15 +572,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56254986775e3233ffa9c4d7d3faaf6d36a2c09d30b20687e9f88bc8bafc16c8"
 
 [[package]]
-name = "diffy"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e616e59155c92257e84970156f506287853355f58cd4a6eb167385722c32b790"
-dependencies = [
- "nu-ansi-term",
-]
-
-[[package]]
 name = "dlib"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -668,31 +659,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d8090f921a24b04994d9929e204f50b498a33ea6ba559ffaa05e04f7ee7fb5ab"
 dependencies = [
  "simd-adler32",
-]
-
-[[package]]
-name = "ffmpeg-next"
-version = "7.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da02698288e0275e442a47fc12ca26d50daf0d48b15398ba5906f20ac2e2a9f9"
-dependencies = [
- "bitflags 2.6.0",
- "ffmpeg-sys-next",
- "libc",
-]
-
-[[package]]
-name = "ffmpeg-sys-next"
-version = "7.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bc3234d0a4b2f7d083699d0860c6c9dd83713908771b60f94a96f8704adfe45"
-dependencies = [
- "bindgen 0.70.1",
- "cc",
- "libc",
- "num_cpus",
- "pkg-config",
- "vcpkg",
 ]
 
 [[package]]
@@ -1202,8 +1168,6 @@ dependencies = [
  "dasp",
  "drm-fourcc",
  "either",
- "ffmpeg-next",
- "ffmpeg-sys-next",
  "fuser 0.14.0 (git+https://github.com/colinmarc/fuser?rev=643facdc1bcc9a3b11d7a88ebfaaaa045c3596c1)",
  "git-version",
  "glam",
@@ -1244,7 +1208,6 @@ dependencies = [
  "slang",
  "slotmap",
  "southpaw",
- "svt",
  "system-deps",
  "test-log",
  "thiserror",
@@ -2046,41 +2009,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
-name = "svt"
-version = "0.2.1"
-source = "git+https://github.com/colinmarc/svt-rs?rev=e03f08deb5291bfc4b90130fa5c2d08c3129924f#e03f08deb5291bfc4b90130fa5c2d08c3129924f"
-dependencies = [
- "bitflags 2.6.0",
- "svt-av1-sys",
- "svt-hevc-sys",
- "thiserror",
-]
-
-[[package]]
-name = "svt-av1-sys"
-version = "2.3.0"
-source = "git+https://github.com/colinmarc/svt-rs?rev=e03f08deb5291bfc4b90130fa5c2d08c3129924f#e03f08deb5291bfc4b90130fa5c2d08c3129924f"
-dependencies = [
- "anyhow",
- "bindgen 0.69.5",
- "cmake",
- "diffy",
- "log",
-]
-
-[[package]]
-name = "svt-hevc-sys"
-version = "0.1.0"
-source = "git+https://github.com/colinmarc/svt-rs?rev=e03f08deb5291bfc4b90130fa5c2d08c3129924f#e03f08deb5291bfc4b90130fa5c2d08c3129924f"
-dependencies = [
- "anyhow",
- "bindgen 0.69.5",
- "cmake",
- "diffy",
- "log",
-]
-
-[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2431,12 +2359,6 @@ name = "valuable"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830b7e5d4d90034032940e4ace0d9a9a057e7a45cd94e6c007832e39edb82f6d"
-
-[[package]]
-name = "vcpkg"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version-compare"

@@ -28,8 +28,6 @@ cursor-icon = "1"
 dasp = "0.11"
 drm-fourcc = "2"
 either = "1"
-ffmpeg-next = { version = "7", optional = true }
-ffmpeg-sys-next = { version = "7", optional = true }
 git-version = "0.3"
 glam = "0.24"
 hashbrown = "0.15"
@@ -101,12 +99,6 @@ features = ["mm", "mount", "pipe", "time", "thread", "stdio"]
 git = "https://github.com/colinmarc/southpaw"
 rev = "e022f2066b300c9600d69bac73e7d8ef7e19f08c"
 
-[dependencies.svt]
-git = "https://github.com/colinmarc/svt-rs"
-rev = "e03f08deb5291bfc4b90130fa5c2d08c3129924f"
-optional = true
-features = ["av1", "hevc", "log"]
-
 [build-dependencies]
 system-deps = "6"
 xkbcommon = { version = "0.7", default-features = false }
@@ -121,10 +113,7 @@ features = ["from-source"]
 libavcodec = { version = "6", feature = "ffmpeg_encode" }
 
 [features]
-default = ["svt_encode", "vulkan_encode"]
-svt_encode = ["dep:svt"]
-vulkan_encode = []
-ffmpeg_encode = ["dep:ffmpeg-next", "dep:ffmpeg-sys-next"]
+default = []
 tracy = [
     "dep:simple_moving_average",
     "tracy-client/enable",

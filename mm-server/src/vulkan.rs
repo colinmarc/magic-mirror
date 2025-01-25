@@ -1093,17 +1093,6 @@ pub fn create_timestamp_query_pool(
     })
 }
 
-pub fn create_fence(device: &ash::Device, signalled: bool) -> anyhow::Result<vk::Fence> {
-    let mut create_info = vk::FenceCreateInfo::default();
-    if signalled {
-        create_info = create_info.flags(vk::FenceCreateFlags::SIGNALED);
-    }
-
-    let fence = unsafe { device.create_fence(&create_info, None)? };
-
-    Ok(fence)
-}
-
 pub fn load_shader(device: &ash::Device, bytes: &[u8]) -> anyhow::Result<vk::ShaderModule> {
     let code = ash::util::read_spv(&mut std::io::Cursor::new(bytes))?;
     let create_info = vk::ShaderModuleCreateInfo::default().code(&code);

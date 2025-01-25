@@ -5,8 +5,6 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-#[cfg(feature = "ffmpeg_encode")]
-use ffmpeg_next as ffmpeg;
 use mm_protocol as protocol;
 
 use crate::vulkan::VkContext;
@@ -67,33 +65,10 @@ impl From<AudioCodec> for protocol::AudioCodec {
     }
 }
 
-#[cfg(feature = "ffmpeg_encode")]
-impl From<VideoCodec> for ffmpeg::codec::Id {
-    fn from(codec: VideoCodec) -> Self {
-        match codec {
-            VideoCodec::H264 => ffmpeg::codec::Id::H264,
-            VideoCodec::H265 => ffmpeg::codec::Id::H265,
-            VideoCodec::Av1 => ffmpeg::codec::Id::AV1,
-        }
-    }
-}
-
 pub fn probe_codec(_vk: Arc<VkContext>, codec: VideoCodec) -> bool {
-    #[cfg(feature = "vulkan_encode")]
     match codec {
-        VideoCodec::H264 if _vk.device_info.supports_h264 => return true,
-        VideoCodec::H265 if _vk.device_info.supports_h265 => return true,
-        _ => (),
+        VideoCodec::H264 if _vk.device_info.supports_h264 => true,
+        VideoCodec::H265 if _vk.device_info.supports_h265 => true,
+        _ => false,
     }
-
-    #[cfg(feature = "ffmpeg_encode")]
-    if ffmpeg::encoder::find(codec.into()).is_some() {
-        return true;
-    }
-
-    if cfg!(feature = "svt_encode") && matches!(codec, VideoCodec::H265 | VideoCodec::Av1) {
-        return true;
-    }
-
-    false
 }
