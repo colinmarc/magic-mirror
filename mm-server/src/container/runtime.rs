@@ -31,7 +31,8 @@ use rustix::{
 };
 use tracing::debug;
 
-mod ipc;
+use super::ipc;
+use crate::config::HomeIsolationMode;
 
 // In CPU-constrained testing environments, we sometimes need to wait
 // to get scheduled.
@@ -40,23 +41,6 @@ const SYNC_TIMEOUT: time::Duration = time::Duration::from_secs(5);
 
 #[cfg(not(test))]
 const SYNC_TIMEOUT: time::Duration = time::Duration::from_secs(1);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HomeIsolationMode {
-    Unisolated,
-    Tmpfs,
-    Permanent(PathBuf),
-}
-
-impl From<crate::config::HomeIsolationMode> for HomeIsolationMode {
-    fn from(value: crate::config::HomeIsolationMode) -> Self {
-        match value {
-            crate::config::HomeIsolationMode::Unisolated => Self::Unisolated,
-            crate::config::HomeIsolationMode::Tmpfs => Self::Tmpfs,
-            crate::config::HomeIsolationMode::Permanent(p) => Self::Permanent(p),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 struct DevBindMount {
@@ -951,7 +935,7 @@ mod test {
     use rustix::pipe::{pipe_with, PipeFlags};
 
     use super::validate_exe;
-    use crate::compositor::{child::container::HomeIsolationMode, Container};
+    use crate::{config::HomeIsolationMode, container::Container};
 
     #[test_log::test]
     fn echo() -> anyhow::Result<()> {

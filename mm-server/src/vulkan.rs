@@ -690,7 +690,8 @@ fn init_tracy_context(
         device.reset_command_buffer(cb, vk::CommandBufferResetFlags::empty())?;
 
         let query_pool = create_timestamp_query_pool(device, 1)?;
-        let fence = create_fence(device, false)?;
+
+        let fence = device.create_fence(&vk::FenceCreateInfo::default(), None)?;
 
         // Begin the command buffer.
         device.begin_command_buffer(

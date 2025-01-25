@@ -6,6 +6,7 @@ mod codec;
 mod color;
 mod compositor;
 mod config;
+mod container;
 mod pixel_scale;
 mod server;
 mod session;

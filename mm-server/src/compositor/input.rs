@@ -16,7 +16,7 @@ use southpaw::{
 };
 use tracing::{debug, error};
 
-use crate::compositor::Container;
+use crate::container::Container;
 
 mod udevfs;
 use udevfs::*;
@@ -267,7 +267,7 @@ mod test {
     use rustix::pipe::{pipe_with, PipeFlags};
 
     use super::{GamepadLayout, InputDeviceManager};
-    use crate::compositor::{Container, HomeIsolationMode};
+    use crate::{config::HomeIsolationMode, container::Container};
 
     fn run_in_container_with_gamepads<T>(cmd: impl AsRef<[T]>) -> anyhow::Result<String>
     where

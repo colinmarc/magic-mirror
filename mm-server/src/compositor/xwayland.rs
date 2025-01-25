@@ -15,12 +15,16 @@ use pathsearch::find_executable_in_path;
 use tracing::{debug, trace};
 pub use xwm::*;
 
-use crate::compositor::{ClientState, Container, HomeIsolationMode};
+use crate::{
+    compositor::ClientState,
+    config::HomeIsolationMode,
+    container::{ChildHandle, Container},
+};
 
 pub struct XWayland {
     pub display_socket: PathBuf,
     pub displayfd_recv: mio::unix::pipe::Receiver,
-    pub child: super::child::ChildHandle,
+    pub child: ChildHandle,
 
     xwm_socket: Option<mio::net::UnixStream>,
 }

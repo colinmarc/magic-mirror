@@ -4,7 +4,6 @@
 
 mod audio;
 mod buffers;
-mod child;
 mod control;
 mod dispatch;
 mod handle;
@@ -33,7 +32,6 @@ use std::{
 };
 
 use anyhow::{bail, Context as _};
-use child::*;
 pub use control::*;
 use crossbeam_channel as crossbeam;
 pub use handle::*;
@@ -63,6 +61,7 @@ use wayland_server::{
 
 use crate::{
     config::AppConfig,
+    container::{ChildHandle, Container},
     pixel_scale::PixelScale,
     vulkan::{VkContext, VkTimelinePoint},
     waking_sender::WakingSender,
@@ -84,7 +83,7 @@ const XDISPLAY: mio::Token = mio::Token(10);
 const XWAYLAND: mio::Token = mio::Token(11);
 const XWAYLAND_READY: mio::Token = mio::Token(12);
 
-pub struct Compositor {
+pub struct SessionLoop {
     poll: mio::Poll,
     waker: Arc<mio::Waker>,
 
@@ -175,7 +174,7 @@ impl wayland_server::backend::ClientData for ClientState {
     }
 }
 
-impl Compositor {
+impl SessionLoop {
     pub fn run(
         vk: Arc<VkContext>,
         app_config: AppConfig,
@@ -222,7 +221,7 @@ impl Compositor {
 
         let mut container = Container::new(
             app_config.command.clone(),
-            app_config.home_isolation_mode.clone().into(),
+            app_config.home_isolation_mode.clone(),
         )
         .context("initializing container")?;
 

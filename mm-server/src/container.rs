@@ -15,8 +15,9 @@ use rustix::{
 };
 use tracing::{debug, info};
 
-mod container;
-pub use container::{Container, HomeIsolationMode};
+mod ipc;
+mod runtime;
+pub use runtime::Container;
 
 /// A handle to a running container.
 pub struct ChildHandle {
@@ -80,7 +81,7 @@ impl ChildHandle {
             .map(|(k, v)| (k.as_ref(), v.as_ref()))
             .collect::<Vec<_>>();
 
-        container::fs_mount_into(&self.pidfd, dst, fstype.as_ref().to_owned(), attr, &options)?;
+        runtime::fs_mount_into(&self.pidfd, dst, fstype.as_ref().to_owned(), attr, &options)?;
         Ok(())
     }
 
@@ -92,8 +93,7 @@ impl ChildHandle {
         fsname: impl AsRef<str>,
         st_mode: u32,
     ) -> anyhow::Result<OwnedFd> {
-        let fd =
-            container::fuse_mount_into(&self.pidfd, &dst, fsname.as_ref().to_owned(), st_mode)?;
+        let fd = runtime::fuse_mount_into(&self.pidfd, &dst, fsname.as_ref().to_owned(), st_mode)?;
 
         Ok(fd)
     }
