@@ -10,14 +10,21 @@ use mm_protocol as protocol;
 use pathsearch::find_executable_in_path;
 use tracing::{debug_span, info};
 
-use crate::{
-    codec::probe_codec,
-    compositor::{
-        AudioStreamParams, Compositor, CompositorEvent, ControlMessage, DisplayParams,
-        GamepadLayout, VideoStreamParams,
-    },
-};
-use crate::{vulkan::VkContext, waking_sender::WakingSender};
+use crate::{codec::probe_codec, vulkan::VkContext, waking_sender::WakingSender};
+
+mod audio;
+pub mod compositor;
+pub mod control;
+mod handle;
+mod input;
+mod reactor;
+mod video;
+
+use control::{AudioStreamParams, ControlMessage, DisplayParams, SessionEvent, VideoStreamParams};
+pub use handle::SessionHandle;
+pub use input::GamepadLayout;
+use reactor::Reactor;
+pub use reactor::EPOCH;
 
 /// How long to wait for the compositor to accept a new attachment.
 const ATTACH_TIMEOUT: time::Duration = time::Duration::from_secs(10);
@@ -42,7 +49,7 @@ pub struct Session {
 
 pub struct Attachment {
     pub attachment_id: u64,
-    pub events: crossbeam::Receiver<CompositorEvent>,
+    pub events: crossbeam::Receiver<SessionEvent>,
     pub control: WakingSender<ControlMessage>,
 }
 
@@ -79,7 +86,7 @@ impl Session {
             let span = debug_span!("session", session_id = id, app = app_name);
             let _guard = span.enter();
 
-            Compositor::run(
+            Reactor::run(
                 vk_clone,
                 app_cfg,
                 display_params,

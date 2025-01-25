@@ -164,7 +164,7 @@ macro_rules! must {
     }};
 }
 
-type SetupHook = Box<dyn FnOnce(&mut super::ChildHandle) -> anyhow::Result<()>>;
+type SetupHook = Box<dyn FnOnce(&mut super::ContainerHandle) -> anyhow::Result<()>>;
 
 /// A lightweight linux container. Currently we use the following namespaces:
 ///  - A mount namespace, to mount tmpfs on /dev, /tmp, /run, etc, and
@@ -317,7 +317,7 @@ impl Container {
 
     pub fn setup_hook(
         &mut self,
-        f: impl FnOnce(&mut super::ChildHandle) -> anyhow::Result<()> + 'static,
+        f: impl FnOnce(&mut super::ContainerHandle) -> anyhow::Result<()> + 'static,
     ) {
         self.setup_hooks.push(Box::new(f))
     }
@@ -351,7 +351,7 @@ impl Container {
         Ok(())
     }
 
-    pub fn spawn(mut self) -> anyhow::Result<super::ChildHandle> {
+    pub fn spawn(mut self) -> anyhow::Result<super::ContainerHandle> {
         // Prepare bind mounts.
         let mut mounts = DEV_BIND_MOUNTS
             .iter()
@@ -404,7 +404,7 @@ impl Container {
             .sync(SYNC_TIMEOUT)
             .context("timed out waiting for forked child (phase 1)")?;
 
-        let mut handle = super::ChildHandle {
+        let mut handle = super::ContainerHandle {
             pid: Pid::from_raw(child_pid).unwrap(),
             pidfd: child_pidfd,
             run_path: self.extern_run_path,

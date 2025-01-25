@@ -8,8 +8,11 @@ use tracing::debug;
 use crate::{
     codec::{AudioCodec, VideoCodec},
     color::VideoProfile,
-    compositor::{AudioStreamParams, DisplayParams, GamepadLayout, VideoStreamParams},
     pixel_scale::PixelScale,
+    session::{
+        control::{AudioStreamParams, DisplayParams, VideoStreamParams},
+        GamepadLayout,
+    },
     waking_sender::WakingSender,
 };
 

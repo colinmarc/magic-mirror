@@ -13,7 +13,7 @@ use super::gop_structure::HierarchicalP;
 use super::rate_control::{self, RateControlMode};
 use crate::codec::VideoCodec;
 use crate::color::VideoProfile;
-use crate::{compositor::VideoStreamParams, vulkan::*};
+use crate::{session::control::VideoStreamParams, vulkan::*};
 
 vk_chain! {
     pub struct H265EncodeProfile<'a> {

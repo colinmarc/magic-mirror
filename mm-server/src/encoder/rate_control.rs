@@ -5,7 +5,7 @@
 use ash::vk;
 use tracing::warn;
 
-use crate::compositor::VideoStreamParams;
+use crate::session::control::VideoStreamParams;
 
 // Bitrate is defined here in terms of 1080p, and scaled nonlinearly to the
 // target resolution. Values are indexed by quality preset. Values 7/8/9 are

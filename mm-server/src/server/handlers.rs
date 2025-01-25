@@ -12,8 +12,11 @@ use protocol::error::ErrorCode;
 use tracing::{debug, debug_span, error, trace};
 
 use crate::{
-    compositor::{self, CompositorEvent, ControlMessage, DisplayParams},
-    session::Session,
+    session::{
+        compositor,
+        control::{ControlMessage, DisplayParams, SessionEvent},
+        Session,
+    },
     state::SharedState,
     waking_sender::{WakingOneshot, WakingSender},
 };
@@ -689,14 +692,14 @@ fn attach(
             },
             recv(&handle.events) -> event => {
                 match event {
-                    Ok(CompositorEvent::Shutdown) => {
+                    Ok(SessionEvent::Shutdown) => {
                         // The session ended, probably because the app exited.
                         state.lock().sessions.remove(&session_id);
 
                         outgoing.send(protocol::SessionEnded {}.into()).ok();
                         return;
                     }
-                    Ok(CompositorEvent::DisplayParamsChanged { params, reattach }) => {
+                    Ok(SessionEvent::DisplayParamsChanged { params, reattach }) => {
                         display_params = params;
                         let msg = protocol::SessionParametersChanged {
                             display_params: Some(params.into()),
@@ -709,7 +712,7 @@ fn attach(
                             return;
                         }
                     }
-                    Ok(CompositorEvent::VideoFrame { stream_seq, seq, ts, frame, hierarchical_layer, .. }) => {
+                    Ok(SessionEvent::VideoFrame { stream_seq, seq, ts, frame, hierarchical_layer, .. }) => {
                         let duration = last_video_frame_recv.elapsed();
                         if duration > time::Duration::from_millis(2 * 1000 / display_params.framerate as u64) {
                             debug!(dur = ?duration, "slow video frame");
@@ -767,7 +770,7 @@ fn attach(
                             outgoing_dgrams.send(msg.into()).ok();
                         }
                     }
-                    Ok(CompositorEvent::AudioFrame{ stream_seq, seq, ts, frame }) => {
+                    Ok(SessionEvent::AudioFrame{ stream_seq, seq, ts, frame }) => {
                             let duration = last_audio_frame_recv.elapsed();
                             if duration > time::Duration::from_millis(20) {
                                 debug!(dur = ?duration, "slow audio frame");
@@ -793,7 +796,7 @@ fn attach(
                                 outgoing_dgrams.send(msg.into()).ok();
                             }
                     }
-                    Ok(CompositorEvent::CursorUpdate{ image, icon, hotspot_x, hotspot_y }) => {
+                    Ok(SessionEvent::CursorUpdate{ image, icon, hotspot_x, hotspot_y }) => {
                         use protocol::update_cursor::CursorIcon;
                         let icon: CursorIcon = icon.map(cursor_icon_to_proto).unwrap_or(CursorIcon::None);
 
@@ -806,7 +809,7 @@ fn attach(
 
                         outgoing.send(msg.into()).ok();
                     }
-                    Ok(CompositorEvent::PointerLocked(x, y)) => {
+                    Ok(SessionEvent::PointerLocked(x, y)) => {
                         let x = x / attachment_scale;
                         let y = y / attachment_scale;
 
@@ -819,7 +822,7 @@ fn attach(
                             outgoing.send(msg.into()).ok();
                         }
                     }
-                    Ok(CompositorEvent::PointerReleased) => {
+                    Ok(SessionEvent::PointerReleased) => {
                         if pointer_lock.take().is_some() {
                             let msg = protocol::ReleasePointer {};
                             outgoing.send(msg.into()).ok();

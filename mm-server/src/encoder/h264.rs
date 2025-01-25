@@ -17,7 +17,7 @@ use tracing::{debug, trace};
 use super::gop_structure::HierarchicalP;
 use super::rate_control::{self, RateControlMode};
 use crate::codec::VideoCodec;
-use crate::{color::VideoProfile, compositor::VideoStreamParams, vulkan::*};
+use crate::{color::VideoProfile, session::control::VideoStreamParams, vulkan::*};
 
 vk_chain! {
     pub struct H264EncodeProfile<'a> {

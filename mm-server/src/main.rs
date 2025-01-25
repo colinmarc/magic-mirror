@@ -4,7 +4,6 @@
 
 mod codec;
 mod color;
-mod compositor;
 mod config;
 mod container;
 mod encoder;

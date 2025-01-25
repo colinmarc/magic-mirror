@@ -16,9 +16,9 @@ use tracing::{debug, error, trace};
 
 use self::gop_structure::HierarchicalP;
 use crate::codec::VideoCodec;
-use crate::compositor::VideoStreamParams;
+use crate::session::control::VideoStreamParams;
 use crate::vulkan::video::VideoQueueExt;
-use crate::vulkan::{self, *};
+use crate::vulkan::*;
 
 mod dpb;
 mod gop_structure;
@@ -1001,14 +1001,9 @@ fn default_hdr10_profile(op: vk::VideoCodecOperationFlagsKHR) -> vk::VideoProfil
         .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_10)
 }
 
-fn default_encode_usage(
-    driver_version: vulkan::DriverVersion,
-) -> vk::VideoEncodeUsageInfoKHR<'static> {
+fn default_encode_usage(driver_version: DriverVersion) -> vk::VideoEncodeUsageInfoKHR<'static> {
     // Nvidia chokes on "ULTRA LOW" for some reason.
-    let tuning_mode = if matches!(
-        driver_version,
-        vulkan::DriverVersion::NvidiaProprietary { .. }
-    ) {
+    let tuning_mode = if matches!(driver_version, DriverVersion::NvidiaProprietary { .. }) {
         vk::VideoEncodeTuningModeKHR::LOW_LATENCY
     } else {
         vk::VideoEncodeTuningModeKHR::ULTRA_LOW_LATENCY

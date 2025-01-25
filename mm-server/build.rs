@@ -18,7 +18,7 @@ fn main() {
 
     compile_shader(
         &mut session,
-        "src/compositor/video/composite.slang",
+        "src/session/video/composite.slang",
         out_dir.join("shaders/composite_vert.spv").to_str().unwrap(),
         "vert",
         slang::Stage::Vertex,
@@ -27,7 +27,7 @@ fn main() {
 
     compile_shader(
         &mut session,
-        "src/compositor/video/composite.slang",
+        "src/session/video/composite.slang",
         out_dir.join("shaders/composite_frag.spv").to_str().unwrap(),
         "frag",
         slang::Stage::Fragment,
@@ -36,7 +36,7 @@ fn main() {
 
     compile_shader(
         &mut session,
-        "src/compositor/video/convert.slang",
+        "src/session/video/convert.slang",
         out_dir
             .join("shaders/convert_multiplanar.spv")
             .to_str()
@@ -48,7 +48,7 @@ fn main() {
 
     compile_shader(
         &mut session,
-        "src/compositor/video/convert.slang",
+        "src/session/video/convert.slang",
         out_dir
             .join("shaders/convert_semiplanar.spv")
             .to_str()

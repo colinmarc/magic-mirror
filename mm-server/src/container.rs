@@ -20,20 +20,20 @@ mod runtime;
 pub use runtime::Container;
 
 /// A handle to a running container.
-pub struct ChildHandle {
+pub struct ContainerHandle {
     pid: Pid,
     pidfd: OwnedFd,
 
     run_path: PathBuf,
 }
 
-impl AsFd for ChildHandle {
+impl AsFd for ContainerHandle {
     fn as_fd(&self) -> BorrowedFd<'_> {
         self.pidfd()
     }
 }
 
-impl ChildHandle {
+impl ContainerHandle {
     pub fn pid(&self) -> Pid {
         self.pid
     }
@@ -99,7 +99,7 @@ impl ChildHandle {
     }
 }
 
-impl Drop for ChildHandle {
+impl Drop for ContainerHandle {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.run_path);
     }
