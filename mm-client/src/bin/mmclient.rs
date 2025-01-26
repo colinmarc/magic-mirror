@@ -928,11 +928,13 @@ fn init_window(
         session.id
     } else {
         let target = args.app.as_ref().unwrap();
+        let target = target.rsplit("/").next().unwrap();
+
         info!("launching a new session for for app {:?}", target);
 
         client
             .launch_session(
-                target.clone(),
+                target.into(),
                 desired_params.clone(),
                 initial_gamepads.clone(),
                 DEFAULT_TIMEOUT,
