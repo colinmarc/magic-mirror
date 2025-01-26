@@ -1,3 +1,23 @@
+## [mmserver-v0.7.0] - 2025-01-26
+
+### New Features
+
+- Enable hierarchical coding (90d636ffba8379da420e09c6f228fb65c334a7f2)
+- Explicit video refresh (60dffc04f4f338c3fce6d791211c12d7471a187a)
+- Implement forward error correction (729e652a001d155345c80b7f5fef397a884a1a98)
+- Remove support for CPU encoders (a5d069cb7bde15931748e41ae3d9e12a6f917445)
+- Log basic attachment stats (b42cb40cb3d5fbedd2a17d37e09da8984029998c)
+
+### Bugfixes
+
+- Pass correct flags to move_mount (af519eebc5a8f251624b3d063a7241910cddf2cc)
+- Pass correct flags to move_mount (take 2) (2e6053675a229dba4fc012b5de4afb723e9a0aca)
+- Enforce non-fractional scales from the client (2a25ca95db01ff8460328f8f258faadf55d948bb)
+- Disable explicit sync if the syncobj_surface is destroyed (e6017dec6bb9daadbbe50898f7cd9cf7c14b19aa)
+- Reduce the verbosity of some logging (b0abe2a76466e98ba8d4f844e88fd4ad4ce6c7ee)
+- Print frame duration from encoder (4a9af4f712ce723306364bece359c9bf18515554)
+- Add overall encode timing to tracy (334d5b37fe394e652bd27224c1c8e905e9c8a794)
+
 ## [mmserver-v0.6.1] - 2024-12-17
 
 ### New Features
