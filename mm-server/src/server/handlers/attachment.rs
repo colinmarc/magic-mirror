@@ -9,6 +9,7 @@ use mm_protocol::{self as protocol, error::ErrorCode};
 use tracing::{debug, debug_span, error, trace};
 
 mod chunk;
+mod stats;
 
 use super::{validate_attachment, validate_gamepad, ServerError, ValidationError};
 use crate::{
@@ -55,8 +56,7 @@ struct AttachmentHandler<'a> {
     bug_report_dir: Option<PathBuf>,
     bug_report_files: BTreeMap<u64, fs::File>,
 
-    #[cfg(feature = "tracy")]
-    video_bitrate: (simple_moving_average::SingleSumSMA<f64, f64, 300>, f64),
+    stats: stats::AttachmentStats,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +126,7 @@ impl<'a> AttachmentHandler<'a> {
             }
         };
 
+        let app_id = session.application_id.clone();
         let display_params = session.display_params;
         let bug_report_dir = session.bug_report_dir.clone();
         drop(guard);
@@ -170,14 +171,6 @@ impl<'a> AttachmentHandler<'a> {
             }),
         };
 
-        // For tracing.
-        #[cfg(feature = "tracy")]
-        let video_bitrate = simple_moving_average::SingleSumSMA::<f64, f64, 300>::new();
-
-        #[cfg(feature = "tracy")]
-        let worst_case_bitrate =
-            (video_params.width as f64 * video_params.height as f64 * 3.0 / 2.0) * 8.0 / 1000.0;
-
         let pointer_lock = None;
 
         let keepalive_timer = crossbeam_channel::after(KEEPALIVE_TIMEOUT);
@@ -209,8 +202,7 @@ impl<'a> AttachmentHandler<'a> {
             bug_report_dir,
             bug_report_files: BTreeMap::default(),
 
-            #[cfg(feature = "tracy")]
-            video_bitrate: (video_bitrate, worst_case_bitrate),
+            stats: stats::AttachmentStats::new(app_id),
         })
     }
 
@@ -584,29 +576,15 @@ impl<'a> AttachmentHandler<'a> {
             } => {
                 let duration = self.last_video_frame_recvd.elapsed();
                 if duration
-                    > time::Duration::from_millis(
-                        2 * 1000 / self.session_display_params.framerate as u64,
+                    > time::Duration::from_secs_f32(
+                        1.5 / self.session_display_params.framerate as f32,
                     )
                 {
                     debug!(dur = ?duration, "slow video frame");
                 }
 
-                #[cfg(feature = "tracy")]
-                {
-                    use simple_moving_average::SMA;
-                    let (sma, worst_case) = &mut self.video_bitrate;
-
-                    sma.add_sample(
-                        frame.len() as f64
-                            * (8.0 / 1000.0)
-                            * (1000.0 / duration.as_millis() as f64),
-                    );
-                    if seq % 10 == 0 {
-                        let avg = sma.get_average();
-                        tracy_client::plot!("video bitrate (KB/s)", avg);
-                        tracy_client::plot!("compression ratio", avg / *worst_case);
-                    }
-                }
+                self.last_video_frame_recvd = time::Instant::now();
+                self.stats.record_frame(seq, frame.len(), duration);
 
                 if let Some(dir) = &self.bug_report_dir {
                     let file = self.bug_report_files.entry(stream_seq).or_insert_with(|| {
@@ -621,8 +599,6 @@ impl<'a> AttachmentHandler<'a> {
                     std::io::Write::write_all(file, &frame).unwrap();
                     std::io::Write::flush(file).unwrap();
                 }
-
-                self.last_video_frame_recvd = time::Instant::now();
 
                 let optional = hierarchical_layer != 0;
                 let fec_ratio = self
@@ -658,11 +634,16 @@ impl<'a> AttachmentHandler<'a> {
                 frame,
             } => {
                 let duration = self.last_audio_frame_recvd.elapsed();
-                if duration > time::Duration::from_millis(20) {
+                if duration
+                    > time::Duration::from_secs_f32(
+                        1.5 / self.session_display_params.framerate as f32,
+                    )
+                {
                     debug!(dur = ?duration, "slow audio frame");
                 }
 
                 self.last_audio_frame_recvd = time::Instant::now();
+                self.stats.record_frame(seq, frame.len(), duration);
 
                 for chunk in iter_chunks(frame, self.chunk_size, 0.0) {
                     let msg = protocol::AudioChunk {

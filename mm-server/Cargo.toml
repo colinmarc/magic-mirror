@@ -60,7 +60,7 @@ ring = "0.16"
 scopeguard = "1.2"
 serde = "1"
 serde_json = "1"
-simple_moving_average = { version = "1", optional = true }
+simple_moving_average = { version = "1" }
 slotmap = "1"
 thiserror = "1"
 threadpool = "1"
@@ -115,7 +115,6 @@ libavcodec = { version = "6", feature = "ffmpeg_encode" }
 [features]
 default = []
 tracy = [
-    "dep:simple_moving_average",
     "tracy-client/enable",
     "tracy-client/broadcast",
     "tracing-tracy/enable",
