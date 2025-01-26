@@ -836,6 +836,8 @@ fn writer_thread(
 ) -> anyhow::Result<()> {
     let device = &vk.device;
 
+    let mut capture_ts = time::Instant::now();
+
     for frame in input {
         let frame = match frame {
             WriterInput::InsertBytes(header) => {
@@ -845,7 +847,8 @@ fn writer_thread(
             WriterInput::SubmittedFrame(frame) => frame,
         };
 
-        let capture_ts = time::Instant::now();
+        let dur = capture_ts.elapsed();
+        capture_ts = time::Instant::now();
 
         // Wait for the frame to finish encoding.
         unsafe {
@@ -875,7 +878,7 @@ fn writer_thread(
             bail!("encode failed: {:?}", res);
         }
 
-        trace!(len = results[0].size, "encoded packet");
+        trace!(len = results[0].size, ?dur, "encoded packet");
         stats.record_frame_size(
             frame.is_keyframe,
             frame.hierarchical_layer,
