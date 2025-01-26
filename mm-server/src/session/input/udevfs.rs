@@ -13,7 +13,7 @@ use std::{
 use fuser as fuse;
 use libc::EBADF;
 use parking_lot::Mutex;
-use tracing::{debug, warn};
+use tracing::{trace, warn};
 
 use super::DeviceState;
 
@@ -228,7 +228,7 @@ impl fuse::Filesystem for UdevFs {
             return reply.error(ENOENT);
         };
 
-        debug!(?parent_path, ?name, dev, "lookup");
+        trace!(?parent_path, ?name, dev, "lookup");
         match (parent_path.to_str().unwrap(), name, dev) {
             ("/", "sys", _) => reply.entry(&ZERO_TTL, &inodes.cache_dir("/sys", None), 0),
             ("/sys", "class", _) => {
@@ -399,7 +399,7 @@ impl fuse::Filesystem for UdevFs {
             return reply.error(ENOENT);
         };
 
-        debug!(path = ?entry.path, "readlink");
+        trace!(path = ?entry.path, "readlink");
         if let Some(name) = matches_prefix_with_name(&entry.path, "/sys/class/input") {
             let guard = self.state.lock();
             let Some(dev) = guard.device_by_eventname(name) else {
@@ -410,7 +410,6 @@ impl fuse::Filesystem for UdevFs {
             let dst = Path::new("/sys/devices/virtual/input")
                 .join(&dev.devname)
                 .join(name);
-            debug!(?dst, "returning from readlink");
             reply.data(dst.as_os_str().as_encoded_bytes());
         } else if entry.path.starts_with("/sys/devices")
             && entry.path.file_name() == Some(Path::new("subsystem").as_os_str())
@@ -438,7 +437,7 @@ impl fuse::Filesystem for UdevFs {
             return reply.error(EBADF);
         };
 
-        debug!(path = ?entry.path, "read");
+        trace!(path = ?entry.path, "read");
 
         if entry.path.starts_with("/run/udev/data") {
             reply.data(UDEV_INPUT_DATA);
@@ -483,7 +482,7 @@ impl fuse::Filesystem for UdevFs {
             return reply.error(EBADF);
         };
 
-        debug!(?path, ?dev, "readdir");
+        trace!(?path, ?dev, "readdir");
 
         let skip = skip as usize;
         match (path.to_str().unwrap(), dev) {
@@ -493,7 +492,7 @@ impl fuse::Filesystem for UdevFs {
             ("/sys/class/input", _) => {
                 let guard = self.state.lock();
 
-                debug!("udev is enumerating devices in /sys/class/input");
+                trace!("udev is enumerating devices in /sys/class/input");
                 for (idx, DeviceState { id, eventname, .. }) in
                     guard.devices.iter().skip(skip).enumerate()
                 {
@@ -519,7 +518,7 @@ impl fuse::Filesystem for UdevFs {
             ("/sys/devices/virtual/input", _) => {
                 let guard = self.state.lock();
 
-                debug!("udev is enumerating devices in /sys/devices/virtual/input");
+                trace!("udev is enumerating devices in /sys/devices/virtual/input");
                 for (idx, DeviceState { id, devname, .. }) in
                     guard.devices.iter().skip(skip).enumerate()
                 {

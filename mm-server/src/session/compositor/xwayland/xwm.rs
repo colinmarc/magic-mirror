@@ -468,7 +468,7 @@ fn handle_event(state: &mut Compositor, ev: protocol::Event) -> anyhow::Result<(
                 mapped: false,
             };
 
-            debug!(?xwin, "xwindow created");
+            trace!(?xwin, "xwindow created");
 
             xwm.xwindows.insert(msg.window, xwin);
             xwm.conn.flush()?;
@@ -802,7 +802,7 @@ fn fetch_string_property(
     match String::from_utf8(bytes.collect()) {
         Ok(v) => Ok(Some(v)),
         Err(_) => {
-            debug!(?atom, "invalid string property");
+            trace!(?atom, "invalid string property");
             Ok(None)
         }
     }
@@ -821,7 +821,7 @@ fn fetch_class(
     match std::str::from_utf8(reply.class()) {
         Ok(v) => Ok(Some(v.to_owned())),
         Err(_) => {
-            debug!("WM_CLASS property is invalid string");
+            trace!("WM_CLASS property is invalid string");
             Ok(None)
         }
     }
