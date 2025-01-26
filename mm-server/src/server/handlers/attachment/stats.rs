@@ -53,7 +53,7 @@ impl AttachmentStats {
 
         #[cfg(feature = "tracy")]
         if _seq % 10 == 0 {
-            tracy_client::plot!("video bitrate (KB/s)", avg);
+            tracy_client::plot!("video bitrate (mbps)", avg);
         }
     }
 }

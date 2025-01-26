@@ -597,7 +597,8 @@ impl Reactor {
     }
 
     fn frame(&mut self) -> anyhow::Result<()> {
-        let _tracy_frame = tracy_client::non_continuous_frame!("composite");
+        #[cfg(feature = "tracy")]
+        tracy_client::frame_mark();
 
         if self.session_handle.num_attachments() == 0 {
             return Ok(());

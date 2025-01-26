@@ -364,6 +364,11 @@ impl EncoderInner {
             }
         };
 
+        #[cfg(feature = "tracy")]
+        {
+            frame.tracy_frame = Some(tracy_client::non_continuous_frame!("encode"));
+        }
+
         begin_command_buffer(&self.vk.device, frame.encode_cb)?;
 
         // Acquire the image from the graphics queue.
@@ -700,6 +705,10 @@ struct EncoderOutputFrame {
     timeline: VkTimelineSemaphore,
     tp_encoded: VkTimelinePoint,
     tp_copied: VkTimelinePoint,
+
+    #[cfg(feature = "tracy")]
+    tracy_frame: Option<tracy_client::Frame>,
+
     vk: Arc<VkContext>,
 }
 
@@ -784,6 +793,9 @@ impl EncoderOutputFrame {
             tp_copied: timeline.new_point(0),
             timeline,
 
+            #[cfg(feature = "tracy")]
+            tracy_frame: None,
+
             vk,
         })
     }
@@ -839,7 +851,7 @@ fn writer_thread(
     let mut capture_ts = time::Instant::now();
 
     for frame in input {
-        let frame = match frame {
+        let mut frame = match frame {
             WriterInput::InsertBytes(header) => {
                 sink.write_frame(time::Instant::now(), header, 0);
                 continue;
@@ -855,9 +867,8 @@ fn writer_thread(
             frame.tp_encoded.wait()?;
         }
 
-        // Wake the compositor, so it can release buffers and send presentation
-        // feedback.
-        // compositor.wake()?;
+        #[cfg(feature = "tracy")]
+        frame.tracy_frame.take();
 
         // Get the buffer offsets for the encoded data.
         let mut results = [QueryResults::default()];
