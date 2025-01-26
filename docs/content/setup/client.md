@@ -15,7 +15,7 @@ later.
 ## Installing the commandline client
 
 There is also a cross-platform commandline client, `mmclient`. You can download
-it [here](https://github.com/colinmarc/magic-mirror/releases/tag/mmclient-v0.5.0).
+it [here](https://github.com/colinmarc/magic-mirror/releases/tag/mmclient-v0.6.0).
 
 The commandline client requires `ffmpeg` 6.0 or later to be installed on the
 system. It also requires up-to-date Vulkan drivers.

@@ -1,3 +1,16 @@
+## [mmclient-v0.6.0] - 2025-01-26
+
+### New Features
+
+- Support ffmpeg vulkan decode (5c76b29273d3c0b29edb9e34e33096af76814398)
+- Explicit video refresh (60dffc04f4f338c3fce6d791211c12d7471a187a)
+- Implement forward error correction (729e652a001d155345c80b7f5fef397a884a1a98)
+
+### Bugfixes
+
+- Enforce non-fractional scales from the client (2a25ca95db01ff8460328f8f258faadf55d948bb)
+- Take application names with path included (100d51e8f44129a23b1df944a897a3123ef12d1c)
+
 ## [mmserver-v0.7.0] - 2025-01-26
 
 ### New Features
