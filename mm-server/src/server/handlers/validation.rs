@@ -13,15 +13,14 @@ use crate::{
         control::{AudioStreamParams, DisplayParams, VideoStreamParams},
         GamepadLayout,
     },
-    waking_sender::WakingSender,
 };
 
 pub enum ValidationError {
     Invalid(String),
-    NotSupported(String),
+    Unsupported(String),
 }
 
-pub type Result<T> = std::result::Result<T, ValidationError>;
+type Result<T> = std::result::Result<T, ValidationError>;
 
 pub fn validate_display_params(
     params: Option<protocol::VirtualDisplayParameters>,
@@ -93,7 +92,7 @@ pub fn validate_ui_scale(ui_scale: Option<protocol::PixelScale>) -> Result<Pixel
     match ui_scale {
         Some(scale) => match PixelScale::try_from(scale) {
             Ok(s) if !s.is_fractional() => Ok(s),
-            Ok(_) => Err(ValidationError::NotSupported(
+            Ok(_) => Err(ValidationError::Unsupported(
                 "fractional UI scales are not supported".into(),
             )),
             Err(_) => Err(ValidationError::Invalid("invalid UI scale".into())),
@@ -111,7 +110,7 @@ fn validate_profile(profile: i32) -> Result<VideoProfile> {
 
     match p.try_into() {
         Ok(p) => Ok(p),
-        _ => Err(ValidationError::NotSupported(
+        _ => Err(ValidationError::Unsupported(
             "unsupported video profile".into(),
         )),
     }
@@ -140,9 +139,7 @@ pub fn validate_preset(preset: u32) -> Result<u32> {
 pub fn validate_framerate(framerate: u32) -> Result<u32> {
     match framerate {
         60 | 30 => Ok(framerate),
-        _ => Err(ValidationError::NotSupported(
-            "unsupported framerate".into(),
-        )),
+        _ => Err(ValidationError::Unsupported("unsupported framerate".into())),
     }
 }
 
@@ -182,7 +179,7 @@ pub fn validate_channels(channels: Option<protocol::AudioChannels>) -> Result<u3
             if channels == 2 {
                 Ok(channels)
             } else {
-                Err(ValidationError::NotSupported(
+                Err(ValidationError::Unsupported(
                     "unsupported number of channels".into(),
                 ))
             }
@@ -215,48 +212,5 @@ pub fn validate_gamepad_layout(layout: i32) -> Result<GamepadLayout> {
             Err(ValidationError::Invalid("invalid gamepad layout".into()))
         }
         Ok(_) => Ok(GamepadLayout::GenericDualStick), // TODO
-    }
-}
-
-pub fn send_err(
-    response: &WakingSender<protocol::MessageType>,
-    code: protocol::error::ErrorCode,
-    text: Option<String>,
-) {
-    if let Some(text) = text.as_ref() {
-        debug!("client error: {:?}: {}", code, text);
-    } else {
-        debug!("client error: {:?}", code);
-    }
-
-    let err = protocol::Error {
-        err_code: code.into(),
-        error_text: text.unwrap_or_default(),
-    };
-
-    response.send(err.into()).ok();
-}
-
-pub fn send_validation_error(
-    response: &WakingSender<protocol::MessageType>,
-    err: ValidationError,
-    is_attachment: bool,
-) {
-    match err {
-        ValidationError::Invalid(text) => send_err(
-            response,
-            protocol::error::ErrorCode::ErrorProtocol,
-            Some(text),
-        ),
-        ValidationError::NotSupported(text) if !is_attachment => send_err(
-            response,
-            protocol::error::ErrorCode::ErrorSessionParamsNotSupported,
-            Some(text),
-        ),
-        ValidationError::NotSupported(text) => send_err(
-            response,
-            protocol::error::ErrorCode::ErrorAttachmentParamsNotSupported,
-            Some(text),
-        ),
     }
 }

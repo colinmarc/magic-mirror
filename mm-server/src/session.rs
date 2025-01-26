@@ -48,6 +48,7 @@ pub struct Session {
 }
 
 pub struct Attachment {
+    pub session_id: u64,
     pub attachment_id: u64,
     pub events: crossbeam::Receiver<SessionEvent>,
     pub control: WakingSender<ControlMessage>,
@@ -194,6 +195,7 @@ impl Session {
         self.detached_since = None;
 
         Ok(Attachment {
+            session_id: self.id,
             attachment_id: id,
             events: events_recv,
             control: self.control_sender.clone(),
