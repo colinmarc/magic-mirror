@@ -851,6 +851,7 @@ fn writer_thread(
     let mut capture_ts = time::Instant::now();
 
     for frame in input {
+        #[allow(unused_mut)]
         let mut frame = match frame {
             WriterInput::InsertBytes(header) => {
                 sink.write_frame(time::Instant::now(), header, 0);
