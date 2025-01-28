@@ -335,7 +335,7 @@ impl Server {
                         Err(TryRecvError::Empty) => break,
                     };
 
-                    match client.send_dgram(msg, &mut self.scratch) {
+                    match client.send_dgram(msg) {
                         Ok(_) => {}
                         Err(e) => {
                             match e.downcast_ref::<quiche::Error>() {
@@ -781,19 +781,16 @@ impl ClientConnection {
     }
 
     /// Send a message as a datagram.
-    fn send_dgram(
-        &mut self,
-        msg: protocol::MessageType,
-        scratch: &mut BytesMut,
-    ) -> anyhow::Result<()> {
+    fn send_dgram(&mut self, msg: protocol::MessageType) -> anyhow::Result<()> {
         #[cfg(debug_assertions)]
         match msg {
             protocol::MessageType::VideoChunk(_) | protocol::MessageType::AudioChunk(_) => {}
             _ => panic!("received non-dgram message on dgram channel"),
         }
 
-        scratch.resize(protocol::MAX_MESSAGE_SIZE, 0);
-        let len = protocol::encode_message(&msg, scratch).unwrap();
+        let mut buf = vec![0; protocol::MAX_MESSAGE_SIZE];
+        let len = protocol::encode_message(&msg, &mut buf).unwrap();
+        buf.truncate(len);
 
         trace!(
             conn_id = ?self.conn_id,
@@ -801,7 +798,7 @@ impl ClientConnection {
             "sending datagram {}", msg
         );
 
-        match self.conn.dgram_send_vec(scratch[..len].to_vec()) {
+        match self.conn.dgram_send_vec(buf) {
             Ok(_) => Ok(()),
             Err(quiche::Error::InvalidState) => Err(anyhow!("client doesn't support datagrams")),
             Err(e) => Err(e.into()),
