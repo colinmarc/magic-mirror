@@ -122,7 +122,9 @@ impl H264Encoder {
 
         let structure = super::default_structure(
             VideoCodec::H264,
-            caps.h264_caps.max_temporal_layer_count,
+            caps.h264_caps
+                .max_temporal_layer_count
+                .min(caps.encode_caps.max_rate_control_layers),
             caps.video_caps.max_dpb_slots,
         )?;
 
