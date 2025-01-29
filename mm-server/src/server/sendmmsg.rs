@@ -10,6 +10,7 @@ use nix::sys::socket::{
     cmsg_space, setsockopt, sockopt::TxTime, ControlMessage, MsgFlags, MultiHeaders,
     SockaddrStorage,
 };
+use tracing::instrument;
 #[derive(Default)]
 pub struct SendMmsg<'a> {
     iovs: Vec<[IoSlice<'a>; 1]>,
@@ -18,6 +19,7 @@ pub struct SendMmsg<'a> {
 }
 
 impl<'a> SendMmsg<'a> {
+    #[instrument(skip_all)]
     pub fn sendmsg(mut self, buf: &'a [u8], addr: SocketAddr, txtime: time::Instant) -> Self {
         self.iovs.push([IoSlice::new(buf)]);
         self.addrs.push(Some(addr.into()));
@@ -28,6 +30,7 @@ impl<'a> SendMmsg<'a> {
         self
     }
 
+    #[instrument(skip_all)]
     pub fn finish(&mut self, fd: &impl AsRawFd) -> Result<(), nix::Error> {
         let mut data: MultiHeaders<SockaddrStorage> = MultiHeaders::preallocate(
             self.iovs.len(),

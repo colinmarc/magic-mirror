@@ -19,11 +19,11 @@ use hashbrown::HashMap;
 use mm_protocol as protocol;
 use protocol::error::ErrorCode;
 use ring::rand::{self, SecureRandom};
-use tracing::debug_span;
 use tracing::trace;
 use tracing::trace_span;
 use tracing::warn;
 use tracing::{debug, error};
+use tracing::{debug_span, instrument};
 
 use crate::state::SharedState;
 use crate::waking_sender::WakingOneshot;
@@ -76,8 +76,8 @@ pub struct ClientConnection {
     partial_reads: BTreeMap<u64, BytesMut>,
     partial_writes: BTreeMap<u64, Bytes>,
     in_flight: BTreeMap<u64, StreamWorker>,
-    dgram_recv: Receiver<protocol::MessageType>,
-    dgram_send: WakingSender<protocol::MessageType>,
+    dgram_recv: Receiver<Vec<u8>>,
+    dgram_send: WakingSender<Vec<u8>>,
 }
 
 impl Server {
@@ -197,10 +197,33 @@ impl Server {
             // TODO: It might be worthwhile to switch to a busy loop if
             // there are any active sessions. That would mean handling quiche
             // timeouts in userspace.
-            match self.poll.poll(&mut events, None) {
+            let poll_res = trace_span!("poll").in_scope(|| self.poll.poll(&mut events, None));
+
+            match poll_res {
                 Ok(_) => (),
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e.into()),
+            }
+
+            #[cfg(feature = "tracy")]
+            {
+                tracy_client::plot!(
+                    "active streams",
+                    self.clients
+                        .iter()
+                        .map(|(_, c)| c.in_flight.len())
+                        .sum::<usize>() as f64
+                );
+
+                tracy_client::plot!(
+                    "dgram send queue",
+                    self.clients
+                        .iter()
+                        .map(|(_, c)| c.conn.dgram_send_queue_len())
+                        .sum::<usize>() as f64
+                );
+
+                tracy_client::plot!("outgoing packet queue", self.outgoing_packets.len() as f64);
             }
 
             // Check if we're supposed to shut down.
@@ -314,6 +337,9 @@ impl Server {
                 }
             }
 
+            #[cfg(feature = "tracy")]
+            let mut max_txtime: f64 = 0.0;
+
             // Demux packets from in-flight requests and datagrams from attachments.
             for client in self.clients.values_mut() {
                 let conn_span = trace_span!("conn_write", conn_id = ?client.conn_id);
@@ -389,6 +415,9 @@ impl Server {
 
             let mut off = 0;
             for client in self.clients.values_mut() {
+                let span = trace_span!("gather_send", conn_id = ?client.conn_id);
+                let _guard = span.enter();
+
                 loop {
                     let start = off;
                     self.scratch.resize(off + MAX_QUIC_PACKET_SIZE, 0);
@@ -414,10 +443,24 @@ impl Server {
                 let mut sendmmsg = sendmmsg::new();
                 for (range, to, txtime) in packets {
                     sendmmsg = sendmmsg.sendmsg(&self.scratch[range], to, txtime);
+
+                    // Plot the max txtime difference.
+                    #[cfg(feature = "tracy")]
+                    {
+                        max_txtime = max_txtime.max(
+                            txtime
+                                .duration_since(std::time::Instant::now())
+                                .as_secs_f64()
+                                / 1000.0,
+                        );
+                    }
                 }
 
                 sendmmsg.finish(&self.socket)?;
             }
+
+            #[cfg(feature = "tracy")]
+            tracy_client::plot!("max txtime (ms)", max_txtime);
         }
     }
 
@@ -781,24 +824,15 @@ impl ClientConnection {
     }
 
     /// Send a message as a datagram.
-    fn send_dgram(&mut self, msg: protocol::MessageType) -> anyhow::Result<()> {
-        #[cfg(debug_assertions)]
-        match msg {
-            protocol::MessageType::VideoChunk(_) | protocol::MessageType::AudioChunk(_) => {}
-            _ => panic!("received non-dgram message on dgram channel"),
-        }
-
-        let mut buf = vec![0; protocol::MAX_MESSAGE_SIZE];
-        let len = protocol::encode_message(&msg, &mut buf).unwrap();
-        buf.truncate(len);
-
+    #[instrument(skip_all)]
+    fn send_dgram(&mut self, msg: Vec<u8>) -> anyhow::Result<()> {
         trace!(
             conn_id = ?self.conn_id,
-            len,
-            "sending datagram {}", msg
+            len = msg.len(),
+            "sending datagram",
         );
 
-        match self.conn.dgram_send_vec(buf) {
+        match self.conn.dgram_send_vec(msg) {
             Ok(_) => Ok(()),
             Err(quiche::Error::InvalidState) => Err(anyhow!("client doesn't support datagrams")),
             Err(e) => Err(e.into()),

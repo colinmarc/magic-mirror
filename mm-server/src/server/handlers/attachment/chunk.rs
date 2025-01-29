@@ -5,6 +5,7 @@
 use bytes::Bytes;
 use either::Either;
 use mm_protocol as protocol;
+use tracing::{instrument, trace_span};
 
 pub struct Chunk {
     pub index: u32,
@@ -24,6 +25,9 @@ pub fn iter_chunks(
 
     let num_chunks = buf.len().div_ceil(mtu) as u32;
     let mut next_chunk: u32 = 0;
+
+    let span = trace_span!("iter_chunks");
+    let _guard = span.enter();
 
     Either::Right(std::iter::from_fn(move || {
         if buf.is_empty() {
@@ -47,6 +51,7 @@ pub fn iter_chunks(
     }))
 }
 
+#[instrument(skip_all)]
 fn iter_chunks_fec(buf: Bytes, mtu: usize, ratio: f32) -> impl Iterator<Item = Chunk> {
     let encoder = raptorq::Encoder::with_defaults(&buf, mtu as u16);
     let oti = Bytes::copy_from_slice(&encoder.get_config().serialize());

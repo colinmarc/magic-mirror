@@ -29,7 +29,7 @@ struct Context {
     state: SharedState,
     incoming: Receiver<protocol::MessageType>,
     outgoing: WakingSender<protocol::MessageType>,
-    outgoing_dgrams: WakingSender<protocol::MessageType>,
+    outgoing_dgrams: WakingSender<Vec<u8>>,
     max_dgram_len: usize,
 }
 
@@ -58,7 +58,7 @@ pub fn dispatch(
     state: SharedState,
     incoming: Receiver<protocol::MessageType>,
     outgoing: WakingSender<protocol::MessageType>,
-    outgoing_dgrams: WakingSender<protocol::MessageType>,
+    outgoing_dgrams: WakingSender<Vec<u8>>,
     max_dgram_len: usize,
     done: WakingOneshot<()>,
 ) {

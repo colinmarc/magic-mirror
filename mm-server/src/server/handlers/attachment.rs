@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, fs, path::PathBuf, time};
 
 use chunk::iter_chunks;
 use mm_protocol::{self as protocol, error::ErrorCode};
-use tracing::{debug, debug_span, error, trace};
+use tracing::{debug, debug_span, error, trace, trace_span};
 
 mod chunk;
 mod stats;
@@ -178,8 +178,10 @@ impl<'a> AttachmentHandler<'a> {
         // max_dgram_len is our overall MTU. The MM protocol header is 2-10 bytes,
         // and then we include seven varints (maximum 5 bytes each) and a bool of
         // metadata, plus an optional 12-ish bytes of FEC information. 64 bytes of
-        // headroom should cover the worst case.
-        let chunk_size = ctx.max_dgram_len - 64;
+        // headroom should cover the worst case. However, a little extra will
+        // increase the chance that the packet is coalesced into an existing QUIC
+        // packet.
+        let chunk_size = ctx.max_dgram_len - 128;
 
         let now = time::Instant::now();
 
@@ -195,6 +197,7 @@ impl<'a> AttachmentHandler<'a> {
             pointer_lock,
 
             chunk_size,
+
             last_video_frame_recvd: now,
             last_audio_frame_recvd: now,
             keepalive_timer,
@@ -624,7 +627,24 @@ impl<'a> AttachmentHandler<'a> {
                         fec_metadata: chunk.fec_metadata,
                     };
 
-                    let _ = self.ctx.outgoing_dgrams.send(msg.into());
+                    let buf = trace_span!("encode_message").in_scope(|| {
+                        let mut buf = vec![0; self.ctx.max_dgram_len];
+                        let len = match protocol::encode_message(&msg.into(), &mut buf) {
+                            Ok(v) => v,
+                            Err(err) => {
+                                error!(?err, "failed to encode video chunk");
+                                return Err(AttachmentError::ServerError(
+                                    ErrorCode::ErrorServer,
+                                    None,
+                                ));
+                            }
+                        };
+
+                        buf.truncate(len);
+                        Ok(buf)
+                    })?;
+
+                    let _ = self.ctx.outgoing_dgrams.send(buf);
                 }
             }
             SessionEvent::AudioFrame {
@@ -660,7 +680,24 @@ impl<'a> AttachmentHandler<'a> {
                         fec_metadata: chunk.fec_metadata,
                     };
 
-                    let _ = self.ctx.outgoing_dgrams.send(msg.into());
+                    let buf = trace_span!("encode_message").in_scope(|| {
+                        let mut buf = vec![0; self.ctx.max_dgram_len];
+                        let len = match protocol::encode_message(&msg.into(), &mut buf) {
+                            Ok(v) => v,
+                            Err(err) => {
+                                error!(?err, "failed to encode video chunk");
+                                return Err(AttachmentError::ServerError(
+                                    ErrorCode::ErrorServer,
+                                    None,
+                                ));
+                            }
+                        };
+
+                        buf.truncate(len);
+                        Ok(buf)
+                    })?;
+
+                    let _ = self.ctx.outgoing_dgrams.send(buf);
                 }
             }
             SessionEvent::CursorUpdate {
