@@ -4,7 +4,7 @@
 
 use std::{path::Path, sync::Arc};
 
-use crate::{session::control::SessionEvent, session::SessionHandle, waking_sender::WakingSender};
+use crate::{session::SessionHandle, waking_sender::WakingSender};
 
 mod pulse;
 use anyhow::Context as _;
