@@ -8,6 +8,7 @@ use std::{
 };
 
 use drm_fourcc::DrmFourcc;
+use tracing::error;
 use wayland_protocols::wp::linux_dmabuf::zv1::server::{
     zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1,
 };
@@ -188,7 +189,8 @@ impl
                     import_dmabuf_buffer(state.vk.clone(), wl_buffer, format, modifier.into(), fd)
                 });
 
-                if res.is_err() {
+                if let Err(err) = res {
+                    error!(?err, "failed to import dmabuf");
                     resource.post_error(
                         zwp_linux_buffer_params_v1::Error::InvalidWlBuffer,
                         "Import failed.",
