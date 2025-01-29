@@ -7,6 +7,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::Context as _;
 use ash::vk;
 use tracing::instrument;
 
@@ -54,14 +55,16 @@ impl std::ops::AddAssign<u64> for VkTimelinePoint {
 impl VkTimelineSemaphore {
     pub fn new(vk: Arc<VkContext>, initial_value: u64) -> anyhow::Result<Self> {
         let sema = unsafe {
-            vk.device.create_semaphore(
-                &vk::SemaphoreCreateInfo::default().push_next(
-                    &mut vk::SemaphoreTypeCreateInfo::default()
-                        .semaphore_type(vk::SemaphoreType::TIMELINE)
-                        .initial_value(initial_value),
-                ),
-                None,
-            )?
+            vk.device
+                .create_semaphore(
+                    &vk::SemaphoreCreateInfo::default().push_next(
+                        &mut vk::SemaphoreTypeCreateInfo::default()
+                            .semaphore_type(vk::SemaphoreType::TIMELINE)
+                            .initial_value(initial_value),
+                    ),
+                    None,
+                )
+                .context("VkCreateSemaphore")?
         };
 
         Ok(Self(Arc::new(Inner { vk, sema })))
@@ -77,7 +80,8 @@ impl VkTimelineSemaphore {
 
         unsafe {
             vk.external_semaphore_api
-                .import_semaphore_fd(&import_info)?;
+                .import_semaphore_fd(&import_info)
+                .context("VkImportSemaphoreFdKHR")?;
         }
 
         Ok(sema)
