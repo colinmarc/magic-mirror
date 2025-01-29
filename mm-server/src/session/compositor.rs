@@ -54,7 +54,7 @@ pub struct Compositor {
     buffers: SlotMap<buffers::BufferKey, buffers::Buffer>,
     shm_pools: SlotMap<shm::ShmPoolKey, shm::ShmPool>,
     cached_dmabuf_feedback: buffers::CachedDmabufFeedback,
-    imported_syncobj_timelines: SlotMap<buffers::SyncobjTimelineKey, buffers::SyncobjTimeline>,
+    imported_buffer_timelines: SlotMap<buffers::BufferTimelineKey, buffers::BufferTimeline>,
     pending_presentation_feedback: Vec<(
         wp_presentation_feedback::WpPresentationFeedback,
         VkTimelinePoint,
@@ -93,7 +93,7 @@ impl Compositor {
             buffers: SlotMap::default(),
             shm_pools: SlotMap::default(),
             cached_dmabuf_feedback,
-            imported_syncobj_timelines: SlotMap::default(),
+            imported_buffer_timelines: SlotMap::default(),
             pending_presentation_feedback: Vec::new(),
 
             surface_stack: Vec::new(),
@@ -199,26 +199,22 @@ impl Compositor {
             let buffer = &mut self.buffers[content.buffer];
 
             let sync = match &mut buffer.backing {
+                buffers::BufferBacking::Dmabuf { .. } if content.explicit_sync.is_some() => {
+                    let (acquire, _) = content.explicit_sync.as_ref().unwrap();
+                    Some(video::TextureSync::TimelineAcquire(acquire.clone()))
+                }
                 buffers::BufferBacking::Dmabuf {
                     fd,
-                    acquire_semaphore,
-                    acquire_semaphore_used,
+                    interop_sema,
+                    interop_sema_tripped,
                     ..
-                } if !*acquire_semaphore_used => {
-                    if let Some((acquire, _)) = content.explicit_sync.as_ref() {
-                        acquire.import_as_semaphore(*acquire_semaphore)?;
-                    } else {
-                        // Interop with the kernel's explicit sync fence.
-                        buffers::import_dmabuf_fence_as_semaphore(
-                            self.vk.clone(),
-                            *acquire_semaphore,
-                            fd,
-                        )?;
-                    }
+                } if !*interop_sema_tripped => {
+                    // Grab a semaphore for explicit sync interop.
+                    buffers::import_dmabuf_fence_as_semaphore(self.vk.clone(), *interop_sema, fd)?;
 
                     // Make sure we only wait for the semaphore once per commit.
-                    *acquire_semaphore_used = true;
-                    Some(*acquire_semaphore)
+                    *interop_sema_tripped = true;
+                    Some(video::TextureSync::BinaryAcquire(*interop_sema))
                 }
                 _ => None,
             };

@@ -87,6 +87,11 @@ pub struct SwapFrame {
     render_span: Option<tracy_client::GpuSpan>,
 }
 
+pub enum TextureSync {
+    BinaryAcquire(vk::Semaphore),
+    TimelineAcquire(VkTimelinePoint),
+}
+
 pub struct EncodePipeline {
     display_params: DisplayParams,
     streaming_params: VideoStreamParams,
@@ -223,7 +228,7 @@ impl EncodePipeline {
     pub unsafe fn composite_surface(
         &mut self,
         texture: &compositor::buffers::Buffer,
-        acquire_semaphore: Option<vk::Semaphore>,
+        sync: Option<TextureSync>,
         dest: compositor::surface::SurfaceConfiguration,
     ) -> anyhow::Result<Option<VkTimelinePoint>> {
         let device = &self.vk.device;
@@ -334,9 +339,13 @@ impl EncodePipeline {
             }
         };
 
-        if let Some(semaphore) = acquire_semaphore {
-            frame.texture_semas.push(semaphore);
-        }
+        match sync {
+            Some(TextureSync::TimelineAcquire(acquire)) => {
+                frame.texture_acquire_points.push(acquire)
+            }
+            Some(TextureSync::BinaryAcquire(semaphore)) => frame.texture_semas.push(semaphore),
+            None => (),
+        };
 
         // Convert the destination rect into clip coordinates.
         let display_size: glam::UVec2 =
