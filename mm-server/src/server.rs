@@ -125,7 +125,6 @@ impl Server {
         config.set_initial_max_streams_bidi(64);
         config.set_initial_max_streams_uni(64);
         config.enable_dgram(true, 0, 1024 * 1024);
-        config.set_cc_algorithm_name("bbr")?;
         config.enable_early_data();
 
         // Storage for packets that would have blocked on sending.
