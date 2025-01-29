@@ -18,13 +18,13 @@ use wayland_server::{
     Resource as _,
 };
 
+use super::buffers::SyncobjTimelinePoint;
 use crate::{
     pixel_scale::PixelScale,
     session::compositor::{
         buffers::{BufferBacking, BufferKey},
         xwayland, Compositor, DisplayParams,
     },
-    vulkan::VkTimelinePoint,
 };
 
 slotmap::new_key_type! { pub struct SurfaceKey; }
@@ -42,8 +42,8 @@ pub struct Surface {
     pub content: Option<ContentUpdate>,
 
     pub wp_syncobj_surface: Option<wp_linux_drm_syncobj_surface_v1::WpLinuxDrmSyncobjSurfaceV1>,
-    pub pending_acquire_point: Option<VkTimelinePoint>,
-    pub pending_release_point: Option<VkTimelinePoint>,
+    pub pending_acquire_point: Option<SyncobjTimelinePoint>,
+    pub pending_release_point: Option<SyncobjTimelinePoint>,
 
     pub role: DoubleBuffered<SurfaceRole>,
     pub sent_configuration: Option<SurfaceConfiguration>,
@@ -279,7 +279,7 @@ pub struct ContentUpdate {
     pub buffer: BufferKey,
 
     /// Used for explicit sync.
-    pub explicit_sync: Option<(VkTimelinePoint, VkTimelinePoint)>,
+    pub explicit_sync: Option<(SyncobjTimelinePoint, SyncobjTimelinePoint)>,
 
     /// The real dimensions of the buffer. This is how surface coordinates are
     /// determined in wayland.

@@ -3,26 +3,26 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 mod modifiers;
+mod syncobj_timeline;
 
 use std::{
     os::fd::{AsFd, AsRawFd, FromRawFd as _, IntoRawFd as _, OwnedFd},
     sync::{Arc, RwLock},
 };
 
-use anyhow::bail;
+use anyhow::{bail, Context as _};
 use ash::vk;
 use drm_fourcc::DrmModifier;
 use hashbrown::HashSet;
 pub use modifiers::*;
+pub use syncobj_timeline::*;
 use tracing::trace;
-use wayland_protocols::wp::linux_drm_syncobj::v1::server::wp_linux_drm_syncobj_timeline_v1;
 use wayland_server::{protocol::wl_buffer, Resource as _};
 
 use crate::{
     session::compositor::{shm::Pool, Compositor},
     vulkan::{
         create_image_view, select_memory_type, VkContext, VkHostBuffer, VkImage, VkTimelinePoint,
-        VkTimelineSemaphore,
     },
 };
 
@@ -41,7 +41,7 @@ pub struct Buffer {
 
     /// If set, we should signal this timeline point when we're done with
     /// the buffer (instead of using the normal wl_buffer.release signal).
-    pub release_signal: Option<VkTimelinePoint>,
+    pub release_signal: Option<SyncobjTimelinePoint>,
 
     /// Next time we release this buffer, we should destroy it as well.
     pub needs_destruction: bool,
@@ -59,7 +59,9 @@ impl Buffer {
 impl Drop for Buffer {
     fn drop(&mut self) {
         if let BufferBacking::Dmabuf {
-            vk, interop_sema, ..
+            vk,
+            acquire_semaphore: interop_sema,
+            ..
         } = &self.backing
         {
             // This should be safe, since we would've waited on it before
@@ -87,10 +89,10 @@ pub enum BufferBacking {
         fd: OwnedFd,
         image: VkImage,
 
-        /// Used for implicit-explicit sync interop, where we use an ioctl to
-        /// get an FD and use that to set a binary semaphore.
-        interop_sema: vk::Semaphore,
-        interop_sema_tripped: bool,
+        /// Used for explicit sync, created from a DRM sync file either via
+        /// explicit sync or via a special ioctl on the dmabuf.
+        acquire_semaphore: vk::Semaphore,
+        acquire_semaphore_used: bool,
 
         vk: Arc<VkContext>,
     },
@@ -104,13 +106,6 @@ pub struct PlaneMetadata {
     pub height: u32,
     pub stride: u32,
     pub offset: u32,
-}
-
-slotmap::new_key_type! { pub struct BufferTimelineKey; }
-
-pub struct BufferTimeline {
-    pub _wp_syncobj_timeline: wp_linux_drm_syncobj_timeline_v1::WpLinuxDrmSyncobjTimelineV1,
-    pub sema: VkTimelineSemaphore,
 }
 
 impl Compositor {
@@ -141,9 +136,7 @@ impl Compositor {
             );
 
             if let Some(tp) = &buffer.release_signal.take() {
-                unsafe {
-                    tp.signal()?;
-                }
+                tp.signal().context("signaling release timeline point")?;
             } else {
                 buffer.wl_buffer.release();
             }
@@ -360,8 +353,8 @@ pub fn import_dmabuf_buffer(
             format,
             fd,
             image,
-            interop_sema,
-            interop_sema_tripped: false,
+            acquire_semaphore: interop_sema,
+            acquire_semaphore_used: false,
 
             vk,
         },
@@ -413,8 +406,6 @@ mod ioctl {
 
     pub(super) const DMA_BUF_SYNC_READ: u32 = 1 << 0;
     pub(super) const DMA_BUF_SYNC_WRITE: u32 = 1 << 1;
-
-    // Opcode::write::<dma_buf_import_sync_file>(b'b', 3);
 
     #[repr(C)]
     #[allow(non_camel_case_types)]
@@ -505,16 +496,22 @@ pub fn import_dmabuf_fence_as_semaphore(
     let fd = fd.as_fd();
     let sync_fd = unsafe { export_sync_file(fd, ioctl::DMA_BUF_SYNC_READ)? };
 
+    unsafe { import_sync_file_as_semaphore(vk, sync_fd, semaphore) }
+}
+
+pub unsafe fn import_sync_file_as_semaphore(
+    vk: Arc<VkContext>,
+    fd: OwnedFd,
+    semaphore: vk::Semaphore,
+) -> anyhow::Result<()> {
     let import_info = vk::ImportSemaphoreFdInfoKHR::default()
         .semaphore(semaphore)
         .handle_type(vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD)
         .flags(vk::SemaphoreImportFlags::TEMPORARY)
-        .fd(sync_fd.into_raw_fd()); // Vulkan owns the fd now.
+        .fd(fd.into_raw_fd()); // Vulkan owns the fd now.
 
-    unsafe {
-        vk.external_semaphore_api
-            .import_semaphore_fd(&import_info)?;
-    }
+    vk.external_semaphore_api
+        .import_semaphore_fd(&import_info)?;
 
     Ok(())
 }
