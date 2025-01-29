@@ -636,9 +636,15 @@ unsafe extern "system" fn vulkan_debug_utils_callback(
             vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => {
                 tracing::trace!(ty, "{}", message)
             }
-            vk::DebugUtilsMessageSeverityFlagsEXT::INFO => debug!(ty, "{}", message),
-            vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => debug!(ty, "{}", message),
-            vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => error!(ty, "{}", message),
+            vk::DebugUtilsMessageSeverityFlagsEXT::INFO => {
+                debug!(target: "mmserver::vulkan::driver", ty, "{}", message)
+            }
+            vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => {
+                debug!(target: "mmserver::vulkan::driver", ty, "{}", message)
+            }
+            vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => {
+                error!(target: "mmserver::vulkan::driver", ty, "{}", message)
+            }
             _ => (),
         }
     });
