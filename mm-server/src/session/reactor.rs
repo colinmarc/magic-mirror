@@ -788,7 +788,7 @@ fn dump_child_output(pipe: &mut impl BufRead, debug_log: &mut Option<std::fs::Fi
 
                 let buf = buf.trim();
                 if !buf.is_empty() {
-                    trace!(target: "mmserver::compositor::child", "{}", buf);
+                    trace!(target: "mmserver::session::child", "{}", buf);
                 }
             }
             Ok(0) => break,
