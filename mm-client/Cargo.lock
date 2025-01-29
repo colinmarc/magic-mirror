@@ -2389,12 +2389,11 @@ dependencies = [
 
 [[package]]
 name = "qlog"
-version = "0.13.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b5f65b920fa913ce92267bb3c4ed3b9c2f81d05f8e1376c3bbc95455eedb7df"
+checksum = "6e085f7a6aa9404a6a6a80e9c39a598594086fa23415dbcb6add375c19ba6f89"
 dependencies = [
  "serde",
- "serde_derive",
  "serde_json",
  "serde_with",
  "smallvec",
@@ -2402,9 +2401,9 @@ dependencies = [
 
 [[package]]
 name = "quiche"
-version = "0.22.0"
+version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28e5a763fecb47867bd3720f69ec87031ff42fda1dc88be2cb5fbb3a558fa5e4"
+checksum = "05b8b0671dd089bcc628e78dedc5890929684b05297e67fd34fc74292e6e4520"
 dependencies = [
  "cmake",
  "either",
@@ -2413,12 +2412,10 @@ dependencies = [
  "libm",
  "log",
  "octets 0.3.0",
- "once_cell",
  "qlog",
- "ring",
  "slab",
  "smallvec",
- "winapi",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

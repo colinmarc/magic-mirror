@@ -22,7 +22,7 @@ futures = { version = "0.3", features = ["executor"] }
 log = "0.4"
 mio = { version = "1", features = ["net", "os-ext", "os-poll"] }
 prost-types = "0.13"
-quiche = { version = "0.22", features = ["qlog"] }
+quiche = { version = "0.23", features = ["qlog"] }
 raptorq = "2.0"
 ring = "0.17"
 thiserror = "1"
