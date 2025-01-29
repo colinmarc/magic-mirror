@@ -235,15 +235,17 @@ impl EncoderInner {
 
         let vk_clone = vk.clone();
         let stats_clone = stats.clone();
-        let handle = std::thread::spawn(move || {
-            writer_thread(
-                vk_clone,
-                submitted_frames_rx,
-                done_frames_tx,
-                sink,
-                stats_clone,
-            )
-        });
+        let handle = std::thread::Builder::new()
+            .name("encoder writer".to_owned())
+            .spawn(move || {
+                writer_thread(
+                    vk_clone,
+                    submitted_frames_rx,
+                    done_frames_tx,
+                    sink,
+                    stats_clone,
+                )
+            })?;
 
         Ok(Self {
             session,

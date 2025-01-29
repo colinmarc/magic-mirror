@@ -155,12 +155,12 @@ impl EncodePipeline {
                     buf.resize(frame.buf.len(), 0);
 
                     let len = encoder.encode_float(&frame.buf, &mut buf)?;
-                    compositor.dispatch(SessionEvent::AudioFrame {
+                    compositor.dispatch_audio_frame(
                         stream_seq,
                         seq,
-                        ts: frame.capture_ts,
-                        frame: buf.split_to(len).freeze(),
-                    });
+                        frame.capture_ts,
+                        buf.split_to(len).freeze(),
+                    );
 
                     seq += 1;
 

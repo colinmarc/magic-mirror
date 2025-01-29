@@ -5,7 +5,138 @@
 use bytes::Bytes;
 use either::Either;
 use mm_protocol as protocol;
-use tracing::{instrument, trace_span};
+use tracing::{error, instrument, trace_span};
+
+use crate::{config, waking_sender::WakingSender};
+
+/// A helper to write audio/video frames out as chunks to the client. Runs on
+/// the encoder thread, not on the server thread.
+pub struct StreamWriter {
+    session_id: u64,
+    attachment_id: u64,
+    outgoing: WakingSender<Vec<u8>>,
+
+    chunk_size: usize,
+    max_dgram_len: usize,
+    fec_ratios: Vec<f32>,
+}
+
+impl StreamWriter {
+    pub fn new(
+        session_id: u64,
+        attachment_id: u64,
+        config: &config::ServerConfig,
+        outgoing: WakingSender<Vec<u8>>,
+        max_dgram_len: usize,
+    ) -> Self {
+        // max_dgram_len is our overall MTU. The MM protocol header is 2-10 bytes,
+        // and then we include seven varints (maximum 5 bytes each) and a bool of
+        // metadata, plus an optional 12-ish bytes of FEC information. 64 bytes of
+        // headroom should cover the worst case. However, a little extra will
+        // increase the chance that the packet is coalesced into an existing QUIC
+        // packet.
+        let chunk_size = max_dgram_len - 128;
+
+        Self {
+            session_id,
+            attachment_id,
+            outgoing,
+
+            chunk_size,
+            max_dgram_len,
+            fec_ratios: config.video_fec_ratios.clone(),
+        }
+    }
+
+    #[instrument(skip_all)]
+    pub fn write_video_frame(
+        &self,
+        stream_seq: u64,
+        seq: u64,
+        pts: u64,
+        frame: Bytes,
+        hierachical_layer: u32,
+    ) {
+        let optional = hierachical_layer != 0;
+        let fec_ratio = self
+            .fec_ratios
+            .get(hierachical_layer as usize)
+            .copied()
+            .unwrap_or_default();
+
+        for chunk in iter_chunks(frame, self.chunk_size, fec_ratio) {
+            let msg = protocol::VideoChunk {
+                session_id: self.session_id,
+                attachment_id: self.attachment_id,
+
+                stream_seq,
+                seq,
+                data: chunk.data,
+                chunk: chunk.index,
+                num_chunks: chunk.num_chunks,
+                frame_optional: optional,
+                timestamp: pts,
+
+                fec_metadata: chunk.fec_metadata,
+            };
+
+            let res: Result<_, protocol::ProtocolError> =
+                trace_span!("encode_message").in_scope(|| {
+                    let mut buf = vec![0; self.max_dgram_len];
+                    let len = protocol::encode_message(&msg.into(), &mut buf)?;
+
+                    buf.truncate(len);
+                    Ok(buf)
+                });
+
+            match res {
+                Ok(buf) => {
+                    let _ = self.outgoing.send(buf);
+                }
+                Err(err) => {
+                    error!(?err, "failed to encode video chunk");
+                }
+            };
+        }
+    }
+
+    #[instrument(skip_all)]
+    pub fn write_audio_frame(&self, stream_seq: u64, seq: u64, pts: u64, frame: Bytes) {
+        for chunk in iter_chunks(frame, self.chunk_size, 0.0) {
+            let msg = protocol::AudioChunk {
+                session_id: self.session_id,
+                attachment_id: self.attachment_id,
+
+                stream_seq,
+                seq,
+                data: chunk.data,
+                chunk: chunk.index,
+                num_chunks: chunk.num_chunks,
+                timestamp: pts,
+
+                fec_metadata: chunk.fec_metadata,
+            };
+
+            let res: Result<_, protocol::ProtocolError> =
+                trace_span!("encode_message").in_scope(|| {
+                    let mut buf = vec![0; self.max_dgram_len];
+                    let len = protocol::encode_message(&msg.into(), &mut buf)?;
+
+                    buf.truncate(len);
+                    Ok(buf)
+                });
+
+            match res {
+                Ok(buf) => {
+                    let _ = self.outgoing.send(buf);
+                }
+                Err(err) => {
+                    error!(?err, "failed to encode audio chunk");
+                }
+            };
+        }
+    }
+}
 
 pub struct Chunk {
     pub index: u32,

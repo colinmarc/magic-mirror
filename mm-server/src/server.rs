@@ -5,6 +5,7 @@
 mod handlers;
 mod mdns;
 mod sendmmsg;
+pub mod stream;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;

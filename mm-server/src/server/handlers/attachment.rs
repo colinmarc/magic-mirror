@@ -4,16 +4,14 @@
 
 use std::{collections::BTreeMap, fs, path::PathBuf, time};
 
-use chunk::iter_chunks;
 use mm_protocol::{self as protocol, error::ErrorCode};
-use tracing::{debug, debug_span, error, trace, trace_span};
+use tracing::{debug, debug_span, error, trace};
 
-mod chunk;
 mod stats;
 
 use super::{validate_attachment, validate_gamepad, ServerError, ValidationError};
 use crate::{
-    config,
+    server::stream::StreamWriter,
     session::{
         compositor,
         control::{ControlMessage, DisplayParams, SessionEvent},
@@ -38,15 +36,12 @@ struct AttachmentHandler<'a> {
     ctx: &'a super::Context,
     handle: Attachment,
 
-    server_config: config::ServerConfig,
     session_display_params: DisplayParams,
     attached: protocol::Attached,
     superscale: f64,
 
     // Keep track of the pointer lock, and debounce session events for it.
     pointer_lock: Option<(f64, f64)>,
-
-    chunk_size: usize,
 
     last_video_frame_recvd: time::Instant,
     last_audio_frame_recvd: time::Instant,
@@ -115,7 +110,21 @@ impl<'a> AttachmentHandler<'a> {
             ));
         }
 
-        let handle = match session.attach(attachment_id, true, video_params, audio_params) {
+        let stream_writer = StreamWriter::new(
+            session_id,
+            attachment_id,
+            &server_config,
+            ctx.outgoing_dgrams.clone(),
+            ctx.max_dgram_len,
+        );
+
+        let handle = match session.attach(
+            attachment_id,
+            true,
+            video_params,
+            audio_params,
+            stream_writer,
+        ) {
             Ok(v) => v,
             Err(err) => {
                 error!(?err, "failed to attach to session");
@@ -174,29 +183,17 @@ impl<'a> AttachmentHandler<'a> {
         let pointer_lock = None;
 
         let keepalive_timer = crossbeam_channel::after(KEEPALIVE_TIMEOUT);
-
-        // max_dgram_len is our overall MTU. The MM protocol header is 2-10 bytes,
-        // and then we include seven varints (maximum 5 bytes each) and a bool of
-        // metadata, plus an optional 12-ish bytes of FEC information. 64 bytes of
-        // headroom should cover the worst case. However, a little extra will
-        // increase the chance that the packet is coalesced into an existing QUIC
-        // packet.
-        let chunk_size = ctx.max_dgram_len - 128;
-
         let now = time::Instant::now();
 
         Ok(Self {
             ctx,
             handle,
 
-            server_config,
             session_display_params: display_params,
             attached,
             superscale,
 
             pointer_lock,
-
-            chunk_size,
 
             last_video_frame_recvd: now,
             last_audio_frame_recvd: now,
@@ -572,9 +569,7 @@ impl<'a> AttachmentHandler<'a> {
             SessionEvent::VideoFrame {
                 stream_seq,
                 seq,
-                ts,
                 frame,
-                hierarchical_layer,
                 ..
             } => {
                 let duration = self.last_video_frame_recvd.elapsed();
@@ -602,57 +597,8 @@ impl<'a> AttachmentHandler<'a> {
                     std::io::Write::write_all(file, &frame).unwrap();
                     std::io::Write::flush(file).unwrap();
                 }
-
-                let optional = hierarchical_layer != 0;
-                let fec_ratio = self
-                    .server_config
-                    .video_fec_ratios
-                    .get(hierarchical_layer as usize)
-                    .copied()
-                    .unwrap_or_default();
-
-                for chunk in iter_chunks(frame, self.chunk_size, fec_ratio) {
-                    let msg = protocol::VideoChunk {
-                        session_id: self.handle.session_id,
-                        attachment_id: self.handle.attachment_id,
-
-                        stream_seq,
-                        seq,
-                        data: chunk.data,
-                        chunk: chunk.index,
-                        num_chunks: chunk.num_chunks,
-                        frame_optional: optional,
-                        timestamp: ts,
-
-                        fec_metadata: chunk.fec_metadata,
-                    };
-
-                    let buf = trace_span!("encode_message").in_scope(|| {
-                        let mut buf = vec![0; self.ctx.max_dgram_len];
-                        let len = match protocol::encode_message(&msg.into(), &mut buf) {
-                            Ok(v) => v,
-                            Err(err) => {
-                                error!(?err, "failed to encode video chunk");
-                                return Err(AttachmentError::ServerError(
-                                    ErrorCode::ErrorServer,
-                                    None,
-                                ));
-                            }
-                        };
-
-                        buf.truncate(len);
-                        Ok(buf)
-                    })?;
-
-                    let _ = self.ctx.outgoing_dgrams.send(buf);
-                }
             }
-            SessionEvent::AudioFrame {
-                stream_seq,
-                seq,
-                ts,
-                frame,
-            } => {
+            SessionEvent::AudioFrame { seq, frame, .. } => {
                 let duration = self.last_audio_frame_recvd.elapsed();
                 if duration
                     > time::Duration::from_secs_f32(
@@ -664,41 +610,6 @@ impl<'a> AttachmentHandler<'a> {
 
                 self.last_audio_frame_recvd = time::Instant::now();
                 self.stats.record_frame(seq, frame.len(), duration);
-
-                for chunk in iter_chunks(frame, self.chunk_size, 0.0) {
-                    let msg = protocol::AudioChunk {
-                        session_id: self.handle.session_id,
-                        attachment_id: self.handle.attachment_id,
-
-                        stream_seq,
-                        seq,
-                        data: chunk.data,
-                        chunk: chunk.index,
-                        num_chunks: chunk.num_chunks,
-                        timestamp: ts,
-
-                        fec_metadata: chunk.fec_metadata,
-                    };
-
-                    let buf = trace_span!("encode_message").in_scope(|| {
-                        let mut buf = vec![0; self.ctx.max_dgram_len];
-                        let len = match protocol::encode_message(&msg.into(), &mut buf) {
-                            Ok(v) => v,
-                            Err(err) => {
-                                error!(?err, "failed to encode video chunk");
-                                return Err(AttachmentError::ServerError(
-                                    ErrorCode::ErrorServer,
-                                    None,
-                                ));
-                            }
-                        };
-
-                        buf.truncate(len);
-                        Ok(buf)
-                    })?;
-
-                    let _ = self.ctx.outgoing_dgrams.send(buf);
-                }
             }
             SessionEvent::CursorUpdate {
                 image,

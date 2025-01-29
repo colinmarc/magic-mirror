@@ -10,13 +10,18 @@ use std::{
 use crossbeam_channel as crossbeam;
 
 use super::control::SessionEvent;
+use crate::server::stream::StreamWriter;
 
-#[derive(Debug, Clone)]
-struct Inner {
-    attachments: BTreeMap<u64, crossbeam::Sender<SessionEvent>>,
+struct Client {
+    events: crossbeam::Sender<SessionEvent>,
+    writer: StreamWriter,
 }
 
-#[derive(Debug, Clone)]
+struct Inner {
+    attachments: BTreeMap<u64, Client>,
+}
+
+#[derive(Clone)]
 pub struct SessionHandle(Arc<RwLock<Inner>>, Arc<mio::Waker>);
 
 impl SessionHandle {
@@ -29,8 +34,17 @@ impl SessionHandle {
         )
     }
 
-    pub fn insert_client(&self, id: u64, sender: crossbeam::Sender<SessionEvent>) {
-        self.0.write().unwrap().attachments.insert(id, sender);
+    pub fn insert_client(
+        &self,
+        id: u64,
+        events: crossbeam::Sender<SessionEvent>,
+        writer: StreamWriter,
+    ) {
+        self.0
+            .write()
+            .unwrap()
+            .attachments
+            .insert(id, Client { events, writer });
     }
 
     pub fn remove_client(&self, id: u64) {
@@ -43,8 +57,49 @@ impl SessionHandle {
 
     pub fn dispatch(&self, event: SessionEvent) {
         let attachments = &self.0.read().unwrap().attachments;
-        for (_, sender) in attachments.iter() {
-            sender.send(event.clone()).ok();
+        for (_, client) in attachments.iter() {
+            let _ = client.events.send(event.clone());
+        }
+    }
+
+    pub fn dispatch_audio_frame(&self, stream_seq: u64, seq: u64, pts: u64, frame: bytes::Bytes) {
+        let attachments = &self.0.read().unwrap().attachments;
+        for (_, client) in attachments.iter() {
+            let _ = client.events.send(SessionEvent::AudioFrame {
+                _stream_seq: stream_seq,
+                seq,
+                frame: frame.clone(),
+            });
+
+            client
+                .writer
+                .write_audio_frame(stream_seq, seq, pts, frame.clone());
+        }
+    }
+
+    pub fn dispatch_video_frame(
+        &self,
+        stream_seq: u64,
+        seq: u64,
+        pts: u64,
+        frame: bytes::Bytes,
+        hierarchical_layer: u32,
+    ) {
+        let attachments = &self.0.read().unwrap().attachments;
+        for (_, client) in attachments.iter() {
+            let _ = client.events.send(SessionEvent::VideoFrame {
+                stream_seq,
+                seq,
+                frame: frame.clone(),
+            });
+
+            client.writer.write_video_frame(
+                stream_seq,
+                seq,
+                pts,
+                frame.clone(),
+                hierarchical_layer,
+            );
         }
     }
 
@@ -54,8 +109,8 @@ impl SessionHandle {
 
     pub fn kick_clients(&self) {
         let attachments = &mut self.0.write().unwrap().attachments;
-        for (_, sender) in std::mem::take(attachments) {
-            sender.send(SessionEvent::Shutdown).ok();
+        for (_, client) in std::mem::take(attachments) {
+            let _ = client.events.send(SessionEvent::Shutdown);
         }
     }
 

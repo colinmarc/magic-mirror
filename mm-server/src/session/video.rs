@@ -12,7 +12,7 @@ mod convert;
 
 use tracing::{instrument, trace, warn};
 
-use super::{compositor, DisplayParams, SessionEvent, SessionHandle, VideoStreamParams};
+use super::{compositor, DisplayParams, SessionHandle, VideoStreamParams};
 use crate::{
     color::ColorSpace,
     encoder::{self},
@@ -43,13 +43,14 @@ impl encoder::Sink for Sink {
         frame: bytes::Bytes,
         hierarchical_layer: u32,
     ) {
-        self.compositor.dispatch(SessionEvent::VideoFrame {
-            stream_seq: self.stream_seq,
-            seq: self.seq,
-            ts: (ts - *EPOCH).as_millis() as u64,
+        let pts = (ts - *EPOCH).as_millis() as u64;
+        self.compositor.dispatch_video_frame(
+            self.stream_seq,
+            self.seq,
+            pts,
             frame,
             hierarchical_layer,
-        });
+        );
 
         // Wake the compositor, so it can release buffers and send presentation
         // feedback.
@@ -128,7 +129,6 @@ impl EncodePipeline {
         }
 
         let sink = Sink::new(compositor_handle, stream_seq);
-
         let mut encoder =
             encoder::Encoder::new(vk.clone(), streaming_params, display_params.framerate, sink)?;
 

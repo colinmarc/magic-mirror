@@ -8,6 +8,7 @@ use crate::{
     codec::{AudioCodec, VideoCodec},
     color::VideoProfile,
     pixel_scale::PixelScale,
+    server::stream::StreamWriter,
     session::compositor::{self, ButtonState},
 };
 
@@ -35,7 +36,6 @@ pub struct AudioStreamParams {
     pub codec: AudioCodec,
 }
 
-#[derive(Debug)]
 pub enum ControlMessage {
     Stop,
     Attach {
@@ -43,6 +43,7 @@ pub enum ControlMessage {
         sender: Sender<SessionEvent>,
         video_params: VideoStreamParams,
         audio_params: AudioStreamParams,
+        stream_writer: StreamWriter,
         ready: oneshot::Sender<()>,
     },
     Detach(u64),
@@ -93,15 +94,11 @@ pub enum SessionEvent {
     VideoFrame {
         stream_seq: u64,
         seq: u64,
-        ts: u64,
         frame: bytes::Bytes,
-        /// A lower value means a higher priority.
-        hierarchical_layer: u32,
     },
     AudioFrame {
-        stream_seq: u64,
+        _stream_seq: u64,
         seq: u64,
-        ts: u64,
         frame: bytes::Bytes,
     },
     CursorUpdate {

@@ -10,7 +10,10 @@ use mm_protocol as protocol;
 use pathsearch::find_executable_in_path;
 use tracing::{debug_span, info};
 
-use crate::{codec::probe_codec, vulkan::VkContext, waking_sender::WakingSender};
+use crate::{
+    codec::probe_codec, server::stream::StreamWriter, vulkan::VkContext,
+    waking_sender::WakingSender,
+};
 
 mod audio;
 pub mod compositor;
@@ -153,6 +156,7 @@ impl Session {
         operator: bool,
         video_params: VideoStreamParams,
         audio_params: AudioStreamParams,
+        stream_writer: StreamWriter,
     ) -> anyhow::Result<Attachment> {
         if self.defunct {
             return Err(anyhow!("session defunct"));
@@ -178,6 +182,7 @@ impl Session {
                 sender: events_send,
                 video_params,
                 audio_params,
+                stream_writer,
                 ready: ready_send,
             })
             .is_err()

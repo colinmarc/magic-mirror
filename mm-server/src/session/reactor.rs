@@ -24,6 +24,7 @@ use crate::{
     config::AppConfig,
     container::{Container, ContainerHandle},
     pixel_scale::PixelScale,
+    server::stream::StreamWriter,
     vulkan::VkContext,
     waking_sender::WakingSender,
 };
@@ -478,12 +479,13 @@ impl Reactor {
                     sender,
                     video_params,
                     audio_params,
+                    stream_writer,
                     ready,
                 } = attach_msg
                 {
                     // Check if the caller is still waiting.
                     if ready.send(()).is_ok() {
-                        self.attach(id, sender, video_params, audio_params)?;
+                        self.attach(id, sender, video_params, audio_params, stream_writer)?;
                     }
                 } else {
                     unreachable!()
@@ -638,12 +640,13 @@ impl Reactor {
         sender: crossbeam::Sender<SessionEvent>,
         video_params: VideoStreamParams,
         audio_params: AudioStreamParams,
+        stream_writer: StreamWriter,
     ) -> anyhow::Result<()> {
         if self.session_handle.num_attachments() > 0 {
             unimplemented!();
         }
 
-        self.session_handle.insert_client(id, sender);
+        self.session_handle.insert_client(id, sender, stream_writer);
         self.new_video_stream_params = Some(video_params);
         self.audio_pipeline.restart_stream(audio_params)?;
         self.compositor.update_focus_and_visibility(true)?;
@@ -659,8 +662,6 @@ impl Reactor {
     }
 
     fn handle_control_message(&mut self, msg: ControlMessage) -> anyhow::Result<()> {
-        trace!(?msg, "control message");
-
         if self.shutting_down {
             // We're about to shut down, so ignore all messages.
             return Ok(());

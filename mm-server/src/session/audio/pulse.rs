@@ -103,6 +103,7 @@ impl PulseServer {
             server_version: Some(cstr!("0.0.1").into()),
             host_name: Some(CString::new("mmserver")?),
             default_sink_name: Some(SINK_NAME.into()),
+            default_source_name: Some(SINK_NAME.into()),
             ..Default::default()
         };
 
