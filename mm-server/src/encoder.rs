@@ -12,7 +12,7 @@ use anyhow::{anyhow, bail, Context};
 use ash::vk;
 use bytes::Bytes;
 use crossbeam_channel as crossbeam;
-use tracing::{debug, error, trace};
+use tracing::{debug, error, instrument, trace, trace_span};
 
 use self::gop_structure::HierarchicalP;
 use crate::codec::VideoCodec;
@@ -221,17 +221,17 @@ impl EncoderInner {
         let (submitted_frames_tx, submitted_frames_rx) = crossbeam::bounded(1);
         let (done_frames_tx, done_frames_rx) = crossbeam::unbounded();
 
-        // for _ in 0..1 {
-        done_frames_tx
-            .send(EncoderOutputFrame::new(
-                vk.clone(),
-                width,
-                height,
-                buffer_size_alignment,
-                profile,
-            )?)
-            .unwrap();
-        // }
+        for _ in 0..1 {
+            done_frames_tx
+                .send(EncoderOutputFrame::new(
+                    vk.clone(),
+                    width,
+                    height,
+                    buffer_size_alignment,
+                    profile,
+                )?)
+                .unwrap();
+        }
 
         let vk_clone = vk.clone();
         let stats_clone = stats.clone();
@@ -337,6 +337,7 @@ impl EncoderInner {
         ))
     }
 
+    #[instrument(skip_all)]
     pub unsafe fn submit_encode(
         &mut self,
         input: &VkImage,
@@ -355,11 +356,12 @@ impl EncoderInner {
         }
 
         let (video_loader, encode_loader) = self.vk.video_apis.as_ref().unwrap();
-        let encode_queue_family = self.vk.encode_queue.as_ref().unwrap().family;
+        let encode_queue = self.vk.encode_queue.as_ref().unwrap();
 
         // "Acquire" a buffer to copy to. This provides backpressure if the
         // encoder can't keep up.
-        let mut frame = match self.done_frames.recv() {
+        let res = trace_span!("wait_prev_frame").in_scope(|| self.done_frames.recv());
+        let mut frame = match res {
             Ok(frame) => frame,
             Err(_) => {
                 bail!("copy thread died");
@@ -369,16 +371,30 @@ impl EncoderInner {
         #[cfg(feature = "tracy")]
         {
             frame.tracy_frame = Some(tracy_client::non_continuous_frame!("encode"));
+            if let Some(ref ctx) = encode_queue.tracy_context {
+                frame.encode_span = Some(ctx.span(tracy_client::span_location!("encode"))?);
+            }
         }
 
         begin_command_buffer(&self.vk.device, frame.encode_cb)?;
+
+        // Record the start timestamp.
+        frame
+            .encode_ts_pool
+            .cmd_reset(&self.vk.device, frame.encode_cb);
+        self.vk.device.cmd_write_timestamp(
+            frame.encode_cb,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            frame.encode_ts_pool.pool,
+            0,
+        );
 
         // Acquire the image from the graphics queue.
         insert_image_barrier(
             &self.vk.device,
             frame.encode_cb,
             input.image,
-            Some((self.vk.graphics_queue.family, encode_queue_family)),
+            Some((self.vk.graphics_queue.family, encode_queue.family)),
             vk::ImageLayout::GENERAL,
             vk::ImageLayout::VIDEO_ENCODE_SRC_KHR,
             vk::PipelineStageFlags2::NONE,
@@ -590,7 +606,7 @@ impl EncoderInner {
             &self.vk.device,
             frame.encode_cb,
             input.image,
-            Some((encode_queue_family, self.vk.graphics_queue.family)),
+            Some((encode_queue.family, self.vk.graphics_queue.family)),
             vk::ImageLayout::VIDEO_ENCODE_SRC_KHR,
             vk::ImageLayout::GENERAL,
             vk::PipelineStageFlags2::VIDEO_ENCODE_KHR,
@@ -598,6 +614,18 @@ impl EncoderInner {
             vk::PipelineStageFlags2::empty(),
             vk::AccessFlags2::empty(),
         );
+
+        // Record the end timestamp.
+        self.vk.device.cmd_write_timestamp(
+            frame.encode_cb,
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            frame.encode_ts_pool.pool,
+            1,
+        );
+
+        if let Some(span) = &mut frame.encode_span {
+            span.end_zone();
+        }
 
         // Wait for the output buffer to be clear of the previous copy
         // operation, then establish new timeline points.
@@ -662,8 +690,8 @@ impl EncoderInner {
 impl Drop for EncoderInner {
     fn drop(&mut self) {
         drop(self.submitted_frames.take());
-        for _ in self.done_frames.iter() {
-            // Flush.
+        for done in self.done_frames.iter() {
+            drop(done)
         }
 
         if let Some(handle) = self.writer_thread_handle.take() {
@@ -710,6 +738,8 @@ struct EncoderOutputFrame {
 
     #[cfg(feature = "tracy")]
     tracy_frame: Option<tracy_client::Frame>,
+    encode_span: Option<tracy_client::GpuSpan>,
+    encode_ts_pool: VkTimestampQueryPool,
 
     vk: Arc<VkContext>,
 }
@@ -783,6 +813,8 @@ impl EncoderOutputFrame {
 
         let timeline = VkTimelineSemaphore::new(vk.clone(), 0)?;
 
+        let encode_ts_pool = create_timestamp_query_pool(&vk.device, 2)?;
+
         Ok(EncoderOutputFrame {
             encode_cb,
             copy_buffer,
@@ -798,6 +830,9 @@ impl EncoderOutputFrame {
             #[cfg(feature = "tracy")]
             tracy_frame: None,
 
+            encode_span: None,
+            encode_ts_pool,
+
             vk,
         })
     }
@@ -812,6 +847,7 @@ impl Drop for EncoderOutputFrame {
             device.queue_wait_idle(encode_queue.queue).unwrap();
             device.free_command_buffers(encode_queue.command_pool, &[self.encode_cb]);
             device.destroy_query_pool(self.query_pool, None);
+            device.destroy_query_pool(self.encode_ts_pool.pool, None);
         }
     }
 }
@@ -871,7 +907,13 @@ fn writer_thread(
         }
 
         #[cfg(feature = "tracy")]
-        frame.tracy_frame.take();
+        {
+            frame.tracy_frame.take();
+            if let Some(span) = frame.encode_span.take() {
+                let timestamps = frame.encode_ts_pool.fetch_results(device)?;
+                span.upload_timestamp(timestamps[0], timestamps[1])
+            }
+        }
 
         // Get the buffer offsets for the encoded data.
         let mut results = [QueryResults::default()];
@@ -907,16 +949,12 @@ fn writer_thread(
             )
         };
 
-        sink.write_frame(
-            capture_ts,
-            Bytes::copy_from_slice(packet),
-            frame.hierarchical_layer,
-        );
-
+        let data = Bytes::copy_from_slice(packet);
         unsafe {
             frame.tp_copied.signal()?;
         }
 
+        sink.write_frame(capture_ts, data, frame.hierarchical_layer);
         done.send(frame).ok();
     }
 
