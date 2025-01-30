@@ -5,6 +5,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod chain;
+mod drm;
 mod timeline;
 pub mod video;
 
@@ -46,6 +47,7 @@ pub struct VkContext {
     pub debug: Option<VkDebugContext>,
     pub device: ash::Device,
     pub device_info: VkDeviceInfo,
+    pub drm_device: drm::DrmDevice,
     pub graphics_queue: VkQueue,
     pub encode_queue: Option<VkQueue>,
     pub descriptor_pool: vk::DescriptorPool,
@@ -495,6 +497,8 @@ impl VkContext {
         let (index, device_info) = devices.remove(0);
         info!("selected gpu: {:?} ({index})", device_info.device_name);
 
+        let drm_device = drm::DrmDevice::new(device_info.drm_node)?;
+
         let device = {
             let queue_priorities = &[1.0];
             let mut queue_indices = Vec::new();
@@ -613,6 +617,7 @@ impl VkContext {
             instance,
             device,
             device_info,
+            drm_device,
             graphics_queue,
             encode_queue,
             descriptor_pool,

@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 mod modifiers;
+mod syncobj_timeline;
 
 use std::{
+    collections::BTreeSet,
     os::fd::{AsFd, AsRawFd, FromRawFd as _, IntoRawFd as _, OwnedFd},
     sync::{Arc, RwLock},
 };
@@ -12,18 +14,14 @@ use std::{
 use anyhow::bail;
 use ash::vk;
 use drm_fourcc::DrmModifier;
-use hashbrown::HashSet;
 pub use modifiers::*;
-use tracing::trace;
-use wayland_protocols::wp::linux_drm_syncobj::v1::server::wp_linux_drm_syncobj_timeline_v1;
+pub use syncobj_timeline::*;
+use tracing::{instrument, trace};
 use wayland_server::{protocol::wl_buffer, Resource as _};
 
 use crate::{
     session::compositor::{shm::Pool, Compositor},
-    vulkan::{
-        create_image_view, select_memory_type, VkContext, VkHostBuffer, VkImage, VkTimelinePoint,
-        VkTimelineSemaphore,
-    },
+    vulkan::{create_image_view, select_memory_type, VkContext, VkHostBuffer, VkImage},
 };
 
 slotmap::new_key_type! { pub struct BufferKey; }
@@ -31,17 +29,6 @@ slotmap::new_key_type! { pub struct BufferKey; }
 pub struct Buffer {
     pub wl_buffer: wl_buffer::WlBuffer,
     pub backing: BufferBacking,
-
-    /// The client is waiting for us to release this buffer.
-    pub needs_release: bool,
-
-    /// If set, we should wait on this timeline point before releasing the
-    /// buffer.
-    pub release_wait: Option<VkTimelinePoint>,
-
-    /// If set, we should signal this timeline point when we're done with
-    /// the buffer (instead of using the normal wl_buffer.release signal).
-    pub release_signal: Option<VkTimelinePoint>,
 
     /// Next time we release this buffer, we should destroy it as well.
     pub needs_destruction: bool,
@@ -52,21 +39,6 @@ impl Buffer {
         match self.backing {
             BufferBacking::Shm { format, .. } => (format.width, format.height).into(),
             BufferBacking::Dmabuf { format, .. } => (format.width, format.height).into(),
-        }
-    }
-}
-
-impl Drop for Buffer {
-    fn drop(&mut self) {
-        if let BufferBacking::Dmabuf {
-            vk, interop_sema, ..
-        } = &self.backing
-        {
-            // This should be safe, since we would've waited on it before
-            // releasing the buffer.
-            unsafe {
-                vk.device.destroy_semaphore(*interop_sema, None);
-            }
         }
     }
 }
@@ -86,13 +58,6 @@ pub enum BufferBacking {
         format: PlaneMetadata,
         fd: OwnedFd,
         image: VkImage,
-
-        /// Used for implicit-explicit sync interop, where we use an ioctl to
-        /// get an FD and use that to set a binary semaphore.
-        interop_sema: vk::Semaphore,
-        interop_sema_tripped: bool,
-
-        vk: Arc<VkContext>,
     },
 }
 
@@ -106,69 +71,78 @@ pub struct PlaneMetadata {
     pub offset: u32,
 }
 
-slotmap::new_key_type! { pub struct BufferTimelineKey; }
-
-pub struct BufferTimeline {
-    pub _wp_syncobj_timeline: wp_linux_drm_syncobj_timeline_v1::WpLinuxDrmSyncobjTimelineV1,
-    pub sema: VkTimelineSemaphore,
-}
-
 impl Compositor {
+    #[instrument(skip_all)]
     pub fn release_buffers(&mut self) -> anyhow::Result<()> {
-        let mut used_buffers = HashSet::new();
-        used_buffers.extend(
-            self.surfaces
-                .iter()
-                .flat_map(|(_, s)| s.content.as_ref())
-                .map(|c| c.buffer),
-        );
-
-        let mut to_destroy = HashSet::new();
-        for (id, buffer) in self.buffers.iter_mut().filter(|(_, b)| b.needs_release) {
-            if used_buffers.contains(&id) {
-                continue;
-            }
-
-            if let Some(tp) = &buffer.release_wait {
+        // Check if any content updates have finished.
+        let mut still_in_flight = Vec::new();
+        for content in self.in_flight_buffers.drain(..) {
+            if let Some(tp) = &content.tp_done {
                 if unsafe { !tp.poll()? } {
+                    // The frame using this content is still in-progress.
+                    still_in_flight.push(content);
                     continue;
                 }
             }
 
-            trace!(
-                wl_buffer = buffer.wl_buffer.id().protocol_id(),
-                "releasing buffer"
-            );
+            if content.needs_release {
+                let buffer = self
+                    .buffers
+                    .get(content.buffer)
+                    .expect("buffer has no entry");
 
-            if let Some(tp) = &buffer.release_signal.take() {
-                unsafe {
-                    tp.signal()?;
-                }
-            } else {
+                trace!(
+                    wl_buffer = buffer.wl_buffer.id().protocol_id(),
+                    "explicitly releasing buffer"
+                );
+
                 buffer.wl_buffer.release();
             }
 
-            buffer.needs_release = false;
-            buffer.release_wait = None;
-            if buffer.needs_destruction {
-                to_destroy.insert(id);
+            if let Some((_, release)) = content.explicit_sync {
+                release.signal()?;
+            }
+
+            // If we didn't move the presentation feedback into a separate queue,
+            // that means we didn't use the content update and we should relate
+            // that to the client.
+            if let Some(feedback) = &content.wp_presentation_feedback {
+                feedback.discarded();
             }
         }
 
-        for id in to_destroy {
-            let buf = self.buffers.remove(id).unwrap();
-            assert!(!buf.wl_buffer.is_alive());
+        self.in_flight_buffers = still_in_flight;
 
-            trace!(
-                wl_buffer = buf.wl_buffer.id().protocol_id(),
-                "destroying buffer"
-            );
-        }
+        // A buffer is in use if it's either part of an in-flight frame, or if
+        // we're holding on to it because the client hasn't committed a new one
+        // yet, and we may need to display it again.
+        let used_buffers: BTreeSet<BufferKey> = self
+            .surfaces
+            .values()
+            .flat_map(|s| &s.content)
+            .chain(self.in_flight_buffers.iter())
+            .map(|c| c.buffer)
+            .collect();
+
+        self.buffers.retain(|id, buffer| {
+            if !buffer.needs_destruction || used_buffers.contains(&id) {
+                true
+            } else {
+                assert!(!buffer.wl_buffer.is_alive());
+                trace!(
+                    wl_buffer = buffer.wl_buffer.id().protocol_id(),
+                    "destroying buffer"
+                );
+
+                false
+            }
+        });
 
         Ok(())
     }
 }
 
+#[instrument(skip_all)]
 pub fn import_shm_buffer(
     vk: Arc<VkContext>,
     wl_buffer: wl_buffer::WlBuffer,
@@ -211,13 +185,11 @@ pub fn import_shm_buffer(
             format,
             dirty: true,
         },
-        needs_release: false,
-        release_wait: None,
-        release_signal: None,
         needs_destruction: false,
     })
 }
 
+#[instrument(skip_all)]
 pub fn import_dmabuf_buffer(
     vk: Arc<VkContext>,
     wl_buffer: wl_buffer::WlBuffer,
@@ -349,25 +321,9 @@ pub fn import_dmabuf_buffer(
     let view = unsafe { create_image_view(&vk.device, image, vk_format, ignore_alpha)? };
     let image = VkImage::wrap(vk.clone(), image, view, memory, vk_format, width, height);
 
-    let interop_sema = unsafe {
-        vk.device
-            .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?
-    };
-
     Ok(Buffer {
         wl_buffer,
-        backing: BufferBacking::Dmabuf {
-            format,
-            fd,
-            image,
-            interop_sema,
-            interop_sema_tripped: false,
-
-            vk,
-        },
-        needs_release: false,
-        release_wait: None,
-        release_signal: None,
+        backing: BufferBacking::Dmabuf { format, fd, image },
         needs_destruction: false,
     })
 }
@@ -413,8 +369,6 @@ mod ioctl {
 
     pub(super) const DMA_BUF_SYNC_READ: u32 = 1 << 0;
     pub(super) const DMA_BUF_SYNC_WRITE: u32 = 1 << 1;
-
-    // Opcode::write::<dma_buf_import_sync_file>(b'b', 3);
 
     #[repr(C)]
     #[allow(non_camel_case_types)]
@@ -497,6 +451,7 @@ mod ioctl {
 /// Retrieves a dmabuf fence, and uses it to set a semaphore. The semaphore will
 /// be triggered when the dmabuf texture is safe to read. Note that the spec
 /// insists that the semaphore must be waited on once set this way.
+#[instrument(skip_all)]
 pub fn import_dmabuf_fence_as_semaphore(
     vk: Arc<VkContext>,
     semaphore: vk::Semaphore,
@@ -505,16 +460,23 @@ pub fn import_dmabuf_fence_as_semaphore(
     let fd = fd.as_fd();
     let sync_fd = unsafe { export_sync_file(fd, ioctl::DMA_BUF_SYNC_READ)? };
 
+    unsafe { import_sync_file_as_semaphore(vk, sync_fd, semaphore) }
+}
+
+#[instrument(skip_all)]
+pub unsafe fn import_sync_file_as_semaphore(
+    vk: Arc<VkContext>,
+    fd: OwnedFd,
+    semaphore: vk::Semaphore,
+) -> anyhow::Result<()> {
     let import_info = vk::ImportSemaphoreFdInfoKHR::default()
         .semaphore(semaphore)
         .handle_type(vk::ExternalSemaphoreHandleTypeFlags::SYNC_FD)
         .flags(vk::SemaphoreImportFlags::TEMPORARY)
-        .fd(sync_fd.into_raw_fd()); // Vulkan owns the fd now.
+        .fd(fd.into_raw_fd()); // Vulkan owns the fd now.
 
-    unsafe {
-        vk.external_semaphore_api
-            .import_semaphore_fd(&import_info)?;
-    }
+    vk.external_semaphore_api
+        .import_semaphore_fd(&import_info)?;
 
     Ok(())
 }
