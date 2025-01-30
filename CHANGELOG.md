@@ -1,3 +1,5 @@
+## [mmclient-v0.6.1] - 2025-01-30
+
 ## [mmserver-v0.7.1] - 2025-01-30
 
 ### New Features
