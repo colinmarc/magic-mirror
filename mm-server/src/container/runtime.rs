@@ -544,9 +544,7 @@ impl Container {
         must!(mount_fs(
             c"tmpfs",
             c"/tmp",
-            MountAttrFlags::MOUNT_ATTR_NOSUID
-                | MountAttrFlags::MOUNT_ATTR_NOEXEC
-                | MountAttrFlags::MOUNT_ATTR_NOATIME,
+            MountAttrFlags::MOUNT_ATTR_NOSUID | MountAttrFlags::MOUNT_ATTR_NOATIME,
             &[(c"mode", c"0777"), (c"size", c"1g")],
         ));
 
