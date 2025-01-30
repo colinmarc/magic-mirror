@@ -198,8 +198,8 @@ fn preflight_checks(cfg: &config::Config, vk: &vulkan::VkContext) -> anyhow::Res
             }
         }
         vulkan::DriverVersion::NvidiaProprietary { major, minor } => {
-            if major < 550 {
-                bail!("driver version >= 550.x required, have {major}.{minor}");
+            if major < 565 {
+                bail!("driver version >= 565.x required, have {major}.{minor}");
             }
         }
         vulkan::DriverVersion::Other(ref driver) => {
