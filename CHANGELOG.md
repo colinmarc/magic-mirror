@@ -1,3 +1,9 @@
+## [mmserver-v0.7.2] - 2025-01-30
+
+### Bugfixes
+
+- Remove noexec from /tmp in the container (0c534f6677e07cda77e0384854dded47dd8a949b)
+
 ## [mmserver-v0.7.1] - 2025-01-30
 
 ### New Features
