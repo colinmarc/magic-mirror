@@ -1090,14 +1090,14 @@ fn default_structure(
         std::cmp::min(MAX_LAYERS, max_codec_layers)
     };
 
-    let mut structure = HierarchicalP::new(layers as u32, DEFAULT_GOP_SIZE);
+    let mut structure = HierarchicalP::new(layers, DEFAULT_GOP_SIZE);
     while structure.required_dpb_size() as u32 > max_dpb_slots {
         layers -= 1;
         if layers == 0 {
             bail!("max_dpb_slots too low");
         }
 
-        structure = HierarchicalP::new(layers as u32, DEFAULT_GOP_SIZE);
+        structure = HierarchicalP::new(layers, DEFAULT_GOP_SIZE);
     }
 
     Ok(structure)

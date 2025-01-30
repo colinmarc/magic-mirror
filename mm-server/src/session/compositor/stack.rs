@@ -201,7 +201,7 @@ impl Compositor {
         let first_visible_idx = self.surface_stack.iter().rposition(|id| {
             self.surfaces[*id]
                 .configuration
-                .map_or(false, |conf| conf.fullscreen)
+                .is_some_and(|conf| conf.fullscreen)
         });
 
         for id in &self.surface_stack[first_visible_idx.unwrap_or_default()..] {
