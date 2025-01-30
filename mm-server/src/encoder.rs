@@ -1056,13 +1056,8 @@ fn default_hdr10_profile(op: vk::VideoCodecOperationFlagsKHR) -> vk::VideoProfil
         .luma_bit_depth(vk::VideoComponentBitDepthFlagsKHR::TYPE_10)
 }
 
-fn default_encode_usage(driver_version: DriverVersion) -> vk::VideoEncodeUsageInfoKHR<'static> {
-    // Nvidia chokes on "ULTRA LOW" for some reason.
-    let tuning_mode = if matches!(driver_version, DriverVersion::NvidiaProprietary { .. }) {
-        vk::VideoEncodeTuningModeKHR::LOW_LATENCY
-    } else {
-        vk::VideoEncodeTuningModeKHR::ULTRA_LOW_LATENCY
-    };
+fn default_encode_usage() -> vk::VideoEncodeUsageInfoKHR<'static> {
+    let tuning_mode = vk::VideoEncodeTuningModeKHR::ULTRA_LOW_LATENCY;
 
     vk::VideoEncodeUsageInfoKHR::default()
         .video_usage_hints(vk::VideoEncodeUsageFlagsKHR::STREAMING)
