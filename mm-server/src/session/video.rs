@@ -10,12 +10,9 @@ use ash::vk;
 mod composite;
 mod convert;
 
-use tracing::{instrument, trace, trace_span, warn};
+use tracing::{instrument, trace, warn};
 
-use super::{
-    compositor::{self, buffers::SyncobjTimelinePoint},
-    DisplayParams, SessionHandle, VideoStreamParams,
-};
+use super::{compositor, DisplayParams, SessionHandle, VideoStreamParams};
 use crate::{
     color::ColorSpace,
     encoder::{self},
@@ -65,8 +62,8 @@ impl encoder::Sink for Sink {
 pub struct SwapFrame {
     convert_ds: vk::DescriptorSet, // Should be dropped first.
     draws: Vec<(vk::ImageView, glam::Vec2, glam::Vec2)>,
-    texture_semas: Vec<vk::Semaphore>, // Reused each frame.
-    texture_semas_used: usize,
+    texture_semas: Vec<vk::Semaphore>,
+    texture_acquire_points: Vec<VkTimelinePoint>,
 
     /// An RGBA image to composite to.
     blend_image: VkImage,
@@ -91,8 +88,8 @@ pub struct SwapFrame {
 }
 
 pub enum TextureSync {
-    Explicit(SyncobjTimelinePoint),
-    ImplicitInterop,
+    BinaryAcquire(vk::Semaphore),
+    TimelineAcquire(VkTimelinePoint),
 }
 
 pub struct EncodePipeline {
@@ -183,10 +180,8 @@ impl EncodePipeline {
             }
 
             // We conditionally create the staging span, below. Rendering always happens.
-            frame.render_span = Some(ctx.span(tracy_client::span_location!("render"))?);
+            frame.render_span = Some(ctx.span(tracy_client::span_location!())?);
         }
-
-        frame.texture_semas_used = 0;
 
         // Wait for the frame to no longer be in flight, and then establish new timeline
         // points.
@@ -307,11 +302,9 @@ impl EncodePipeline {
                     vk::AccessFlags2::SHADER_READ,
                 );
 
-                assert!(sync.is_none());
-
                 (image.view, None)
             }
-            compositor::buffers::BufferBacking::Dmabuf { image, fd, .. } => {
+            compositor::buffers::BufferBacking::Dmabuf { image, .. } => {
                 // Transition the image to be readable. A special queue,
                 // EXTERNAL, is used in a queue transfer to indicate
                 // acquiring the texture from the wayland client.
@@ -342,25 +335,16 @@ impl EncodePipeline {
                     vk::AccessFlags2::NONE,
                 );
 
-                if let Some(sync) = sync {
-                    let sema = allocate_texture_semaphore(self.vk.clone(), frame)?;
-
-                    match sync {
-                        TextureSync::Explicit(syncobj) => {
-                            syncobj.import_as_semaphore(sema)?;
-                        }
-                        TextureSync::ImplicitInterop => {
-                            compositor::buffers::import_dmabuf_fence_as_semaphore(
-                                self.vk.clone(),
-                                sema,
-                                fd,
-                            )?;
-                        }
-                    }
-                }
-
                 (image.view, Some(frame.tp_render_done.clone()))
             }
+        };
+
+        match sync {
+            Some(TextureSync::TimelineAcquire(acquire)) => {
+                frame.texture_acquire_points.push(acquire)
+            }
+            Some(TextureSync::BinaryAcquire(semaphore)) => frame.texture_semas.push(semaphore),
+            None => (),
         };
 
         // Convert the destination rect into clip coordinates.
@@ -375,7 +359,7 @@ impl EncodePipeline {
         Ok(release)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = "trace", skip(self))]
     pub unsafe fn end_and_submit(&mut self) -> anyhow::Result<VkTimelinePoint> {
         let device = &self.vk.device;
         let frame = &mut self.swap[self.swap_idx];
@@ -525,12 +509,22 @@ impl EncodePipeline {
             .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
             .value(frame.tp_render_done.value())];
 
-        for sema in &frame.texture_semas[0..frame.texture_semas_used] {
+        for sema in frame.texture_semas.drain(..) {
             render_wait_infos.push(
                 vk::SemaphoreSubmitInfo::default()
-                    .semaphore(*sema)
+                    .semaphore(sema)
                     .stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER),
             );
+        }
+
+        // Wait on explicit sync acquire points before sampling.
+        for acquire in frame.texture_acquire_points.drain(..) {
+            render_wait_infos.push(
+                vk::SemaphoreSubmitInfo::default()
+                    .semaphore(acquire.timeline().as_semaphore())
+                    .value(acquire.value())
+                    .stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER),
+            )
         }
 
         let render_submit_info = vk::SubmitInfo2::default()
@@ -539,10 +533,7 @@ impl EncodePipeline {
             .signal_semaphore_infos(&render_signal_infos);
 
         submits.push(render_submit_info);
-
-        trace_span!("queue_submit2").in_scope(|| {
-            device.queue_submit2(self.vk.graphics_queue.queue, &submits, vk::Fence::null())
-        })?;
+        device.queue_submit2(self.vk.graphics_queue.queue, &submits, vk::Fence::null())?;
 
         // Trigger encode.
         self.encoder.submit_encode(
@@ -553,7 +544,7 @@ impl EncodePipeline {
 
         // Wait for uploads to finish before returning, so that writes to the
         // staging buffers are synchronized.
-        trace_span!("tp_staging_done.wait").in_scope(|| frame.tp_staging_done.wait())?;
+        frame.tp_staging_done.wait()?;
         let tp_clear = frame.tp_clear.clone();
 
         let swap_len = self.swap.len();
@@ -587,10 +578,6 @@ impl Drop for EncodePipeline {
 
                 for view in &frame.plane_views {
                     device.destroy_image_view(*view, None);
-                }
-
-                for sema in &frame.texture_semas {
-                    device.destroy_semaphore(*sema, None);
                 }
 
                 device.destroy_query_pool(frame.render_ts_pool.pool, None);
@@ -678,7 +665,7 @@ fn new_swapframe(
     Ok(SwapFrame {
         convert_ds,
         texture_semas: Vec::new(),
-        texture_semas_used: 0,
+        texture_acquire_points: Vec::new(),
         draws: Vec::new(),
         blend_image,
         encode_image,
@@ -696,26 +683,6 @@ fn new_swapframe(
         render_ts_pool,
         render_span: None,
     })
-}
-
-fn allocate_texture_semaphore(
-    vk: Arc<VkContext>,
-    frame: &mut SwapFrame,
-) -> anyhow::Result<vk::Semaphore> {
-    let idx = frame.texture_semas_used;
-    frame.texture_semas_used += 1;
-
-    if frame.texture_semas_used <= frame.texture_semas.len() {
-        return Ok(frame.texture_semas[idx]);
-    }
-
-    let sema = unsafe {
-        vk.device
-            .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)?
-    };
-
-    frame.texture_semas.push(sema);
-    Ok(sema)
 }
 
 fn format_is_semiplanar(format: vk::Format) -> bool {

@@ -9,10 +9,13 @@ use wayland_protocols::wp::linux_drm_syncobj::v1::server::{
 };
 use wayland_server::Resource as _;
 
-use crate::session::compositor::{
-    buffers::{SyncobjTimeline, SyncobjTimelineKey},
-    surface::SurfaceKey,
-    Compositor,
+use crate::{
+    session::compositor::{
+        buffers::{BufferTimeline, BufferTimelineKey},
+        surface::SurfaceKey,
+        Compositor,
+    },
+    vulkan::VkTimelineSemaphore,
 };
 
 impl wayland_server::GlobalDispatch<wp_linux_drm_syncobj_manager_v1::WpLinuxDrmSyncobjManagerV1, ()>
@@ -64,15 +67,24 @@ impl wayland_server::Dispatch<wp_linux_drm_syncobj_manager_v1::WpLinuxDrmSyncobj
                 }
             }
             wp_linux_drm_syncobj_manager_v1::Request::ImportTimeline { id, fd } => {
-                if let Err(err) = state.imported_syncobj_timelines.try_insert_with_key(|k| {
-                    SyncobjTimeline::import(state.vk.clone(), data_init.init(id, k), fd)
-                }) {
-                    error!("failed to import syncobj timeline: {err:#}");
-                    resource.post_error(
-                        wp_linux_drm_syncobj_manager_v1::Error::InvalidTimeline,
-                        "Failed to import timeline.",
-                    );
-                }
+                let sema = match VkTimelineSemaphore::from_syncobj_fd(state.vk.clone(), fd) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!("failed to import syncobj timeline: {e:#}");
+                        resource.post_error(
+                            wp_linux_drm_syncobj_manager_v1::Error::InvalidTimeline,
+                            "Failed to import timeline.",
+                        );
+                        return;
+                    }
+                };
+
+                state
+                    .imported_buffer_timelines
+                    .insert_with_key(|k| BufferTimeline {
+                        _wp_syncobj_timeline: data_init.init(id, k),
+                        sema,
+                    });
             }
             wp_linux_drm_syncobj_manager_v1::Request::Destroy => (),
             _ => unreachable!(),
@@ -102,8 +114,8 @@ impl
                 point_lo,
             } => {
                 let timeline = timeline
-                    .data::<SyncobjTimelineKey>()
-                    .and_then(|key| state.imported_syncobj_timelines.get(*key))
+                    .data::<BufferTimelineKey>()
+                    .and_then(|key| state.imported_buffer_timelines.get(*key))
                     .expect("timeline has no entry");
 
                 let surface = state
@@ -112,7 +124,7 @@ impl
                     .expect("surface has no entry");
 
                 surface.pending_acquire_point =
-                    Some(timeline.new_timeline_point(super::make_u64(point_hi, point_lo)))
+                    Some(timeline.sema.new_point(super::make_u64(point_hi, point_lo)))
             }
             wp_linux_drm_syncobj_surface_v1::Request::SetReleasePoint {
                 timeline,
@@ -120,8 +132,8 @@ impl
                 point_lo,
             } => {
                 let timeline = timeline
-                    .data::<SyncobjTimelineKey>()
-                    .and_then(|key| state.imported_syncobj_timelines.get(*key))
+                    .data::<BufferTimelineKey>()
+                    .and_then(|key| state.imported_buffer_timelines.get(*key))
                     .expect("timeline has no entry");
 
                 let surface = state
@@ -130,7 +142,7 @@ impl
                     .expect("surface has no entry");
 
                 surface.pending_release_point =
-                    Some(timeline.new_timeline_point(super::make_u64(point_hi, point_lo)))
+                    Some(timeline.sema.new_point(super::make_u64(point_hi, point_lo)))
             }
             wp_linux_drm_syncobj_surface_v1::Request::Destroy => (),
             _ => unreachable!(),
@@ -154,7 +166,7 @@ impl
 impl
     wayland_server::Dispatch<
         wp_linux_drm_syncobj_timeline_v1::WpLinuxDrmSyncobjTimelineV1,
-        SyncobjTimelineKey,
+        BufferTimelineKey,
     > for Compositor
 {
     fn request(
@@ -162,7 +174,7 @@ impl
         _client: &wayland_server::Client,
         _resource: &wp_linux_drm_syncobj_timeline_v1::WpLinuxDrmSyncobjTimelineV1,
         _request: wp_linux_drm_syncobj_timeline_v1::Request,
-        _data: &SyncobjTimelineKey,
+        _data: &BufferTimelineKey,
         _dhandle: &wayland_server::DisplayHandle,
         _data_init: &mut wayland_server::DataInit<'_, Self>,
     ) {

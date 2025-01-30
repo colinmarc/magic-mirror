@@ -105,7 +105,7 @@ impl VkTimelinePoint {
         VkTimelineSemaphore(self.0.clone())
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = "trace", skip_all)]
     pub unsafe fn wait(&self) -> anyhow::Result<()> {
         let device = &self.0.vk.device;
         device.wait_semaphores(
@@ -118,7 +118,7 @@ impl VkTimelinePoint {
         Ok(())
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = "trace", skip_all)]
     pub unsafe fn signal(&self) -> anyhow::Result<()> {
         let device = &self.0.vk.device;
         device.signal_semaphore(

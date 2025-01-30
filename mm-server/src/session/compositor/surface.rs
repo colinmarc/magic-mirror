@@ -18,7 +18,6 @@ use wayland_server::{
     Resource as _,
 };
 
-use super::buffers::SyncobjTimelinePoint;
 use crate::{
     pixel_scale::PixelScale,
     session::compositor::{
@@ -43,8 +42,8 @@ pub struct Surface {
     pub content: Option<ContentUpdate>,
 
     pub wp_syncobj_surface: Option<wp_linux_drm_syncobj_surface_v1::WpLinuxDrmSyncobjSurfaceV1>,
-    pub pending_acquire_point: Option<SyncobjTimelinePoint>,
-    pub pending_release_point: Option<SyncobjTimelinePoint>,
+    pub pending_acquire_point: Option<VkTimelinePoint>,
+    pub pending_release_point: Option<VkTimelinePoint>,
 
     pub role: DoubleBuffered<SurfaceRole>,
     pub sent_configuration: Option<SurfaceConfiguration>,
@@ -279,15 +278,8 @@ pub enum PendingBuffer {
 pub struct ContentUpdate {
     pub buffer: BufferKey,
 
-    /// Whether the client is waiting on a buffer.release().
-    pub needs_release: bool,
-
     /// Used for explicit sync.
-    pub explicit_sync: Option<(SyncobjTimelinePoint, SyncobjTimelinePoint)>,
-
-    /// If the content update is in use, this timeline point indicates when it
-    /// will be free.
-    pub tp_done: Option<VkTimelinePoint>,
+    pub explicit_sync: Option<(VkTimelinePoint, VkTimelinePoint)>,
 
     /// The real dimensions of the buffer. This is how surface coordinates are
     /// determined in wayland.
@@ -295,10 +287,13 @@ pub struct ContentUpdate {
     pub wp_presentation_feedback: Option<wp_presentation_feedback::WpPresentationFeedback>,
 }
 
-pub struct PendingPresentationFeedback(
-    pub wp_presentation_feedback::WpPresentationFeedback,
-    pub VkTimelinePoint,
-);
+impl Drop for ContentUpdate {
+    fn drop(&mut self) {
+        if let Some(feedback) = self.wp_presentation_feedback.take() {
+            feedback.discarded();
+        }
+    }
+}
 
 pub struct CommitError(pub xdg_surface::Error, pub String);
 
@@ -328,7 +323,7 @@ impl Compositor {
                 {
                     return Err(CommitError(
                         xdg_surface::Error::UnconfiguredBuffer,
-                        "The surface must be configured prior to attaching a buffer.".to_string(),
+                        "The buffer must be configured prior to attaching a buffer.".to_string(),
                     ));
                 }
 
@@ -344,8 +339,9 @@ impl Compositor {
                     }
                 }
 
+                buffer.needs_release = true;
+
                 // In the case of shm buffer, we do a copy and immediately release it.
-                let mut needs_release = true;
                 if let BufferBacking::Shm {
                     staging_buffer,
                     format,
@@ -368,7 +364,7 @@ impl Compositor {
 
                     staging_buffer.copy_from_slice(contents);
                     *dirty = true;
-                    needs_release = false;
+                    buffer.needs_release = false;
                     buffer.wl_buffer.release();
                 }
 
@@ -397,24 +393,16 @@ impl Compositor {
                             Some((acquire_point, release_point))
                         });
 
-                if needs_release && explicit_sync.is_some() {
-                    // No need for release events if explicit sync is used.
-                    needs_release = false;
+                if let Some((_, release)) = explicit_sync.as_ref() {
+                    buffer.release_signal = Some(release.clone());
                 }
 
-                let old_content = surface.content.replace(ContentUpdate {
+                surface.content = Some(ContentUpdate {
                     buffer: buffer_id,
-                    needs_release,
                     explicit_sync,
-                    tp_done: None,
                     dimensions: buffer.dimensions(),
                     wp_presentation_feedback: feedback,
                 });
-
-                if let Some(old_content) = old_content {
-                    // Enqueue the buffer for release.
-                    self.in_flight_buffers.push(old_content);
-                }
             }
             None => (),
         }
@@ -596,9 +584,9 @@ impl Compositor {
         let refresh = time::Duration::from_secs_f64(1.0 / framerate as f64).as_nanos() as u32;
 
         let mut still_pending = Vec::with_capacity(self.pending_presentation_feedback.len());
-        for PendingPresentationFeedback(fb, tp) in self.pending_presentation_feedback.drain(..) {
+        for (fb, tp) in self.pending_presentation_feedback.drain(..) {
             if unsafe { !tp.poll()? } {
-                still_pending.push(PendingPresentationFeedback(fb, tp));
+                still_pending.push((fb, tp));
                 continue;
             }
 
