@@ -1,3 +1,26 @@
+## [mmserver-v0.7.1] - 2025-01-30
+
+### New Features
+
+- Let the encoder swap frames (b519680e3e8c552874f53cd88e98859e90698ac8)
+
+### Bugfixes
+
+- Update quiche (c3d1e0080c1040151ecdc08e85584ff267f6eed6)
+- Remove an extra copy on the dgram path (0d204fa2549f4fd9abc804f4996f8fe11162e67b)
+- Fix clippy warning (7b041bbff7c908e57928d621ad74751bb7b76355)
+- Respect layer limits in VkVideoEncodeCapabilities (ce515b4d85b8af4da83a3fed0281f907e28253b1)
+- Print child logs correctly (e8cd88fb344ec74398eae09e757589700de3bff3)
+- Print an error when dmabuf importing fails (112d48d706fc19ce8882e2767c33672e7a044527)
+- Change target for vulkan error logs (641f51675a572402710fe3ee2ff0721857228ab9)
+- Add context (7572ac6a5131486f6d4cf6951742eea9c0f24d25)
+- Use the default congestion control algorithm (7245e624f785b2b01e0b5da507380a88121de542)
+- Get explicit sync working on NVIDIA (8d5786445e56629c67338258b1bc8cc7debb410e)
+- Remove unused import (df03d5d38236b325e826b998cef26ea2d9008e75)
+- Fix explicit sync on nvidia proprietary (8f806b233f537395d72de6e06d3861e73963bec2)
+- Check for the right nvidia version (08b6462a320ee76eabaf4387c354a1a6634ec8df)
+- Fix explicit sync on nvidia proprietary (3c70a79cda9cc545acf665ccacc495ed30f3440a)
+
 ## [mmclient-v0.6.0] - 2025-01-26
 
 ### New Features
