@@ -516,12 +516,13 @@ fn conn_reactor(
     client: Arc<AsyncMutex<InnerClient>>,
 ) {
     let mut in_flight = InFlight::default();
-    let mut deadline = time::Instant::now() + time::Duration::from_secs(1);
+    let mut tick = time::Instant::now() + time::Duration::from_secs(1);
 
     loop {
+        // Perform some cleanup once per second.
         let now = time::Instant::now();
-        if deadline < now {
-            deadline = now + time::Duration::from_secs(1);
+        if now > tick {
+            tick = now + time::Duration::from_secs(1);
 
             // Check roundtrip deadlines.
             let mut timed_out = Vec::new();
@@ -580,7 +581,7 @@ fn conn_reactor(
                     SelectResult::RecvError
                 }
             })
-            .wait_deadline(deadline);
+            .wait_deadline(tick);
 
         match res {
             Err(flume::select::SelectError::Timeout) => continue,
