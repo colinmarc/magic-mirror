@@ -674,7 +674,7 @@ fn handle_command(
                 channel,
                 stream_index: 500,
                 sample_spec,
-                channel_map: pulse::ChannelMap::stereo(),
+                channel_map: params.channel_map,
                 buffer_attr,
                 requested_bytes: target_length,
                 sink_name: Some(SINK_NAME.into()),

@@ -25,10 +25,10 @@ where
     F: dasp::Frame<Sample = f32>,
 {
     pub fn new(sample_spec: pulse::SampleSpec, output_spec: pulse::SampleSpec) -> Self {
-        // TODO: downmixing
-        assert_eq!(
-            sample_spec.channels, output_spec.channels,
-            "down- or upmixing is not supported"
+        assert_eq!(output_spec.channels as usize, F::CHANNELS);
+        assert!(
+            sample_spec.channels as usize >= F::CHANNELS,
+            "upmixing is not supported"
         );
 
         let buffer = Buffer::new(sample_spec);
@@ -153,8 +153,6 @@ where
     F: dasp::Frame<Sample = f32>,
 {
     pub fn new(sample_spec: pulse::SampleSpec) -> Self {
-        assert_eq!(sample_spec.channels as usize, F::CHANNELS);
-
         Self {
             inner: VecDeque::new(),
             sample_spec,
@@ -177,7 +175,16 @@ where
             return None;
         }
 
-        Some(F::from_fn(|_| self.read_sample().unwrap()))
+        let frame = F::from_fn(|_| self.read_sample().unwrap());
+
+        // Throw away additional channels.
+        // TODO: be more intelligent about up/downmixing.
+        let input_channels = self.sample_spec.channels as usize;
+        for _ in 0..input_channels.saturating_sub(F::CHANNELS) {
+            let _ = self.read_sample();
+        }
+
+        Some(frame)
     }
 
     fn read_sample(&mut self) -> Option<F::Sample> {
@@ -256,5 +263,92 @@ impl<S: dasp::Signal> Drop for Drain<'_, S> {
 
             let _ = dasp::Signal::next(&mut self.signal);
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use byteorder::WriteBytesExt as _;
+    use dasp::Signal as _;
+
+    use super::*;
+
+    #[test]
+    fn passthrough() {
+        let mut buf = PlaybackBuffer::<[f32; 2]>::new(
+            pulse::SampleSpec {
+                format: pulse::SampleFormat::Float32Le,
+                channels: 2,
+                sample_rate: 24000,
+            },
+            pulse::SampleSpec {
+                format: pulse::SampleFormat::Float32Le,
+                channels: 2,
+                sample_rate: 24000,
+            },
+        );
+
+        let mut data = vec![];
+        data.write_f32::<LE>(1.0).unwrap();
+        data.write_f32::<LE>(2.0).unwrap();
+        data.write_f32::<LE>(1.0).unwrap();
+        data.write_f32::<LE>(2.0).unwrap();
+        buf.write(&data);
+
+        assert_eq!(buf.len_bytes(), 16);
+        assert_eq!(buf.len_frames(), 2);
+        assert!(buf.drain(3).is_none());
+
+        {
+            let mut frames = buf.drain(2).unwrap();
+            assert_eq!(frames.next(), [1.0, 2.0]);
+            assert_eq!(frames.next(), [1.0, 2.0]);
+            assert!(frames.is_exhausted());
+            assert_eq!(frames.next(), [0.0, 0.0]);
+        }
+
+        assert!(buf.drain(1).is_none());
+    }
+
+    #[test]
+    fn downmix() {
+        let mut buf = PlaybackBuffer::<[f32; 2]>::new(
+            pulse::SampleSpec {
+                format: pulse::SampleFormat::Float32Le,
+                channels: 5,
+                sample_rate: 24000,
+            },
+            pulse::SampleSpec {
+                format: pulse::SampleFormat::Float32Le,
+                channels: 2,
+                sample_rate: 24000,
+            },
+        );
+
+        let mut data = vec![];
+        data.write_f32::<LE>(1.0).unwrap();
+        data.write_f32::<LE>(1.0).unwrap();
+        data.write_f32::<LE>(2.0).unwrap();
+        data.write_f32::<LE>(2.0).unwrap();
+        data.write_f32::<LE>(2.0).unwrap();
+        data.write_f32::<LE>(-1.0).unwrap();
+        data.write_f32::<LE>(-1.0).unwrap();
+        data.write_f32::<LE>(-2.0).unwrap();
+        data.write_f32::<LE>(-2.0).unwrap();
+        data.write_f32::<LE>(-2.0).unwrap();
+        buf.write(&data);
+
+        assert_eq!(buf.len_bytes(), 40);
+        assert_eq!(buf.len_frames(), 2);
+        assert!(buf.drain(3).is_none());
+
+        {
+            let mut frames = buf.drain(2).unwrap();
+            assert_eq!(frames.next(), [1.0, 1.0]);
+            assert_eq!(frames.next(), [-1.0, -1.0]);
+            assert!(frames.is_exhausted());
+        }
+
+        assert!(buf.drain(1).is_none());
     }
 }
