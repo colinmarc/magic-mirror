@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::BTreeMap,
     ffi::{CStr, CString},
     io::{prelude::*, Cursor},
     path::Path,
@@ -19,6 +19,7 @@ use mio::net::UnixListener;
 use pulseaudio::protocol::{self as pulse, ClientInfoList};
 use tracing::{debug, error, trace, warn};
 
+use super::buffer::PlaybackBuffer;
 use super::EncodeFrame;
 use crate::{session::EPOCH, waking_sender::WakingSender};
 
@@ -29,9 +30,14 @@ const CLOCK: mio::Token = mio::Token(2);
 // The server emits samples at this rate to the encoder.
 pub const CAPTURE_SAMPLE_RATE: u32 = 48000;
 pub const CAPTURE_CHANNEL_COUNT: u32 = 2;
+pub const CAPTURE_SPEC: pulse::SampleSpec = pulse::SampleSpec {
+    format: pulse::SampleFormat::Float32Le,
+    channels: CAPTURE_CHANNEL_COUNT as u8,
+    sample_rate: CAPTURE_SAMPLE_RATE,
+};
 
 // Run the clock every 10ms, which is the smallest Opus frame size.
-const CLOCK_RATE_HZ: u64 = 100;
+const CLOCK_RATE_HZ: u32 = 100;
 
 const SINK_NAME: &CStr = cstr!("magic_mirror");
 
@@ -43,12 +49,10 @@ pub enum StreamState {
     Draining(u32), // The seq of the drain request, so we can ack it.
 }
 
-#[derive(Debug)]
 struct PlaybackStream {
     state: StreamState,
-    sample_spec: pulse::SampleSpec,
     buffer_attr: pulse::stream::BufferAttr,
-    buffer: VecDeque<u8>,
+    buffer: PlaybackBuffer<[f32; 2]>,
     requested_bytes: usize,
     played_bytes: u64,
     write_offset: u64,
@@ -96,7 +100,9 @@ impl PulseServer {
         let waker = Arc::new(mio::Waker::new(poll.registry(), WAKER)?);
 
         let mut clock = mio_timerfd::TimerFd::new(mio_timerfd::ClockId::Monotonic)?;
-        clock.set_timeout_interval(&time::Duration::from_nanos(1_000_000_000 / CLOCK_RATE_HZ))?;
+        clock.set_timeout_interval(&time::Duration::from_nanos(
+            1_000_000_000 / CLOCK_RATE_HZ as u64,
+        ))?;
 
         let mut server_info = pulse::ServerInfo {
             server_name: Some(cstr!("Magic Mirror").into()),
@@ -361,12 +367,12 @@ impl PulseServer {
         let mut done_draining = Vec::new();
 
         let capture_ts = EPOCH.elapsed().as_millis() as u64;
-        let encode_len = (CAPTURE_SAMPLE_RATE as usize / CLOCK_RATE_HZ as usize)
-            * CAPTURE_CHANNEL_COUNT as usize;
+        let num_frames = CAPTURE_SAMPLE_RATE / CLOCK_RATE_HZ;
+        let encode_len = num_frames * CAPTURE_CHANNEL_COUNT;
 
         let mut frame = match self.done_rx.try_recv() {
             Ok(mut frame) => {
-                frame.buf.resize(encode_len, 0.0);
+                frame.buf.resize(encode_len as usize, 0.0);
                 frame.buf.fill(0.0);
                 Some(frame)
             }
@@ -385,24 +391,12 @@ impl PulseServer {
                     stream.state,
                     StreamState::Playing | StreamState::Draining(_)
                 ) {
-                    // TODO resampling
-                    assert_eq!(stream.sample_spec.channels as u32, CAPTURE_CHANNEL_COUNT);
-                    assert_eq!(stream.sample_spec.sample_rate, CAPTURE_SAMPLE_RATE);
-
-                    let bytes_per_sample = stream.sample_spec.format.bytes_per_sample();
-                    let read_len = encode_len * bytes_per_sample;
-
-                    trace!(
-                        "encoding {} bytes from stream {} ({} -> {})",
-                        read_len,
-                        id,
-                        stream.buffer.len(),
-                        stream.buffer.len() as isize - read_len as isize
-                    );
+                    // Track how much we read.
+                    let buffer_len = stream.buffer.len_bytes();
 
                     // Check for underrun.
-                    if read_len > stream.buffer.len() {
-                        error!("buffer underrun for stream: {}", id);
+                    let Some(frames) = stream.buffer.drain(num_frames as usize) else {
+                        error!(id, "buffer underrun for stream");
                         pulse::write_command_message(
                             &mut client.socket,
                             u32::MAX,
@@ -422,25 +416,28 @@ impl PulseServer {
                         }
 
                         continue;
-                    }
+                    };
 
-                    // Mix into the output frame.
                     if let Some(ref mut frame) = frame {
-                        match mix(
-                            &mut frame.buf,
-                            &mut stream.buffer,
-                            stream.sample_spec.format,
-                        ) {
-                            Ok(()) => (),
-                            Err(e) => {
-                                error!("error mixing from channel {}: {:#}", id, e);
-                                continue;
-                            }
+                        let mut resampled =
+                            dasp::Signal::into_interleaved_samples(frames).into_iter();
+
+                        for sample in &mut frame.buf {
+                            *sample += resampled.next().unwrap_or_default();
                         }
                     } else {
                         // Discard data even if we're not encoding it.
-                        stream.buffer.drain(..read_len);
+                        drop(frames)
                     }
+
+                    let read_len = buffer_len - stream.buffer.len_bytes();
+                    trace!(
+                        id,
+                        read_len,
+                        buffer_len,
+                        new_len = buffer_len - read_len,
+                        "stream read"
+                    );
 
                     stream.read_offset += read_len as u64;
                     stream.played_bytes += read_len as u64;
@@ -448,18 +445,18 @@ impl PulseServer {
                     // If we've drained the buffer, we can drop the stream.
                     if matches!(stream.state, StreamState::Draining(_)) && stream.buffer.is_empty()
                     {
-                        debug!("finished draining stream: {}", id);
+                        debug!(id, "finished draining stream");
                         done_draining.push(*id)
                     }
                 }
 
                 // Request a write to fill the buffer.
                 let bytes_needed = (stream.buffer_attr.target_length as usize)
-                    .saturating_sub(stream.buffer.len() + stream.requested_bytes);
+                    .saturating_sub(stream.buffer.len_bytes() + stream.requested_bytes);
                 if matches!(stream.state, StreamState::Playing | StreamState::Corked)
                     && bytes_needed >= stream.buffer_attr.minimum_request_length as usize
                 {
-                    trace!("requesting {} bytes for stream {}", bytes_needed, id);
+                    trace!(id, bytes_needed, "requesting buffer write");
 
                     stream.requested_bytes += bytes_needed;
                     pulse::write_command_message(
@@ -492,32 +489,6 @@ impl PulseServer {
 
         Ok(())
     }
-}
-
-fn mix(
-    dest: &mut [f32],
-    src: &mut VecDeque<u8>,
-    src_format: pulse::SampleFormat,
-) -> anyhow::Result<()> {
-    use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
-    use dasp::Sample;
-
-    for sample in dest {
-        *sample += match src_format {
-            pulse::SampleFormat::Float32Le => src.read_f32::<LittleEndian>()?,
-            pulse::SampleFormat::Float32Be => src.read_f32::<BigEndian>()?,
-            pulse::SampleFormat::S16Le => f32::from_sample(src.read_i16::<LittleEndian>()?),
-            pulse::SampleFormat::S16Be => f32::from_sample(src.read_i16::<BigEndian>()?),
-            pulse::SampleFormat::U8 => f32::from_sample(src.read_u8()?),
-            pulse::SampleFormat::S32Le => f32::from_sample(src.read_i32::<LittleEndian>()?),
-            pulse::SampleFormat::S32Be => f32::from_sample(src.read_i32::<BigEndian>()?),
-            pulse::SampleFormat::S24Le => f32::from_sample(src.read_i24::<LittleEndian>()?),
-
-            _ => unimplemented!(),
-        };
-    }
-
-    Ok(())
 }
 
 fn handle_command(
@@ -679,9 +650,8 @@ fn handle_command(
             let flags = params.flags;
             let mut stream = PlaybackStream {
                 state: StreamState::Prebuffering(buffer_attr.pre_buffering as u64),
-                sample_spec,
                 buffer_attr,
-                buffer: VecDeque::new(),
+                buffer: PlaybackBuffer::new(sample_spec, CAPTURE_SPEC),
                 requested_bytes: target_length as usize,
                 played_bytes: 0,
                 write_offset: 0,
@@ -754,11 +724,15 @@ fn handle_command(
                         let needed = stream
                             .buffer_attr
                             .target_length
-                            .saturating_sub(stream.buffer.len() as u32);
+                            .saturating_sub(stream.buffer.len_bytes() as u32);
 
                         stream.state = if needed > 0 {
                             // Request bytes to fill the buffer.
-                            trace!("requesting {} bytes for stream {}", needed, params.channel);
+                            trace!(
+                                id = params.channel,
+                                bytes_needed = needed,
+                                "requesting buffer write"
+                            );
                             pulse::write_command_message(
                                 &mut client.socket,
                                 u32::MAX,
@@ -869,13 +843,14 @@ fn handle_stream_write(
         }
     };
 
+    let buffer_len = stream.buffer.len_bytes();
     trace!(
-        "got stream write: {} bytes to channel {} ({} -> {}) ({:?})",
-        desc.length,
-        desc.channel,
-        stream.buffer.len(),
-        stream.buffer.len() + desc.length as usize,
-        stream.state
+        id = desc.channel,
+        ?stream.state,
+        write_len = desc.length,
+        current_len = buffer_len,
+        future_len = buffer_len + desc.length as usize,
+        "got stream write",
     );
 
     // We don't handle seeks yet.
@@ -884,7 +859,7 @@ fn handle_stream_write(
     }
 
     // Check for overrun.
-    let remaining = (stream.buffer_attr.max_length as usize).saturating_sub(stream.buffer.len());
+    let remaining = (stream.buffer_attr.max_length as usize).saturating_sub(buffer_len);
     let overflow = payload.len().saturating_sub(remaining);
     let payload = if overflow > 0 {
         pulse::write_command_message(
@@ -917,7 +892,7 @@ fn handle_stream_write(
     }
 
     // Read the data into the buffer.
-    stream.buffer.write_all(payload)?;
+    stream.buffer.write(payload);
     stream.requested_bytes = stream.requested_bytes.saturating_sub(payload.len());
     stream.write_offset += payload.len() as u64;
 

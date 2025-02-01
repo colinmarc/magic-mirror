@@ -6,7 +6,9 @@ use std::{path::Path, sync::Arc};
 
 use crate::{session::SessionHandle, waking_sender::WakingSender};
 
+mod buffer;
 mod pulse;
+
 use anyhow::Context as _;
 use bytes::BytesMut;
 use crossbeam_channel as crossbeam;
