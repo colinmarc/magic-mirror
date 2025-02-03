@@ -33,7 +33,7 @@ lazy_static! {
     pub static ref EPOCH: std::time::Instant = std::time::Instant::now();
 }
 
-const READY_TIMEOUT: std::time::Duration = time::Duration::from_secs(10);
+const READY_TIMEOUT: std::time::Duration = time::Duration::from_secs(30);
 
 const DISPLAY: mio::Token = mio::Token(0);
 const ACCEPT: mio::Token = mio::Token(1);

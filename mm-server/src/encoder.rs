@@ -379,15 +379,16 @@ impl EncoderInner {
         begin_command_buffer(&self.vk.device, frame.encode_cb)?;
 
         // Record the start timestamp.
-        frame
-            .encode_ts_pool
-            .cmd_reset(&self.vk.device, frame.encode_cb);
-        self.vk.device.cmd_write_timestamp(
-            frame.encode_cb,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            frame.encode_ts_pool.pool,
-            0,
-        );
+        #[cfg(feature = "tracy")]
+        if let Some(encode_ts_pool) = &mut frame.encode_ts_pool {
+            encode_ts_pool.cmd_reset(&self.vk.device, frame.encode_cb);
+            self.vk.device.cmd_write_timestamp(
+                frame.encode_cb,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                encode_ts_pool.pool,
+                0,
+            );
+        }
 
         // Acquire the image from the graphics queue.
         insert_image_barrier(
@@ -616,13 +617,17 @@ impl EncoderInner {
         );
 
         // Record the end timestamp.
-        self.vk.device.cmd_write_timestamp(
-            frame.encode_cb,
-            vk::PipelineStageFlags::ALL_COMMANDS,
-            frame.encode_ts_pool.pool,
-            1,
-        );
+        #[cfg(feature = "tracy")]
+        if let Some(encode_ts_pool) = &frame.encode_ts_pool {
+            self.vk.device.cmd_write_timestamp(
+                frame.encode_cb,
+                vk::PipelineStageFlags::ALL_COMMANDS,
+                encode_ts_pool.pool,
+                1,
+            );
+        }
 
+        #[cfg(feature = "tracy")]
         if let Some(span) = &mut frame.encode_span {
             span.end_zone();
         }
@@ -738,8 +743,12 @@ struct EncoderOutputFrame {
 
     #[cfg(feature = "tracy")]
     tracy_frame: Option<tracy_client::Frame>,
+
+    #[cfg(feature = "tracy")]
     encode_span: Option<tracy_client::GpuSpan>,
-    encode_ts_pool: VkTimestampQueryPool,
+
+    #[cfg(feature = "tracy")]
+    encode_ts_pool: Option<VkTimestampQueryPool>,
 
     vk: Arc<VkContext>,
 }
@@ -813,7 +822,17 @@ impl EncoderOutputFrame {
 
         let timeline = VkTimelineSemaphore::new(vk.clone(), 0)?;
 
-        let encode_ts_pool = create_timestamp_query_pool(&vk.device, 2)?;
+        #[cfg(feature = "tracy")]
+        let encode_ts_pool = if matches!(
+            vk.device_info.driver_version,
+            DriverVersion::MesaRadv { .. }
+        ) {
+            // RADV offers support for timestamp queries, but then has an
+            // assertion at timestamp write time.
+            None
+        } else {
+            create_timestamp_query_pool(&vk.device, 2).ok()
+        };
 
         Ok(EncoderOutputFrame {
             encode_cb,
@@ -829,8 +848,9 @@ impl EncoderOutputFrame {
 
             #[cfg(feature = "tracy")]
             tracy_frame: None,
-
+            #[cfg(feature = "tracy")]
             encode_span: None,
+            #[cfg(feature = "tracy")]
             encode_ts_pool,
 
             vk,
@@ -847,7 +867,11 @@ impl Drop for EncoderOutputFrame {
             device.queue_wait_idle(encode_queue.queue).unwrap();
             device.free_command_buffers(encode_queue.command_pool, &[self.encode_cb]);
             device.destroy_query_pool(self.query_pool, None);
-            device.destroy_query_pool(self.encode_ts_pool.pool, None);
+
+            #[cfg(feature = "tracy")]
+            if let Some(pool) = self.encode_ts_pool.take() {
+                device.destroy_query_pool(pool.pool, None);
+            }
         }
     }
 }
@@ -910,8 +934,10 @@ fn writer_thread(
         {
             frame.tracy_frame.take();
             if let Some(span) = frame.encode_span.take() {
-                let timestamps = frame.encode_ts_pool.fetch_results(device)?;
-                span.upload_timestamp(timestamps[0], timestamps[1])
+                if let Some(pool) = &mut frame.encode_ts_pool {
+                    let timestamps = pool.fetch_results(device)?;
+                    span.upload_timestamp(timestamps[0], timestamps[1])
+                }
             }
         }
 
