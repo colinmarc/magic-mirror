@@ -17,7 +17,7 @@ use tracing::trace;
 
 lazy_static! {
     static ref ID_RE: Regex = Regex::new(r"\A[a-z][a-z0-9-_]{0,256}\z").unwrap();
-    static ref DESCRIPTION_RE: Regex = Regex::new(r"\A[A-Za-z0-9-_ ]{0,256}\z").unwrap();
+    static ref DESCRIPTION_RE: Regex = Regex::new(r"\A[A-Za-z0-9-_:() ]{0,256}\z").unwrap();
     static ref PATH_COMPONENT_RE: Regex = Regex::new(r"\A[A-Za-z0-9-_  ]{0,64}\z").unwrap();
     static ref DEFAULT_CFG: parsed::Config =
         toml::from_str(include_str!("../../mmserver.default.toml")).unwrap();
