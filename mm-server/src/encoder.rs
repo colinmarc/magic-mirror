@@ -198,8 +198,8 @@ impl EncoderInner {
             dpb::DpbPool::new_separate_images(
                 vk.clone(),
                 input_format,
-                width,
-                height,
+                width.next_multiple_of(capabilities.picture_access_granularity.width),
+                height.next_multiple_of(capabilities.picture_access_granularity.height),
                 profile,
                 required_dpb_size,
             )?
@@ -209,8 +209,8 @@ impl EncoderInner {
             dpb::DpbPool::new(
                 vk.clone(),
                 input_format,
-                width,
-                height,
+                width.next_multiple_of(capabilities.picture_access_granularity.width),
+                height.next_multiple_of(capabilities.picture_access_granularity.height),
                 profile,
                 required_dpb_size,
             )?
