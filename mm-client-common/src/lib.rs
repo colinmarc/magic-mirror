@@ -17,6 +17,7 @@ mod attachment;
 mod conn;
 mod logging;
 mod packet;
+mod presentation;
 mod session;
 mod stats;
 mod validation;
@@ -29,6 +30,7 @@ pub mod pixel_scale;
 pub use attachment::*;
 pub use logging::*;
 pub use packet::*;
+pub use presentation::*;
 pub use session::*;
 
 uniffi::setup_scaffolding!();
@@ -141,6 +143,7 @@ impl InnerClient {
     }
 }
 
+/// A client connection to a Magic Mirror server.
 #[derive(uniffi::Object)]
 pub struct Client {
     name: String,
