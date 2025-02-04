@@ -117,7 +117,6 @@ impl Server {
         };
 
         config.set_application_protos(&[protocol::ALPN_PROTOCOL_VERSION])?;
-        config.set_max_idle_timeout(10_000);
         config.set_initial_max_data(65536);
         config.set_initial_max_stream_data_bidi_remote(65536);
         config.set_initial_max_stream_data_bidi_local(65536);
@@ -126,6 +125,11 @@ impl Server {
         config.set_initial_max_streams_uni(64);
         config.enable_dgram(true, 0, 1024 * 1024);
         config.enable_early_data();
+
+        // Set the idle timeout to 10s. If any streams are active, we send
+        // ack-eliciting frames so that we don't accidentally kill a client
+        // that's in the middle of something slow (like launching a session).
+        config.set_max_idle_timeout(10_000);
 
         // Storage for packets that would have blocked on sending.
         let outgoing_packets = VecDeque::new();
@@ -417,6 +421,13 @@ impl Server {
             for client in self.clients.values_mut() {
                 let span = trace_span!("gather_send", conn_id = ?client.conn_id);
                 let _guard = span.enter();
+
+                // Generate ack-eliciting keepalives for any clients with open
+                // streams. Clients with no open streams are allowed to time
+                // out.
+                if !client.in_flight.is_empty() {
+                    client.conn.send_ack_eliciting()?;
+                }
 
                 loop {
                     let start = off;
