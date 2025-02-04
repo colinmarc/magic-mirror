@@ -86,7 +86,7 @@ The following is required to run the server:
  - (For NVIDIA cards) [Vulkan drivers](https://developer.nvidia.com/vulkan-driver) version 550 or later
  - XWayland (for X11 apps)
 
-## Hardware/software encoding
+## Hardware encoding
 
 Magic Mirror uses hardware-based video compression codecs to stream the game over the wire.
 
