@@ -10,6 +10,7 @@ pub mod stream;
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time;
 
 use anyhow::anyhow;
 use anyhow::bail;
@@ -74,11 +75,15 @@ pub struct ClientConnection {
     conn: quiche::Connection,
     timer: mio_timerfd::TimerFd,
     timeout_token: mio::Token,
+
     partial_reads: BTreeMap<u64, BytesMut>,
     partial_writes: BTreeMap<u64, Bytes>,
     in_flight: BTreeMap<u64, StreamWorker>,
+
     dgram_recv: Receiver<Vec<u8>>,
     dgram_send: WakingSender<Vec<u8>>,
+
+    last_keepalive: time::Instant,
 }
 
 impl Server {
@@ -201,7 +206,10 @@ impl Server {
             // TODO: It might be worthwhile to switch to a busy loop if
             // there are any active sessions. That would mean handling quiche
             // timeouts in userspace.
-            let poll_res = trace_span!("poll").in_scope(|| self.poll.poll(&mut events, None));
+            let poll_res = trace_span!("poll").in_scope(|| {
+                self.poll
+                    .poll(&mut events, Some(time::Duration::from_secs(1)))
+            });
 
             match poll_res {
                 Ok(_) => (),
@@ -425,9 +433,7 @@ impl Server {
                 // Generate ack-eliciting keepalives for any clients with open
                 // streams. Clients with no open streams are allowed to time
                 // out.
-                if !client.in_flight.is_empty() {
-                    client.conn.send_ack_eliciting()?;
-                }
+                client.send_periodic_keepalive()?;
 
                 loop {
                     let start = off;
@@ -548,6 +554,8 @@ impl Server {
                     partial_writes: BTreeMap::new(),
                     dgram_recv,
                     dgram_send,
+
+                    last_keepalive: time::Instant::now(),
                 };
 
                 debug!("new client connection: {}", from);
@@ -870,6 +878,20 @@ impl ClientConnection {
             .stream_shutdown(sid, quiche::Shutdown::Read, code as u64);
 
         self.in_flight.remove(&sid);
+    }
+
+    fn send_periodic_keepalive(&mut self) -> quiche::Result<()> {
+        const KEEPALIVE_PERIOD: time::Duration = time::Duration::from_secs(1);
+
+        let now = time::Instant::now();
+        if self.in_flight.is_empty() || now.duration_since(self.last_keepalive) < KEEPALIVE_PERIOD {
+            return Ok(());
+        }
+
+        // Includes a PING in the next packet, but only if none of the frames
+        // in that packet are ack-eliciting.
+        self.last_keepalive = now;
+        self.conn.send_ack_eliciting()
     }
 }
 
