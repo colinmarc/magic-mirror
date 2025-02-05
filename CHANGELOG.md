@@ -1,3 +1,21 @@
+## [mmserver-v0.7.2] - 2025-02-05
+
+### New Features
+
+- Deprecate KeepAlive in favor of connection keepalives (ad3cdca8faf089b85902977e3e48b4a35d5f89e3)
+
+### Bugfixes
+
+- Remove noexec from /tmp in the container (0c534f6677e07cda77e0384854dded47dd8a949b)
+- Support resampling app audio output (897a053abc568255040a66c356703e3e6c3c9070)
+- Support downmixing by throwing away extra channels (17d81d866efc94ed2c2839589541362be3d5aae1)
+- Allow subtitles in application names (2fcac04765ce4af02923314667289ed88094f824)
+- Use aligned width and height for DPB images (d6f3bf713373bbadde0590f44659f8146e44c28d)
+- Relax the app startup timeout (a840c2b27b7adda073820a62d72fd64dc90e752b)
+- Use QUIC PING frames to keep clients alive (95ddb3d6bdc7e761ff596e249cc7be83b3d14cfb)
+- Don't flood the client with pings (b3b3194c042b8d56fda1f8b08f230042bf4461f7)
+- Turn down the heat on udevfs logging (53f448e45110ef722a60f927edd7c5fe58455a19)
+
 ## [mmserver-v0.7.1] - 2025-01-30
 
 ### New Features
