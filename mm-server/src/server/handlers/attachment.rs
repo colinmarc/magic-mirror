@@ -45,7 +45,6 @@ struct AttachmentHandler<'a> {
 
     last_video_frame_recvd: time::Instant,
     last_audio_frame_recvd: time::Instant,
-    keepalive_timer: crossbeam_channel::Receiver<time::Instant>,
 
     // For saving the bitstream to disk in bug reports.
     bug_report_dir: Option<PathBuf>,
@@ -59,9 +58,6 @@ enum AttachmentError {
     Finished,
     ServerError(ErrorCode, Option<String>),
 }
-
-/// How long to wait before kicking the client for inactivity.
-const KEEPALIVE_TIMEOUT: time::Duration = time::Duration::from_secs(30);
 
 pub fn attach(ctx: &super::Context, msg: protocol::Attach) -> Result<(), ServerError> {
     let session_id = msg.session_id;
@@ -182,7 +178,6 @@ impl<'a> AttachmentHandler<'a> {
 
         let pointer_lock = None;
 
-        let keepalive_timer = crossbeam_channel::after(KEEPALIVE_TIMEOUT);
         let now = time::Instant::now();
 
         Ok(Self {
@@ -197,7 +192,6 @@ impl<'a> AttachmentHandler<'a> {
 
             last_video_frame_recvd: now,
             last_audio_frame_recvd: now,
-            keepalive_timer,
 
             bug_report_dir,
             bug_report_files: BTreeMap::default(),
@@ -229,9 +223,6 @@ impl<'a> AttachmentHandler<'a> {
                 recv(self.ctx.incoming) -> msg => {
                     match msg {
                         Ok(m) => {
-                            // Reset timer.
-                            self.keepalive_timer = crossbeam_channel::after(KEEPALIVE_TIMEOUT);
-
                             match self.handle_attachment_message(m) {
                                 Ok(_) => (),
                                 Err(AttachmentError::Finished) => return Ok(()),
@@ -267,10 +258,6 @@ impl<'a> AttachmentHandler<'a> {
                         }
                     }
                 },
-                recv(self.keepalive_timer) -> _ => {
-                    debug!("client hung; ending attachment");
-                    return Ok(());
-                }
             }
         }
     }

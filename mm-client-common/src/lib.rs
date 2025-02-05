@@ -466,20 +466,9 @@ async fn spawn_conn(
     // Spawn a second thread to fulfill request/response futures and drive
     // the attachment delegates.
 
-    let outgoing_clone = outgoing_tx.clone();
-    let waker_clone = waker.clone();
     let _ = std::thread::Builder::new()
         .name("mmclient reactor".to_string())
-        .spawn(move || {
-            conn_reactor(
-                incoming_rx,
-                outgoing_clone,
-                waker_clone,
-                roundtrips_rx,
-                attachments_rx,
-                client,
-            )
-        })
+        .spawn(move || conn_reactor(incoming_rx, roundtrips_rx, attachments_rx, client))
         .unwrap();
 
     if ready_rx.await.is_err() {
@@ -509,8 +498,6 @@ struct InFlight {
 
 fn conn_reactor(
     incoming: flume::Receiver<conn::ConnEvent>,
-    outgoing: flume::Sender<conn::OutgoingMessage>,
-    conn_waker: Arc<mio::Waker>,
     roundtrips: flume::Receiver<(u64, Roundtrip)>,
     attachments: flume::Receiver<(u64, AttachmentState)>,
     client: Arc<AsyncMutex<InnerClient>>,
@@ -536,19 +523,6 @@ fn conn_reactor(
             for id in &timed_out {
                 let Roundtrip { tx, .. } = in_flight.roundtrips.remove(id).unwrap();
                 let _ = tx.send(Err(ClientError::RequestTimeout));
-            }
-
-            // Send keepalives.
-            if !in_flight.attachments.is_empty() {
-                for (sid, _) in in_flight.attachments.iter() {
-                    let _ = outgoing.send(conn::OutgoingMessage {
-                        sid: *sid,
-                        msg: protocol::KeepAlive {}.into(),
-                        fin: false,
-                    });
-                }
-
-                let _ = conn_waker.wake();
             }
         }
 
