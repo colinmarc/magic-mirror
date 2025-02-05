@@ -13,7 +13,7 @@ use std::{
 use fuser as fuse;
 use libc::EBADF;
 use parking_lot::Mutex;
-use tracing::{trace, warn};
+use tracing::{debug, trace};
 
 use super::DeviceState;
 
@@ -218,13 +218,13 @@ impl fuse::Filesystem for UdevFs {
         reply: fuse::ReplyEntry,
     ) {
         let Some(name) = name.to_str() else {
-            warn!(?name, "invalid lookup name");
+            debug!(?name, "invalid lookup name");
             return reply.error(ENOENT);
         };
 
         let inodes = &mut self.tree;
         let Some((parent_path, dev)) = inodes.lookup_name(parent) else {
-            warn!(?parent, ?name, "lookup failed");
+            debug!(?parent, ?name, "lookup failed");
             return reply.error(ENOENT);
         };
 
@@ -244,7 +244,7 @@ impl fuse::Filesystem for UdevFs {
                     .device_by_eventname(name)
                     .map(|dev| dev.id)
                 else {
-                    warn!(name, "device not found in /sys/class/input");
+                    debug!(name, "device not found in /sys/class/input");
                     return reply.error(ENOENT);
                 };
 
@@ -272,7 +272,7 @@ impl fuse::Filesystem for UdevFs {
             ),
             ("/sys/devices/virtual/input", name, _) => {
                 let Some(dev) = self.state.lock().device_by_devname(name).map(|dev| dev.id) else {
-                    warn!(name, "device not found in /sys/devices/virtual/input");
+                    debug!(name, "device not found in /sys/devices/virtual/input");
                     return reply.error(ENOENT);
                 };
 
@@ -285,7 +285,7 @@ impl fuse::Filesystem for UdevFs {
             (p, "uevent", Some(dev)) if p.starts_with("/sys/devices/virtual/input") => {
                 let guard = self.state.lock();
                 let Some(dev) = guard.device_by_id(dev) else {
-                    warn!(?p, dev, "device not found in /sys/devices/virtual/input");
+                    debug!(?p, dev, "device not found in /sys/devices/virtual/input");
                     return reply.error(ENOENT);
                 };
 
@@ -309,7 +309,7 @@ impl fuse::Filesystem for UdevFs {
                 {
                     make_evdev_uevent(dev)
                 } else {
-                    warn!(?parent_path, "unrecognized uevent path");
+                    debug!(?parent_path, "unrecognized uevent path");
                     return reply.error(ENOENT);
                 };
 
@@ -368,11 +368,11 @@ impl fuse::Filesystem for UdevFs {
                     }
                 }
 
-                warn!(?name, "no device found in /run/udev/data");
+                debug!(?name, "no device found in /run/udev/data");
                 reply.error(ENOENT);
             }
             (parent_name, name, dev) => {
-                warn!(parent_name, name, dev, "udevfs lookup failed");
+                debug!(parent_name, name, dev, "udevfs lookup failed");
                 reply.error(ENOENT);
             }
         }
@@ -386,7 +386,7 @@ impl fuse::Filesystem for UdevFs {
         reply: fuse::ReplyAttr,
     ) {
         let Some(entry) = self.tree.inodes.get(&ino) else {
-            warn!(ino, "lookup failed");
+            debug!(ino, "lookup failed");
             return reply.error(ENOENT);
         };
 
@@ -395,7 +395,7 @@ impl fuse::Filesystem for UdevFs {
 
     fn readlink(&mut self, _req: &fuse::Request<'_>, ino: u64, reply: fuse::ReplyData) {
         let Some(entry) = self.tree.inodes.get(&ino) else {
-            warn!(ino, "lookup failed");
+            debug!(ino, "lookup failed");
             return reply.error(ENOENT);
         };
 
@@ -403,7 +403,7 @@ impl fuse::Filesystem for UdevFs {
         if let Some(name) = matches_prefix_with_name(&entry.path, "/sys/class/input") {
             let guard = self.state.lock();
             let Some(dev) = guard.device_by_eventname(name) else {
-                warn!(eventname = ?name, "device not found in /sys/devices/virtual/input");
+                debug!(eventname = ?name, "device not found in /sys/devices/virtual/input");
                 return reply.error(ENOENT);
             };
 
@@ -416,7 +416,7 @@ impl fuse::Filesystem for UdevFs {
         {
             reply.data(b"/sys/class/input");
         } else {
-            warn!(path = ?entry.path, dev = ?entry.dev, "readlink failed");
+            debug!(path = ?entry.path, dev = ?entry.dev, "readlink failed");
             reply.error(ENOENT);
         }
     }
@@ -433,7 +433,7 @@ impl fuse::Filesystem for UdevFs {
         reply: fuse::ReplyData,
     ) {
         let Some(entry) = self.tree.inodes.get(&ino) else {
-            warn!(ino, "lookup failed");
+            debug!(ino, "lookup failed");
             return reply.error(EBADF);
         };
 
@@ -447,7 +447,7 @@ impl fuse::Filesystem for UdevFs {
         {
             let guard = self.state.lock();
             let Some(dev) = guard.device_by_id(entry.dev.unwrap()) else {
-                warn!(dev = ?entry.dev, "device lookup failed");
+                debug!(dev = ?entry.dev, "device lookup failed");
                 return reply.error(EBADF);
             };
 
@@ -459,11 +459,11 @@ impl fuse::Filesystem for UdevFs {
             } else if parent_path.file_name() == Some(&dev.devname) {
                 reply.data(&make_input_uevent(dev))
             } else {
-                warn!(?entry.path, "bad uevent path");
+                debug!(?entry.path, "bad uevent path");
                 reply.error(EBADF);
             }
         } else {
-            warn!(path = ?entry.path, dev = entry.dev, "read failed");
+            debug!(path = ?entry.path, dev = entry.dev, "read failed");
             reply.error(EBADF);
         }
     }
@@ -478,7 +478,7 @@ impl fuse::Filesystem for UdevFs {
     ) {
         let inodes = &mut self.tree;
         let Some(Entry { path, dev, .. }) = inodes.inodes.get(&ino).cloned() else {
-            warn!(ino, "lookup failed");
+            debug!(ino, "lookup failed");
             return reply.error(EBADF);
         };
 
@@ -549,7 +549,7 @@ impl fuse::Filesystem for UdevFs {
                 // Note: this seems not to happen.
             }
             _ => {
-                warn!(?path, ?dev, "readdir failed");
+                debug!(?path, ?dev, "readdir failed");
                 reply.error(ENOENT);
             }
         }
