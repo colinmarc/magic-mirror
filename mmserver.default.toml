@@ -139,6 +139,10 @@ video_fec_ratios = [0.15]
 ## If unset, defaults to `default_app_settings.force_1x_scale`.
 # force_1x_scale = false
 
+## How long to leave the session running without any client attached to it, in
+## seconds. Use the value `inf` to specify no timeout.
+# session_timeout = 600
+
 ## Isolate the home directory. If set, the application will see a clean,
 ## sandboxed `$HOME` (and `/home/$(whoami)`), rather than the system-wide one.
 ## This home directory is saved between runs of the app to
@@ -174,5 +178,6 @@ video_fec_ratios = [0.15]
 [default_app_settings]
 xwayland = true
 force_1x_scale = false
+session_timeout = 3600 # 1h
 isolate_home = true
 tmp_home = false

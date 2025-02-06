@@ -8,6 +8,7 @@ use std::{
     net::ToSocketAddrs,
     num::NonZeroU32,
     path::{Component, Path, PathBuf},
+    time,
 };
 
 use anyhow::{bail, Context};
@@ -34,12 +35,12 @@ mod parsed {
     use serde::Deserialize;
 
     #[derive(Debug, Clone, PartialEq)]
-    pub(super) enum MaxConnections {
+    pub(super) enum NonZeroOrInf {
         Value(NonZeroU32),
         Infinity,
     }
 
-    impl<'de> Deserialize<'de> for MaxConnections {
+    impl<'de> Deserialize<'de> for NonZeroOrInf {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
             D: serde::Deserializer<'de>,
@@ -52,10 +53,10 @@ mod parsed {
             }
 
             match Deserialize::deserialize(deserializer)? {
-                Variant::Value(n) => Ok(MaxConnections::Value(n)),
+                Variant::Value(n) => Ok(NonZeroOrInf::Value(n)),
                 Variant::Infinity(f) => {
                     if f.is_infinite() {
-                        Ok(MaxConnections::Infinity)
+                        Ok(NonZeroOrInf::Infinity)
                     } else {
                         Err(serde::de::Error::invalid_value(
                             serde::de::Unexpected::Float(f),
@@ -88,7 +89,7 @@ mod parsed {
         pub(super) tls_cert: Option<PathBuf>,
         pub(super) tls_key: Option<PathBuf>,
         pub(super) worker_threads: Option<NonZeroU32>,
-        pub(super) max_connections: Option<MaxConnections>,
+        pub(super) max_connections: Option<NonZeroOrInf>,
         pub(super) mdns: Option<bool>,
         pub(super) mdns_hostname: Option<String>,
         pub(super) mdns_instance_name: Option<String>,
@@ -100,6 +101,7 @@ mod parsed {
     pub(super) struct DefaultAppSettings {
         pub(super) xwayland: Option<bool>,
         pub(super) force_1x_scale: Option<bool>,
+        pub(super) session_timeout: Option<NonZeroOrInf>,
         pub(super) isolate_home: Option<bool>,
         pub(super) tmp_home: Option<bool>,
     }
@@ -114,6 +116,7 @@ mod parsed {
         pub(super) environment: Option<BTreeMap<String, String>>,
         pub(super) xwayland: Option<bool>,
         pub(super) force_1x_scale: Option<bool>,
+        pub(super) session_timeout: Option<NonZeroOrInf>,
         pub(super) isolate_home: Option<bool>,
         pub(super) shared_home_name: Option<String>,
         pub(super) tmp_home: Option<bool>,
@@ -152,6 +155,7 @@ pub struct AppConfig {
     pub env: BTreeMap<OsString, OsString>,
     pub xwayland: bool,
     pub force_1x_scale: bool,
+    pub session_timeout: Option<time::Duration>,
     pub home_isolation_mode: HomeIsolationMode,
 }
 
@@ -230,8 +234,8 @@ impl Config {
                 tls_key: server.tls_key,
                 worker_threads: server.worker_threads.unwrap(),
                 max_connections: match server.max_connections.unwrap() {
-                    parsed::MaxConnections::Value(n) => Some(n),
-                    parsed::MaxConnections::Infinity => None,
+                    parsed::NonZeroOrInf::Value(n) => Some(n),
+                    parsed::NonZeroOrInf::Infinity => None,
                 },
                 mdns: server.mdns.unwrap(),
                 mdns_hostname: server.mdns_hostname,
@@ -413,6 +417,15 @@ fn validate_app(
         }
     }
 
+    let session_timeout = match app
+        .session_timeout
+        .or(defaults.session_timeout.clone())
+        .unwrap()
+    {
+        parsed::NonZeroOrInf::Value(v) => Some(time::Duration::from_secs(v.get() as u64)),
+        parsed::NonZeroOrInf::Infinity => None,
+    };
+
     let isolate_home = app.isolate_home.or(defaults.isolate_home).unwrap();
     let tmp_home = app.tmp_home.or(defaults.tmp_home).unwrap();
     let home_isolation_mode = match (isolate_home, tmp_home) {
@@ -445,6 +458,7 @@ fn validate_app(
             .collect(),
         xwayland: app.xwayland.or(defaults.xwayland).unwrap(),
         force_1x_scale: app.force_1x_scale.or(defaults.force_1x_scale).unwrap(),
+        session_timeout,
         home_isolation_mode,
     })
 }
@@ -497,6 +511,7 @@ mod test {
             env: Default::default(),
             xwayland: true,
             force_1x_scale: false,
+            session_timeout: Some(time::Duration::from_secs(3600)),
             home_isolation_mode: HomeIsolationMode::Unisolated,
         };
     }

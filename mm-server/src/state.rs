@@ -13,8 +13,6 @@ use crate::{session::Session, vulkan::VkContext};
 
 pub type SharedState = Arc<Mutex<ServerState>>;
 
-const DEFAULT_SESSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
-
 pub struct ServerState {
     // TODO: we'd rather use a BTreeMap, but we want
     // hash_brown::HashMap::extract_if.
@@ -49,11 +47,13 @@ impl ServerState {
             .extract_if(|_, s| {
                 if s.defunct {
                     info!("cleaning up defunct session {}", s.id);
-                    true
-                } else if s
-                    .detached_since
-                    .map(|d| d.elapsed() > DEFAULT_SESSION_TIMEOUT)
-                    .unwrap_or(false)
+                    return true;
+                }
+
+                let session_timeout = self.cfg.apps[&s.application_id].session_timeout;
+                if s.detached_since
+                    .zip(session_timeout)
+                    .is_some_and(|(t, timeout)| t.elapsed() > timeout)
                 {
                     info!("cleaning up idle session {}", s.id);
                     true
