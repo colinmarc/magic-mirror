@@ -255,7 +255,8 @@ impl Reactor {
         if let Some(bug_report_dir) = bug_report_dir.as_ref() {
             let p = bug_report_dir.to_owned();
             let wayland_socket = socket_name.clone();
-            let x11_socket = xwayland.as_ref().map(|x| x.display_socket.clone());
+            let x11_socket = xwayland.as_ref().map(|x| x.display_socket.path().clone());
+
             std::thread::spawn(move || {
                 save_glxinfo_eglinfo(
                     &p,
