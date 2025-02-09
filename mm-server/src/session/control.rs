@@ -47,7 +47,7 @@ pub enum ControlMessage {
         ready: oneshot::Sender<()>,
     },
     Detach(u64),
-    RequestVideoRefresh(u64),
+    RefreshVideo,
     UpdateDisplayParams(DisplayParams),
     KeyboardInput {
         key_code: u32,

@@ -47,7 +47,6 @@ pub struct EncodePipeline {
     server_close_tx: WakingSender<()>,
 
     compositor: SessionHandle,
-    stream_seq: u64,
 
     encoder: Option<Encoder>,
     done_tx: crossbeam::Sender<EncodeFrame>,
@@ -81,7 +80,6 @@ impl EncodePipeline {
             server_close_tx: close_tx,
 
             compositor,
-            stream_seq: 1,
 
             encoder: None,
             done_tx,
@@ -106,9 +104,6 @@ impl EncodePipeline {
         let done_tx = self.done_tx.clone();
         let unencoded_rx = self.unencoded_rx.clone();
 
-        let stream_seq = self.stream_seq;
-        self.stream_seq += 1;
-
         let (close_tx, close_rx) = crossbeam::unbounded();
 
         let ch = match params.channels {
@@ -127,8 +122,9 @@ impl EncodePipeline {
                 // Lock the receiver until the encoder thread exits.
                 let unencoded_rx = unencoded_rx.lock();
 
+                let mut signal_restart = true;
+
                 let mut buf = BytesMut::new();
-                let mut seq = 0;
 
                 let mut in_flight = 3;
                 for _ in 0..in_flight {
@@ -158,13 +154,11 @@ impl EncodePipeline {
 
                     let len = encoder.encode_float(&frame.buf, &mut buf)?;
                     compositor.dispatch_audio_frame(
-                        stream_seq,
-                        seq,
                         frame.capture_ts,
                         buf.split_to(len).freeze(),
+                        signal_restart,
                     );
-
-                    seq += 1;
+                    signal_restart = false;
 
                     if !closing {
                         match done_tx.send(frame) {

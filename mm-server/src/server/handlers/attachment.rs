@@ -45,6 +45,7 @@ struct AttachmentHandler<'a> {
 
     last_video_frame_recvd: time::Instant,
     last_audio_frame_recvd: time::Instant,
+    current_video_stream_seq: u64,
 
     // For saving the bitstream to disk in bug reports.
     bug_report_dir: Option<PathBuf>,
@@ -192,6 +193,7 @@ impl<'a> AttachmentHandler<'a> {
 
             last_video_frame_recvd: now,
             last_audio_frame_recvd: now,
+            current_video_stream_seq: 0,
 
             bug_report_dir,
             bug_report_files: BTreeMap::default(),
@@ -270,10 +272,15 @@ impl<'a> AttachmentHandler<'a> {
             protocol::MessageType::KeepAlive(_) => {}
             protocol::MessageType::Detach(_) => return Err(AttachmentError::Finished),
             protocol::MessageType::RequestVideoRefresh(ev) => {
-                self.handle
-                    .control
-                    .send(ControlMessage::RequestVideoRefresh(ev.stream_seq))
-                    .ok();
+                if ev.stream_seq == self.current_video_stream_seq {
+                    let _ = self.handle.control.send(ControlMessage::RefreshVideo);
+                } else {
+                    debug!(
+                        current = self.current_video_stream_seq,
+                        requested = ev.stream_seq,
+                        "ignoring RequestVideoRefresh"
+                    );
+                }
             }
             protocol::MessageType::KeyboardInput(ev) => {
                 use protocol::keyboard_input::KeyState;
@@ -559,6 +566,8 @@ impl<'a> AttachmentHandler<'a> {
                 frame,
                 ..
             } => {
+                self.current_video_stream_seq = self.current_video_stream_seq.max(stream_seq);
+
                 let duration = self.last_video_frame_recvd.elapsed();
                 if duration
                     > time::Duration::from_secs_f32(

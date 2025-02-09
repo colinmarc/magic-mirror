@@ -23,21 +23,7 @@ use crate::{
     vulkan::*,
 };
 
-struct Sink {
-    compositor: SessionHandle,
-    stream_seq: u64,
-    seq: u64,
-}
-
-impl Sink {
-    fn new(compositor: SessionHandle, stream_seq: u64) -> Self {
-        Self {
-            compositor,
-            stream_seq,
-            seq: 0,
-        }
-    }
-}
+struct Sink(SessionHandle);
 
 impl encoder::Sink for Sink {
     fn write_frame(
@@ -45,20 +31,15 @@ impl encoder::Sink for Sink {
         ts: std::time::Instant,
         frame: bytes::Bytes,
         hierarchical_layer: u32,
+        is_keyframe: bool,
     ) {
         let pts = (ts - *EPOCH).as_millis() as u64;
-        self.compositor.dispatch_video_frame(
-            self.stream_seq,
-            self.seq,
-            pts,
-            frame,
-            hierarchical_layer,
-        );
+        self.0
+            .dispatch_video_frame(pts, frame, hierarchical_layer, is_keyframe);
 
         // Wake the compositor, so it can release buffers and send presentation
         // feedback.
-        let _ = self.compositor.wake();
-        self.seq += 1;
+        let _ = self.0.wake();
     }
 }
 
@@ -113,7 +94,6 @@ impl EncodePipeline {
     #[instrument(level = "trace", skip_all)]
     pub fn new(
         vk: Arc<VkContext>,
-        stream_seq: u64,
         compositor_handle: SessionHandle,
         display_params: DisplayParams,
         streaming_params: VideoStreamParams,
@@ -131,7 +111,7 @@ impl EncodePipeline {
             unimplemented!()
         }
 
-        let sink = Sink::new(compositor_handle, stream_seq);
+        let sink = Sink(compositor_handle);
         let mut encoder =
             encoder::Encoder::new(vk.clone(), streaming_params, display_params.framerate, sink)?;
 

@@ -65,7 +65,6 @@ pub struct Reactor {
     audio_pipeline: audio::EncodePipeline,
     video_pipeline: Option<video::EncodePipeline>,
     new_video_stream_params: Option<VideoStreamParams>,
-    video_stream_seq: u64,
 
     input_manager: input::InputDeviceManager,
     gamepads: BTreeMap<u64, input::GamepadHandle>,
@@ -300,7 +299,6 @@ impl Reactor {
             audio_pipeline,
             video_pipeline: None,
             new_video_stream_params: None,
-            video_stream_seq: 0,
 
             input_manager,
             gamepads,
@@ -611,10 +609,8 @@ impl Reactor {
         }
 
         if let Some(params) = self.new_video_stream_params.take() {
-            self.video_stream_seq += 1;
             self.video_pipeline = Some(video::EncodePipeline::new(
                 self.vk.clone(),
-                self.video_stream_seq,
                 self.session_handle.clone(),
                 self.display_params,
                 params,
@@ -690,17 +686,9 @@ impl Reactor {
                     self.compositor.update_focus_and_visibility(false)?;
                 }
             }
-            ControlMessage::RequestVideoRefresh(stream_seq) => {
+            ControlMessage::RefreshVideo => {
                 if let Some(video) = &mut self.video_pipeline {
-                    if self.video_stream_seq == stream_seq {
-                        video.request_refresh();
-                    } else {
-                        debug!(
-                            requested_stream_seq = stream_seq,
-                            current_stream_seq = self.video_stream_seq,
-                            "ignoring refresh request"
-                        );
-                    }
+                    video.request_refresh();
                 }
             }
             ControlMessage::UpdateDisplayParams(params) => {

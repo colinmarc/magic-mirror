@@ -5,7 +5,7 @@
 use bytes::Bytes;
 use either::Either;
 use mm_protocol as protocol;
-use tracing::{error, instrument, trace_span};
+use tracing::{debug, error, instrument, trace_span};
 
 use crate::{config, waking_sender::WakingSender};
 
@@ -19,6 +19,12 @@ pub struct StreamWriter {
     chunk_size: usize,
     max_dgram_len: usize,
     fec_ratios: Vec<f32>,
+
+    audio_stream_seq: u64,
+    audio_seq: u64,
+
+    video_stream_seq: u64,
+    video_seq: u64,
 }
 
 impl StreamWriter {
@@ -45,18 +51,34 @@ impl StreamWriter {
             chunk_size,
             max_dgram_len,
             fec_ratios: config.video_fec_ratios.clone(),
+
+            // The first stream_seq is 1, but we increment immediately below.
+            audio_stream_seq: 0,
+            video_stream_seq: 0,
+            audio_seq: 0,
+            video_seq: 0,
         }
     }
 
     #[instrument(skip_all)]
     pub fn write_video_frame(
-        &self,
-        stream_seq: u64,
-        seq: u64,
+        &mut self,
         pts: u64,
         frame: Bytes,
         hierachical_layer: u32,
-    ) {
+        stream_restart: bool,
+    ) -> (u64, u64) {
+        if stream_restart {
+            self.video_stream_seq += 1;
+            self.video_seq = 0;
+
+            debug!(
+                stream_seq = self.video_stream_seq,
+                "starting or restarting video stream"
+            );
+        }
+
+        let seq = self.video_seq;
         let optional = hierachical_layer != 0;
         let fec_ratio = self
             .fec_ratios
@@ -69,7 +91,7 @@ impl StreamWriter {
                 session_id: self.session_id,
                 attachment_id: self.attachment_id,
 
-                stream_seq,
+                stream_seq: self.video_stream_seq,
                 seq,
                 data: chunk.data,
                 chunk: chunk.index,
@@ -98,16 +120,34 @@ impl StreamWriter {
                 }
             };
         }
+
+        self.video_seq += 1;
+        (self.video_stream_seq, seq)
     }
 
     #[instrument(skip_all)]
-    pub fn write_audio_frame(&self, stream_seq: u64, seq: u64, pts: u64, frame: Bytes) {
+    pub fn write_audio_frame(
+        &mut self,
+        pts: u64,
+        frame: Bytes,
+        stream_restart: bool,
+    ) -> (u64, u64) {
+        if stream_restart {
+            self.audio_stream_seq += 1;
+            self.audio_seq = 0;
+            debug!(
+                stream_seq = self.audio_stream_seq,
+                "starting or restarting audio stream"
+            );
+        }
+
+        let seq = self.audio_seq;
         for chunk in iter_chunks(frame, self.chunk_size, 0.0) {
             let msg = protocol::AudioChunk {
                 session_id: self.session_id,
                 attachment_id: self.attachment_id,
 
-                stream_seq,
+                stream_seq: self.audio_stream_seq,
                 seq,
                 data: chunk.data,
                 chunk: chunk.index,
@@ -135,6 +175,9 @@ impl StreamWriter {
                 }
             };
         }
+
+        self.audio_seq += 1;
+        (self.audio_stream_seq, seq)
     }
 }
 

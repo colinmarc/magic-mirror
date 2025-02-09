@@ -91,7 +91,7 @@ struct EncoderInner {
     session_params: vk::VideoSessionParametersKHR,
 
     writer_thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
-    submitted_frames: Option<crossbeam::Sender<WriterInput>>,
+    submitted_frames: Option<crossbeam::Sender<EncoderOutputFrame>>,
     done_frames: crossbeam::Receiver<EncoderOutputFrame>,
 
     dpb: dpb::DpbPool,
@@ -677,14 +677,10 @@ impl EncoderInner {
         if let Some(submitted_frames) = &self.submitted_frames {
             // Tell the other thread to copy out the finished packet when it's
             // finished. Optionally insert headers.
-            if let Some(buf) = insert {
-                submitted_frames
-                    .send(WriterInput::InsertBytes(buf))
-                    .map_err(|_| anyhow::anyhow!("writer thread died"))?;
-            }
+            frame.headers = insert;
 
             submitted_frames
-                .send(WriterInput::SubmittedFrame(frame))
+                .send(frame)
                 .map_err(|_| anyhow::anyhow!("writer thread died"))?;
         }
 
@@ -736,6 +732,7 @@ struct EncoderOutputFrame {
 
     hierarchical_layer: u32,
     is_keyframe: bool,
+    headers: Option<bytes::Bytes>,
 
     timeline: VkTimelineSemaphore,
     tp_encoded: VkTimelinePoint,
@@ -841,6 +838,7 @@ impl EncoderOutputFrame {
 
             hierarchical_layer: 0,
             is_keyframe: false,
+            headers: None,
 
             tp_encoded: timeline.new_point(0),
             tp_copied: timeline.new_point(0),
@@ -881,13 +879,13 @@ unsafe impl Send for EncoderOutputFrame {}
 
 /// Allows the caller to decide where to sink the frames.
 pub trait Sink: Send + 'static {
-    fn write_frame(&mut self, ts: time::Instant, frame: Bytes, hierarchical_layer: u32);
-}
-
-/// Allows us to intersperse arbitrary headers or other data into the bitstream.
-enum WriterInput {
-    InsertBytes(Bytes),
-    SubmittedFrame(EncoderOutputFrame),
+    fn write_frame(
+        &mut self,
+        ts: time::Instant,
+        frame: Bytes,
+        hierarchical_layer: u32,
+        is_keyframe: bool,
+    );
 }
 
 #[repr(C)]
@@ -903,7 +901,7 @@ struct QueryResults {
 /// back and forth with the main thread.
 fn writer_thread(
     vk: Arc<VkContext>,
-    input: crossbeam::Receiver<WriterInput>,
+    input: crossbeam::Receiver<EncoderOutputFrame>,
     done: crossbeam::Sender<EncoderOutputFrame>,
     mut sink: impl Sink,
     stats: stats::EncodeStats,
@@ -912,16 +910,7 @@ fn writer_thread(
 
     let mut capture_ts = time::Instant::now();
 
-    for frame in input {
-        #[allow(unused_mut)]
-        let mut frame = match frame {
-            WriterInput::InsertBytes(header) => {
-                sink.write_frame(time::Instant::now(), header, 0);
-                continue;
-            }
-            WriterInput::SubmittedFrame(frame) => frame,
-        };
-
+    for mut frame in input {
         let dur = capture_ts.elapsed();
         capture_ts = time::Instant::now();
 
@@ -967,7 +956,7 @@ fn writer_thread(
             results[0].size as usize,
         );
 
-        let packet = unsafe {
+        let data = unsafe {
             let ptr = frame.copy_buffer.access as *const u8;
             std::slice::from_raw_parts(
                 ptr.add(results[0].offset as usize),
@@ -975,12 +964,25 @@ fn writer_thread(
             )
         };
 
-        let data = Bytes::copy_from_slice(packet);
+        // Prepend any headers.
+        let data = if let Some(headers) = frame.headers.take() {
+            let mut buf = bytes::BytesMut::from(headers);
+            buf.extend_from_slice(data);
+            buf.freeze()
+        } else {
+            Bytes::copy_from_slice(data)
+        };
+
         unsafe {
             frame.tp_copied.signal()?;
         }
 
-        sink.write_frame(capture_ts, data, frame.hierarchical_layer);
+        sink.write_frame(
+            capture_ts,
+            data,
+            frame.hierarchical_layer,
+            frame.is_keyframe,
+        );
         done.send(frame).ok();
     }
 
