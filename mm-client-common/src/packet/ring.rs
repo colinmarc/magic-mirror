@@ -217,6 +217,7 @@ impl WipPacket {
             pts: self.pts,
             seq: self.seq,
             stream_seq: self.stream_seq,
+            hierarchical_layer: self.hierarchical_layer,
             data,
         }
     }

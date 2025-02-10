@@ -12,6 +12,7 @@ pub struct Packet {
     pub(crate) pts: u64,
     pub(crate) seq: u64,
     pub(crate) stream_seq: u64,
+    pub(crate) hierarchical_layer: u32,
     data: VecDeque<bytes::Bytes>,
 }
 
@@ -35,6 +36,10 @@ impl Packet {
 
     pub fn seq(&self) -> u64 {
         self.seq
+    }
+
+    pub fn hierarchical_layer(&self) -> u32 {
+        self.hierarchical_layer
     }
 
     pub fn data(&self) -> Vec<u8> {
