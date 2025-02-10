@@ -267,7 +267,7 @@ mod tests {
         num_chunks: 4,
         data: bytes::Bytes::from(vec![9; 1200]),
         timestamp: 1234,
-        frame_optional: false,
+        hierarchical_layer: 0,
         ..Default::default()
     });
 
