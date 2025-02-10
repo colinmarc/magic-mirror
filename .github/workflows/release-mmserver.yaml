@@ -29,7 +29,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           target: linux-x86_64
-          version: v2024.14.5
+          version: v2025.5
 
       - uses: swatinem/rust-cache@v2
         with:
