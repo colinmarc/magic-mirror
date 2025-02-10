@@ -1175,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "mm-protocol"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "octets 0.2.0",

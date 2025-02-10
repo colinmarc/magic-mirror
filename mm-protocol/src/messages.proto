@@ -6,7 +6,7 @@ syntax = "proto3";
 
 package messages;
 
-// # The Magic Mirror Streaming Protocol (MMSP) version 0.2.2
+// # The Magic Mirror Streaming Protocol (MMSP) version 0.3.0
 //
 // This document describes a protocol for remote application streaming. Using
 // this protocol, a client can remotely launch and/or attach an application on a
