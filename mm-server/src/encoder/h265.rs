@@ -624,7 +624,7 @@ impl H265Encoder {
         let mut setup_info =
             vk::VideoEncodeH265DpbSlotInfoEXT::default().std_reference_info(&setup_std_ref_info);
 
-        let insert = if frame_state.stream_position == 0 {
+        let insert = if frame_state.is_keyframe {
             Some(self.headers.clone())
         } else {
             None
