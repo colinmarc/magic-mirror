@@ -57,8 +57,8 @@ impl std::fmt::Debug for AttachmentEvent {
             AttachmentEvent::DroppedVideoPacket(dropped) => {
                 write!(
                     f,
-                    "DroppedVideoPacket({}, {}, optional={})",
-                    dropped.stream_seq, dropped.seq, dropped.optional
+                    "DroppedVideoPacket({}, {}, layer={})",
+                    dropped.stream_seq, dropped.seq, dropped.hierarchical_layer
                 )
             }
             AttachmentEvent::AudioStreamStart(stream_seq, _) => {

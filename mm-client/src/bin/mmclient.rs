@@ -527,7 +527,7 @@ impl AttachmentWindow {
                 }
                 DroppedVideoPacket(dropped) => {
                     // Only request a keyframe once every ten seconds.
-                    if !dropped.optional {
+                    if dropped.hierarchical_layer == 0 {
                         self.needs_refresh = Some(dropped.stream_seq);
                     }
                 }

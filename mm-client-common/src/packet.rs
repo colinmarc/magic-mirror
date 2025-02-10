@@ -20,10 +20,7 @@ pub struct DroppedPacket {
     pub pts: u64,
     pub seq: u64,
     pub stream_seq: u64,
-
-    /// An optional packet can be dropped without affecting the decoder's
-    /// ability to continue.
-    pub optional: bool,
+    pub hierarchical_layer: u32,
 }
 
 #[uniffi::export]

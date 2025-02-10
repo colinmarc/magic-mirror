@@ -18,7 +18,7 @@ pub(crate) trait Chunk {
     fn num_chunks(&self) -> u32;
     fn data(&self) -> bytes::Bytes;
     fn pts(&self) -> u64;
-    fn frame_optional(&self) -> bool;
+    fn hierarchical_layer(&self) -> u32;
     fn fec_metadata(&self) -> Option<protocol::FecMetadata>;
 }
 
@@ -47,8 +47,8 @@ impl Chunk for protocol::VideoChunk {
         self.timestamp
     }
 
-    fn frame_optional(&self) -> bool {
-        self.frame_optional
+    fn hierarchical_layer(&self) -> u32 {
+        self.hierarchical_layer
     }
 
     fn fec_metadata(&self) -> Option<mm_protocol::FecMetadata> {
@@ -81,8 +81,8 @@ impl Chunk for protocol::AudioChunk {
         self.timestamp
     }
 
-    fn frame_optional(&self) -> bool {
-        false
+    fn hierarchical_layer(&self) -> u32 {
+        0
     }
 
     fn fec_metadata(&self) -> Option<mm_protocol::FecMetadata> {
@@ -104,7 +104,7 @@ struct WipPacket {
     stream_seq: u64,
     seq: u64,
     pts: u64,
-    frame_optional: bool,
+    hierarchical_layer: u32,
     decoder: FECDecoder,
 }
 
@@ -135,7 +135,7 @@ impl WipPacket {
             stream_seq: incoming.stream_seq(),
             seq: incoming.seq(),
             pts: incoming.pts(),
-            frame_optional: incoming.frame_optional(),
+            hierarchical_layer: incoming.hierarchical_layer(),
             decoder,
         };
 
@@ -291,7 +291,7 @@ impl PacketRing {
                         warn!(
                             seq = dropped.seq,
                             stream_seq = dropped.stream_seq,
-                            frame_optional = dropped.frame_optional,
+                            hierarchical_layer = dropped.hierarchical_layer,
                             "dropped packet!",
                         );
 
@@ -299,7 +299,7 @@ impl PacketRing {
                             pts: dropped.pts,
                             seq: dropped.seq,
                             stream_seq: dropped.stream_seq,
-                            optional: dropped.frame_optional,
+                            hierarchical_layer: dropped.hierarchical_layer,
                         })
                     } else {
                         break;
@@ -466,7 +466,7 @@ mod tests {
                 num_chunks: chunks.len() as u32,
                 data: bytes::Bytes::copy_from_slice(chunk),
                 timestamp: 0,
-                frame_optional: false,
+                hierarchical_layer: 0,
                 fec_metadata: None,
             })
             .collect()

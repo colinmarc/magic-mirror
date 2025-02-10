@@ -65,7 +65,7 @@ impl StreamWriter {
         &mut self,
         pts: u64,
         frame: Bytes,
-        hierachical_layer: u32,
+        hierarchical_layer: u32,
         stream_restart: bool,
     ) -> (u64, u64) {
         if stream_restart {
@@ -79,10 +79,9 @@ impl StreamWriter {
         }
 
         let seq = self.video_seq;
-        let optional = hierachical_layer != 0;
         let fec_ratio = self
             .fec_ratios
-            .get(hierachical_layer as usize)
+            .get(hierarchical_layer as usize)
             .copied()
             .unwrap_or_default();
 
@@ -96,7 +95,7 @@ impl StreamWriter {
                 data: chunk.data,
                 chunk: chunk.index,
                 num_chunks: chunk.num_chunks,
-                frame_optional: optional,
+                hierarchical_layer,
                 timestamp: pts,
 
                 fec_metadata: chunk.fec_metadata,

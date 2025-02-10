@@ -731,15 +731,13 @@ message VideoChunk {
   // Required unless an FEC scheme is used. Taken together, these represent the
   // placement of a chunk within a packet.
   //
-  // If an `fec_metadata` is set, both these fields must be unset.
+  // If `fec_metadata` is set, both these fields must be unset.
   uint32 chunk = 12;
   uint32 num_chunks = 13;
 
-  // If set, the frame represented by this chunk can be discarded without
-  // harming the decoder's ability to continue decoding the stream. This can be
-  // true if, for example, the encoder is using temporal scaling and this frame
-  // belongs to a higher temporal layer.
-  bool frame_optional = 14;
+  // If the encoder is using hierarchical coding (sometimes called SVC), this
+  // field indicates the layer that the packet belongs to.
+  uint32 hierarchical_layer  = 16;
 
   // Contains FEC metadata to locate the chunk within the overall packet.
   FECMetadata fec_metadata = 15;
@@ -782,7 +780,7 @@ message AudioChunk {
   // Required unless an FEC scheme is used. Taken together, these represent the
   // placement of a chunk within a packet.
   //
-  // If an `fec_metadata` is set, both these fields must be unset.
+  // If `fec_metadata` is set, both these fields must be unset.
   uint32 chunk = 12;
   uint32 num_chunks = 13;
 
