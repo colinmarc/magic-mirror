@@ -1,3 +1,16 @@
+## [mmclient-v0.7.0] - 2025-02-12
+
+### New Features
+
+- Deprecate KeepAlive in favor of connection keepalives (ad3cdca8faf089b85902977e3e48b4a35d5f89e3)
+- Send hierarchical_layer as video frame metadata (ddbe84346fa03f55ebed7289b005b2e36ec23d36)
+- Expose hierarchical_layer (b4bd4c66b62439c71c6a3ed52c26046b3a2f0b6f)
+- Allow clients to configure their connection timeout (452ef70eb118280df9170bed382b8539813e7802)
+
+### Bugfixes
+
+- Remove a useless warning (c98bbe5382914dec22c92f4f160b2f276fb811ef)
+
 ## [mmserver-v0.8.0] - 2025-02-12
 
 ### New Features
