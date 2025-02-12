@@ -218,6 +218,17 @@ fn preflight_checks(cfg: &config::Config, vk: &vulkan::VkContext) -> anyhow::Res
         );
     }
 
+    // Check for Ubuntu's restrictions on rootless containers.
+    if sysctl("apparmor_restrict_unprivileged_unconfined")
+        || sysctl("apparmor_restrict_unprivileged_userns")
+    {
+        warn!(
+            "Unprivileged user namespaces restricted by AppArmor! Launching applications will \
+             fail unless an exception is installed. Read more here: \
+             https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces"
+        )
+    }
+
     Ok(())
 }
 
@@ -231,6 +242,15 @@ fn linux_version() -> Option<(u32, u32)> {
     let minor = parts.next()?;
 
     Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+fn sysctl(name: &str) -> bool {
+    const CTL_PATH: &str = "/proc/sys/kernel";
+
+    std::fs::read_to_string(Path::new(CTL_PATH).join(name))
+        .map(|s| s.trim() == "1")
+        .ok()
+        .unwrap_or_default()
 }
 
 fn save_vulkaninfo(bug_report_dir: impl AsRef<Path>) {
