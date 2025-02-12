@@ -10,8 +10,6 @@ const MAX_QUIC_PACKET_SIZE: usize = 1350;
 const SOCKET: mio::Token = mio::Token(0);
 const WAKER: mio::Token = mio::Token(1);
 
-const CONNECT_TIMEOUT: time::Duration = time::Duration::from_secs(5);
-
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -170,7 +168,7 @@ impl Conn {
         self.waker.clone()
     }
 
-    pub fn run(&mut self) -> Result<(), ConnError> {
+    pub fn run(&mut self, connect_timeout: time::Duration) -> Result<(), ConnError> {
         let mut events = mio::Events::with_capacity(1024);
         let start = time::Instant::now();
 
@@ -206,7 +204,7 @@ impl Conn {
                 if self.conn.is_established() || self.conn.is_in_early_data() {
                     trace!("connection ready");
                     let _ = self.ready.take().unwrap().send(Ok(()));
-                } else if start.elapsed() > CONNECT_TIMEOUT {
+                } else if start.elapsed() > connect_timeout {
                     let _ = self.ready.take().unwrap().send(Err(ConnError::Timeout));
                 }
             }

@@ -113,7 +113,7 @@ fn main() -> anyhow::Result<()> {
     let event_loop: EventLoop<AppEvent> = EventLoop::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
-    let client = client::Client::new(&args.host, "latency-test")
+    let client = client::Client::new(&args.host, "latency-test", time::Duration::from_secs(1))
         .block_on()
         .context("failed to connect")?;
 

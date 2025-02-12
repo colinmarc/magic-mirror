@@ -145,6 +145,7 @@ impl InnerClient {
 pub struct Client {
     name: String,
     addr: String,
+    connect_timeout: time::Duration,
     inner: Arc<AsyncMutex<InnerClient>>,
     stats: Arc<stats::StatsCollector>,
 }
@@ -158,7 +159,14 @@ impl Client {
             ClientState::Connected(_) => (),
             ClientState::Defunct(ClientError::ConnectionError(conn::ConnError::Idle)) => {
                 // Reconnect after an idle timeout.
-                let conn = match spawn_conn(&self.addr, inner_clone, self.stats.clone()).await {
+                let conn = match spawn_conn(
+                    &self.addr,
+                    inner_clone,
+                    self.stats.clone(),
+                    self.connect_timeout,
+                )
+                .await
+                {
                     Ok(conn) => conn,
                     Err(e) => {
                         error!("connection failed: {e:#}");
@@ -253,19 +261,24 @@ impl Client {
 #[uniffi::export]
 impl Client {
     #[uniffi::constructor]
-    pub async fn new(addr: &str, client_name: &str) -> Result<Self, ClientError> {
+    pub async fn new(
+        addr: &str,
+        client_name: &str,
+        connect_timeout: time::Duration,
+    ) -> Result<Self, ClientError> {
         let inner = Arc::new(AsyncMutex::new(InnerClient {
             next_stream_id: 0,
             state: ClientState::Defunct(ClientError::Defunct),
         }));
 
         let stats = Arc::new(stats::StatsCollector::default());
-        let conn = spawn_conn(addr, inner.clone(), stats.clone()).await?;
+        let conn = spawn_conn(addr, inner.clone(), stats.clone(), connect_timeout).await?;
         inner.lock().await.state = ClientState::Connected(conn);
 
         Ok(Self {
             name: client_name.to_owned(),
             addr: addr.to_owned(),
+            connect_timeout,
             inner,
             stats,
         })
@@ -444,6 +457,7 @@ async fn spawn_conn(
     addr: &str,
     client: Arc<AsyncMutex<InnerClient>>,
     stats: Arc<stats::StatsCollector>,
+    connect_timeout: time::Duration,
 ) -> Result<ConnHandle, ClientError> {
     let (incoming_tx, incoming_rx) = flume::unbounded();
     let (outgoing_tx, outgoing_rx) = flume::unbounded();
@@ -460,7 +474,7 @@ async fn spawn_conn(
     // Spawn a polling loop for the quic connection.
     let thread_handle = std::thread::Builder::new()
         .name("QUIC conn".to_string())
-        .spawn(move || conn.run())
+        .spawn(move || conn.run(connect_timeout))
         .unwrap();
 
     // Spawn a second thread to fulfill request/response futures and drive

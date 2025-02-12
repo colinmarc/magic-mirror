@@ -27,7 +27,9 @@ use tracing::{debug, error, info, trace, warn};
 use tracing_subscriber::Layer as _;
 use winit::{event_loop::ControlFlow, window};
 
-const DEFAULT_TIMEOUT: time::Duration = time::Duration::from_secs(30);
+const DEFAULT_CONNECT_TIMEOUT: time::Duration = time::Duration::from_secs(1);
+const DEFAULT_REQUEST_TIMEOUT: time::Duration = time::Duration::from_secs(30);
+
 const MAX_FRAME_TIME: time::Duration = time::Duration::from_nanos(1_000_000_000 / 24);
 const RESIZE_COOLDOWN: time::Duration = time::Duration::from_millis(500);
 
@@ -296,7 +298,7 @@ impl winit::application::ApplicationHandler<AppEvent> for App {
 
                 match self
                     .client
-                    .end_session(session.id, DEFAULT_TIMEOUT)
+                    .end_session(session.id, DEFAULT_REQUEST_TIMEOUT)
                     .block_on()
                 {
                     Ok(()) => (),
@@ -618,7 +620,7 @@ impl AttachmentWindow {
                                 self.session.id,
                                 self.attachment_config.clone(),
                                 self.delegate.clone(),
-                                DEFAULT_TIMEOUT,
+                                DEFAULT_REQUEST_TIMEOUT,
                             )
                             .block_on()?;
                     }
@@ -665,7 +667,7 @@ impl AttachmentWindow {
 
         let last_frame = self.last_frame_received.elapsed();
         if last_frame > time::Duration::from_secs(1) {
-            if last_frame > DEFAULT_TIMEOUT {
+            if last_frame > DEFAULT_REQUEST_TIMEOUT {
                 // TODO: this fires when we've tabbed away.
                 bail!("timed out waiting for video frames");
             } else {
@@ -730,7 +732,7 @@ impl AttachmentWindow {
                         .update_session_display_params(
                             self.session.id,
                             desired_params,
-                            DEFAULT_TIMEOUT,
+                            DEFAULT_REQUEST_TIMEOUT,
                         )
                         .block_on()?;
                 }
@@ -820,7 +822,7 @@ pub fn main() -> anyhow::Result<()> {
     }
 
     debug!("establishing connection to {:}", &args.host);
-    let client = client::Client::new(&args.host, "mmclient").block_on()?;
+    let client = client::Client::new(&args.host, "mmclient", DEFAULT_CONNECT_TIMEOUT).block_on()?;
 
     if args.list_apps {
         return cmd_list_apps(&client);
@@ -854,7 +856,7 @@ fn init_window(
     event_loop: &winit::event_loop::ActiveEventLoop,
     proxy: &winit::event_loop::EventLoopProxy<AppEvent>,
 ) -> anyhow::Result<AttachmentWindow> {
-    let sessions = client.list_sessions(DEFAULT_TIMEOUT).block_on()?;
+    let sessions = client.list_sessions(DEFAULT_REQUEST_TIMEOUT).block_on()?;
     let target = args.app.clone().unwrap();
     let matched = filter_sessions(sessions, args.app.as_ref().unwrap());
 
@@ -921,7 +923,7 @@ fn init_window(
         if session.display_params != desired_params {
             debug!("updating session params to {:?}", desired_params);
             client
-                .update_session_display_params(session.id, desired_params, DEFAULT_TIMEOUT)
+                .update_session_display_params(session.id, desired_params, DEFAULT_REQUEST_TIMEOUT)
                 .block_on()?;
         }
 
@@ -937,7 +939,7 @@ fn init_window(
                 target.into(),
                 desired_params.clone(),
                 initial_gamepads.clone(),
-                DEFAULT_TIMEOUT,
+                DEFAULT_REQUEST_TIMEOUT,
             )
             .block_on()?
             .id
@@ -945,7 +947,7 @@ fn init_window(
 
     // Refetch the session params.
     let session = client
-        .list_sessions(DEFAULT_TIMEOUT)
+        .list_sessions(DEFAULT_REQUEST_TIMEOUT)
         .block_on()?
         .into_iter()
         .find(|s| s.id == session_id)
@@ -987,7 +989,7 @@ fn init_window(
             session.id,
             attachment_config.clone(),
             delegate.clone(),
-            DEFAULT_TIMEOUT,
+            DEFAULT_REQUEST_TIMEOUT,
         )
         .block_on()?;
 
@@ -1126,7 +1128,9 @@ fn filter_sessions(sessions: Vec<client::Session>, app: &str) -> Vec<client::Ses
 }
 
 fn cmd_list_apps(client: &client::Client) -> anyhow::Result<()> {
-    let apps = client.list_applications(DEFAULT_TIMEOUT).block_on()?;
+    let apps = client
+        .list_applications(DEFAULT_REQUEST_TIMEOUT)
+        .block_on()?;
     if apps.is_empty() {
         println!("No launchable applications found.");
         return Ok(());
@@ -1166,7 +1170,7 @@ fn cmd_list_apps(client: &client::Client) -> anyhow::Result<()> {
 }
 
 fn cmd_list_sessions(args: &Cli, client: &client::Client) -> anyhow::Result<()> {
-    let sessions = client.list_sessions(DEFAULT_TIMEOUT).block_on()?;
+    let sessions = client.list_sessions(DEFAULT_REQUEST_TIMEOUT).block_on()?;
     let sessions = if let Some(target) = args.app.as_ref() {
         filter_sessions(sessions, target)
     } else {
@@ -1205,7 +1209,10 @@ fn cmd_list_sessions(args: &Cli, client: &client::Client) -> anyhow::Result<()> 
 
 fn cmd_kill(args: &Cli, client: &client::Client) -> anyhow::Result<()> {
     let target = args.app.as_ref().unwrap();
-    let sessions = filter_sessions(client.list_sessions(DEFAULT_TIMEOUT).block_on()?, target);
+    let sessions = filter_sessions(
+        client.list_sessions(DEFAULT_REQUEST_TIMEOUT).block_on()?,
+        target,
+    );
 
     if sessions.is_empty() {
         println!("No (matching) sessions found.");
@@ -1215,7 +1222,7 @@ fn cmd_kill(args: &Cli, client: &client::Client) -> anyhow::Result<()> {
     }
 
     client
-        .end_session(sessions[0].id, DEFAULT_TIMEOUT)
+        .end_session(sessions[0].id, DEFAULT_REQUEST_TIMEOUT)
         .block_on()?;
     Ok(())
 }
