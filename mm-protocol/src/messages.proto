@@ -269,7 +269,7 @@ message Error {
     ERROR_PROTOCOL = 20;
     ERROR_PROTOCOL_UNEXPECTED_MESSAGE = 21;
     ERROR_PROTOCOL_INCORRECT_STREAM = 22;
-    ERROR_PROTOCOL_UKNOWN_MESSAGE_TYPE = 23;
+    ERROR_PROTOCOL_UNKNOWN_MESSAGE_TYPE = 23;
     ERROR_TIMEOUT = 24;
     ERROR_APPLICATION_NOT_FOUND = 25;
     ERROR_APPLICATION_NO_IMAGE = 26;
@@ -803,7 +803,7 @@ message AudioChunk {
 // scoped to an attachment and sent on the attachment stream.
 //
 // ### Relative vs absolute cursor motion
-// 
+//
 // Clients are responsible for sending both absolute and relative pointer motion
 // events. The two event types are unrelated and do not compound; the former
 // represents the visible location of the cursor, while the latter represents
@@ -820,7 +820,7 @@ message AudioChunk {
 // ### 060 - Keyboard Input
 //
 // This message, which must originate from the client on the same stream as the
-// original `030 - Attach` message, represents keybaord input from the user.
+// original `030 - Attach` message, represents keyboard input from the user.
 message KeyboardInput {
   enum KeyState {
     KEY_STATE_UNKNOWN = 0;
@@ -1185,7 +1185,7 @@ message GamepadUnavailable {
 // ### 072 - Gamepad Motion
 //
 // This message, which must originate from the client on the same stream as the
-// original `030 - Attach` message, indicates movement on a joystock or trigger.
+// original `030 - Attach` message, indicates movement on a joystick or trigger.
 message GamepadMotion {
   enum GamepadAxis {
     GAMEPAD_AXIS_UNKNOWN = 0;
