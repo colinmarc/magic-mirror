@@ -1,3 +1,16 @@
+## [mmserver-v0.8.0] - 2025-02-12
+
+### New Features
+
+- Make the session timeout configurable (39fa20cadfe7a780088c86f78ef2eae87e0c1222)
+- Send hierarchical_layer as video frame metadata (ddbe84346fa03f55ebed7289b005b2e36ec23d36)
+
+### Bugfixes
+
+- Increment stream_seq when a refresh packet is sent (0fe282ae0fb71b476929ddf61bf71e4041ac0323)
+- Send headers with H265 keyframes (dc7084412c3c4eec661a9887f8c0d031f8dc8a19)
+- Add a warning if users are about to hit #29 (d5591bb4d59a635ffb9796b9c1f1cba9eba22b36)
+
 ## [mmserver-v0.7.2] - 2025-02-05
 
 ### New Features
