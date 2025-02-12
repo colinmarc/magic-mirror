@@ -467,7 +467,7 @@ impl VkContext {
                 device_info.decode_family.unwrap(),
             )?);
         } else {
-            warn!("no vulkan video support found!")
+            debug!("no vulkan video support found")
         }
 
         if !device_info.host_mem_is_cached {
