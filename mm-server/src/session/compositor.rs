@@ -6,7 +6,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use protocols::*;
 use slotmap::SlotMap;
-use tracing::{instrument, trace};
+use tracing::{debug, instrument, trace};
 use wayland_protocols::{
     wp::{
         fractional_scale::v1::server::wp_fractional_scale_manager_v1,
@@ -173,7 +173,11 @@ impl Compositor {
         video_pipeline: &mut video::EncodePipeline,
     ) -> anyhow::Result<()> {
         let now = EPOCH.elapsed().as_millis() as u32;
-        unsafe { video_pipeline.begin()? };
+        let ready = unsafe { video_pipeline.begin()? };
+        if !ready {
+            debug!("dropped frame because of backpressure");
+            return Ok(());
+        }
 
         // Iterate backwards to find the first fullscreen window.
         let first_visible_idx = self
@@ -186,8 +190,9 @@ impl Compositor {
             })
             .unwrap_or_default();
 
-        let mut presentation_feedback =
-            Vec::with_capacity(self.surface_stack.len() - first_visible_idx);
+        let num_surfaces = self.surface_stack.len() - first_visible_idx;
+        let mut presentation_feedback = Vec::with_capacity(num_surfaces);
+
         for id in self.surface_stack[first_visible_idx..].iter() {
             let surface = &mut self.surfaces[*id];
 
