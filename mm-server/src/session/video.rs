@@ -146,9 +146,17 @@ impl EncodePipeline {
     // }
 
     #[instrument(level = "trace", skip_all)]
-    pub unsafe fn begin(&mut self) -> anyhow::Result<()> {
+    pub unsafe fn begin(&mut self) -> anyhow::Result<bool> {
         let device = &self.vk.device;
         let frame = &mut self.swap[self.swap_idx];
+
+        let ready = frame.tp_clear.poll()?;
+
+        // If the previous frame isn't ready, drop this one to let the app
+        // catch up.
+        if !ready {
+            return Ok(false);
+        }
 
         // Trace on on the GPU side.
         if let Some(ref ctx) = self.vk.graphics_queue.tracy_context {
@@ -167,10 +175,6 @@ impl EncodePipeline {
         }
 
         frame.texture_semas_used = 0;
-
-        // Wait for the frame to no longer be in flight, and then establish new timeline
-        // points.
-        frame.tp_clear.wait()?;
         frame.tp_staging_done += 10;
         frame.tp_render_done = &frame.tp_staging_done + 1;
         frame.tp_clear = &frame.tp_render_done + 1;
@@ -203,7 +207,7 @@ impl EncodePipeline {
             vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
         );
 
-        Ok(())
+        Ok(true)
     }
 
     /// Adds a surface to be drawn. Returns the timeline point when the texture
@@ -355,6 +359,8 @@ impl EncodePipeline {
         Ok(release)
     }
 
+    /// End the current frame and submit it to the GPU. Returns the timeline
+    /// point indicating when rendering and encoding have both completed.
     #[instrument(skip_all)]
     pub unsafe fn end_and_submit(&mut self) -> anyhow::Result<VkTimelinePoint> {
         let device = &self.vk.device;
