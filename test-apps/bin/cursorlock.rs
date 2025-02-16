@@ -24,6 +24,22 @@ fn main() {
 #[derive(Debug, Component)]
 struct Player;
 
+#[derive(Debug, Component, Deref, DerefMut)]
+struct CameraSensitivity(Vec2);
+
+impl Default for CameraSensitivity {
+    fn default() -> Self {
+        Self(
+            // These factors are just arbitrary mouse sensitivity values.
+            // It's often nicer to have a faster horizontal sensitivity than vertical.
+            // We use a component for them so that we can make them user-configurable at runtime
+            // for accessibility reasons.
+            // It also allows you to inspect them in an editor if you `Reflect` the component.
+            Vec2::new(0.003, 0.002),
+        )
+    }
+}
+
 #[derive(Debug, Component)]
 struct WorldModelCamera;
 
@@ -50,51 +66,41 @@ fn spawn_view_model(
     commands
         .spawn((
             Player,
-            SpatialBundle {
-                transform: Transform::from_xyz(0.0, 1.0, 0.0),
-                ..default()
-            },
+            CameraSensitivity::default(),
+            Transform::from_xyz(0.0, 1.0, 0.0),
+            Visibility::default(),
         ))
         .with_children(|parent| {
             parent.spawn((
                 WorldModelCamera,
-                Camera3dBundle {
-                    projection: PerspectiveProjection {
-                        fov: 90.0_f32.to_radians(),
-                        ..default()
-                    }
-                    .into(),
+                Camera3d::default(),
+                Projection::from(PerspectiveProjection {
+                    fov: 90.0_f32.to_radians(),
                     ..default()
-                },
+                }),
             ));
 
             // Spawn view model camera.
             parent.spawn((
-                Camera3dBundle {
-                    camera: Camera {
-                        // Bump the order to render on top of the world model.
-                        order: 1,
-                        ..default()
-                    },
-                    projection: PerspectiveProjection {
-                        fov: 70.0_f32.to_radians(),
-                        ..default()
-                    }
-                    .into(),
+                Camera3d::default(),
+                Camera {
+                    // Bump the order to render on top of the world model.
+                    order: 1,
                     ..default()
                 },
+                Projection::from(PerspectiveProjection {
+                    fov: 70.0_f32.to_radians(),
+                    ..default()
+                }),
                 // Only render objects belonging to the view model.
                 RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
             ));
 
             // Spawn the player's right arm.
             parent.spawn((
-                MaterialMeshBundle {
-                    mesh: arm,
-                    material: arm_material,
-                    transform: Transform::from_xyz(0.2, -0.1, -0.25),
-                    ..default()
-                },
+                Mesh3d(arm),
+                MeshMaterial3d(arm_material),
+                Transform::from_xyz(0.2, -0.1, -0.25),
                 // Ensure the arm is only rendered by the view model camera.
                 RenderLayers::layer(VIEW_MODEL_RENDER_LAYER),
                 // The arm is free-floating, so shadows would look weird.
@@ -115,38 +121,29 @@ fn spawn_world_model(
     // The world model camera will render the floor and the cubes spawned in this
     // system. Assigning no `RenderLayers` component defaults to layer 0.
 
-    commands.spawn(MaterialMeshBundle {
-        mesh: floor,
-        material: material.clone(),
-        ..default()
-    });
+    commands.spawn((Mesh3d(floor), MeshMaterial3d(material.clone())));
 
-    commands.spawn(MaterialMeshBundle {
-        mesh: cube.clone(),
-        material: material.clone(),
-        transform: Transform::from_xyz(0.0, 0.25, -3.0),
-        ..default()
-    });
+    commands.spawn((
+        Mesh3d(cube.clone()),
+        MeshMaterial3d(material.clone()),
+        Transform::from_xyz(0.0, 0.25, -3.0),
+    ));
 
-    commands.spawn(MaterialMeshBundle {
-        mesh: cube,
-        material,
-        transform: Transform::from_xyz(0.75, 1.75, 0.0),
-        ..default()
-    });
+    commands.spawn((
+        Mesh3d(cube),
+        MeshMaterial3d(material),
+        Transform::from_xyz(0.75, 1.75, 0.0),
+    ));
 }
 
 fn spawn_lights(mut commands: Commands) {
     commands.spawn((
-        PointLightBundle {
-            point_light: PointLight {
-                color: Color::from(tailwind::ROSE_300),
-                shadows_enabled: true,
-                ..default()
-            },
-            transform: Transform::from_xyz(-2.0, 4.0, -0.75),
+        PointLight {
+            color: Color::from(tailwind::ROSE_300),
+            shadows_enabled: true,
             ..default()
         },
+        Transform::from_xyz(-2.0, 4.0, -0.75),
         // The light source illuminates both the world model and the view model.
         RenderLayers::from_layers(&[DEFAULT_RENDER_LAYER, VIEW_MODEL_RENDER_LAYER]),
     ));
@@ -187,10 +184,10 @@ fn update_cursor(
 
     let mut primary_window = q_windows.single_mut();
     if cursor_locked.0 {
-        primary_window.cursor.grab_mode = CursorGrabMode::Locked;
-        primary_window.cursor.visible = false;
+        primary_window.cursor_options.grab_mode = CursorGrabMode::Locked;
+        primary_window.cursor_options.visible = false;
     } else {
-        primary_window.cursor.grab_mode = CursorGrabMode::None;
-        primary_window.cursor.visible = true;
+        primary_window.cursor_options.grab_mode = CursorGrabMode::None;
+        primary_window.cursor_options.visible = true;
     }
 }

@@ -39,13 +39,13 @@ default-features = false
 features = ["wayland", "rwh_05"]
 
 [dependencies.bevy]
-version = "0.14"
+version = "0.15"
 default-features = false
 features = [
     #"animation",
     #"bevy_asset",
     #"bevy_audio",
-    #"bevy_gilrs",
+    "bevy_gilrs",
     #"bevy_scene",
     "bevy_winit",
     "bevy_core_pipeline",
