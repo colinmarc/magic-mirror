@@ -221,7 +221,14 @@ impl EncoderInner {
         let (submitted_frames_tx, submitted_frames_rx) = crossbeam::bounded(1);
         let (done_frames_tx, done_frames_rx) = crossbeam::unbounded();
 
-        for _ in 0..1 {
+        for _frame in 0..2 {
+            // We need a frame name for each swapframe.
+            #[cfg(feature = "tracy")]
+            let frame_name = [
+                tracy_client::frame_name!("composite + encode 1"),
+                tracy_client::frame_name!("composite + encode 2"),
+            ][_frame];
+
             done_frames_tx
                 .send(EncoderOutputFrame::new(
                     vk.clone(),
@@ -229,6 +236,8 @@ impl EncoderInner {
                     height,
                     buffer_size_alignment,
                     profile,
+                    #[cfg(feature = "tracy")]
+                    frame_name,
                 )?)
                 .unwrap();
         }
@@ -370,9 +379,15 @@ impl EncoderInner {
 
         #[cfg(feature = "tracy")]
         {
-            frame.tracy_frame = Some(tracy_client::non_continuous_frame!("encode"));
+            frame.tracy_context.frame = Some(
+                tracy_client::Client::running()
+                    .expect("no tracy client")
+                    .non_continuous_frame(frame.tracy_context.frame_name),
+            );
+
             if let Some(ref ctx) = encode_queue.tracy_context {
-                frame.encode_span = Some(ctx.span(tracy_client::span_location!("encode"))?);
+                frame.tracy_context.encode_span =
+                    Some(ctx.span(tracy_client::span_location!("encode"))?);
             }
         }
 
@@ -380,7 +395,7 @@ impl EncoderInner {
 
         // Record the start timestamp.
         #[cfg(feature = "tracy")]
-        if let Some(encode_ts_pool) = &mut frame.encode_ts_pool {
+        if let Some(encode_ts_pool) = &mut frame.tracy_context.encode_ts_pool {
             encode_ts_pool.cmd_reset(&self.vk.device, frame.encode_cb);
             self.vk.device.cmd_write_timestamp(
                 frame.encode_cb,
@@ -618,7 +633,7 @@ impl EncoderInner {
 
         // Record the end timestamp.
         #[cfg(feature = "tracy")]
-        if let Some(encode_ts_pool) = &frame.encode_ts_pool {
+        if let Some(encode_ts_pool) = &mut frame.tracy_context.encode_ts_pool {
             self.vk.device.cmd_write_timestamp(
                 frame.encode_cb,
                 vk::PipelineStageFlags::ALL_COMMANDS,
@@ -628,7 +643,7 @@ impl EncoderInner {
         }
 
         #[cfg(feature = "tracy")]
-        if let Some(span) = &mut frame.encode_span {
+        if let Some(span) = &mut frame.tracy_context.encode_span {
             span.end_zone();
         }
 
@@ -739,15 +754,17 @@ struct EncoderOutputFrame {
     tp_copied: VkTimelinePoint,
 
     #[cfg(feature = "tracy")]
-    tracy_frame: Option<tracy_client::Frame>,
-
-    #[cfg(feature = "tracy")]
-    encode_span: Option<tracy_client::GpuSpan>,
-
-    #[cfg(feature = "tracy")]
-    encode_ts_pool: Option<VkTimestampQueryPool>,
+    tracy_context: TracingContext,
 
     vk: Arc<VkContext>,
+}
+
+#[cfg(feature = "tracy")]
+struct TracingContext {
+    frame_name: tracy_client::FrameName,
+    frame: Option<tracy_client::Frame>,
+    encode_span: Option<tracy_client::GpuSpan>,
+    encode_ts_pool: Option<VkTimestampQueryPool>,
 }
 
 impl EncoderOutputFrame {
@@ -757,6 +774,7 @@ impl EncoderOutputFrame {
         height: u32,
         buffer_size_alignment: usize,
         profile: &mut vk::VideoProfileInfoKHR,
+        #[cfg(feature = "tracy")] frame_name: tracy_client::FrameName,
     ) -> anyhow::Result<Self> {
         let buffer_size = (width * height * 3).next_multiple_of(buffer_size_alignment as u32);
 
@@ -845,11 +863,12 @@ impl EncoderOutputFrame {
             timeline,
 
             #[cfg(feature = "tracy")]
-            tracy_frame: None,
-            #[cfg(feature = "tracy")]
-            encode_span: None,
-            #[cfg(feature = "tracy")]
-            encode_ts_pool,
+            tracy_context: TracingContext {
+                frame_name,
+                frame: None,
+                encode_span: None,
+                encode_ts_pool,
+            },
 
             vk,
         })
@@ -867,7 +886,7 @@ impl Drop for EncoderOutputFrame {
             device.destroy_query_pool(self.query_pool, None);
 
             #[cfg(feature = "tracy")]
-            if let Some(pool) = self.encode_ts_pool.take() {
+            if let Some(pool) = self.tracy_context.encode_ts_pool.take() {
                 device.destroy_query_pool(pool.pool, None);
             }
         }
@@ -921,9 +940,9 @@ fn writer_thread(
 
         #[cfg(feature = "tracy")]
         {
-            frame.tracy_frame.take();
-            if let Some(span) = frame.encode_span.take() {
-                if let Some(pool) = &mut frame.encode_ts_pool {
+            frame.tracy_context.frame.take();
+            if let Some(span) = frame.tracy_context.encode_span.take() {
+                if let Some(pool) = &mut frame.tracy_context.encode_ts_pool {
                     let timestamps = pool.fetch_results(device)?;
                     span.upload_timestamp(timestamps[0], timestamps[1])
                 }
