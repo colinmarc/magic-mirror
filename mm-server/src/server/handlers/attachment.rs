@@ -48,8 +48,7 @@ struct AttachmentHandler<'a> {
     current_video_stream_seq: u64,
 
     // For saving the bitstream to disk in bug reports.
-    bug_report_dir: Option<PathBuf>,
-    bug_report_files: BTreeMap<u64, fs::File>,
+    bug_report: Option<(PathBuf, BTreeMap<u64, fs::File>)>,
 
     stats: stats::AttachmentStats,
 }
@@ -195,8 +194,7 @@ impl<'a> AttachmentHandler<'a> {
             last_audio_frame_recvd: now,
             current_video_stream_seq: 0,
 
-            bug_report_dir,
-            bug_report_files: BTreeMap::default(),
+            bug_report: bug_report_dir.map(|dir| (dir, BTreeMap::default())),
 
             stats: stats::AttachmentStats::new(app_id),
         })
@@ -580,10 +578,10 @@ impl<'a> AttachmentHandler<'a> {
                 self.last_video_frame_recvd = time::Instant::now();
                 self.stats.record_frame(seq, frame.len(), duration);
 
-                if let Some(dir) = &self.bug_report_dir {
-                    let file = self.bug_report_files.entry(stream_seq).or_insert_with(|| {
+                if let Some((root, files)) = &mut self.bug_report {
+                    let file = files.entry(stream_seq).or_insert_with(|| {
                         let ext = format!("{:?}", self.attached.video_codec()).to_lowercase();
-                        let path = dir.join(format!(
+                        let path = root.join(format!(
                             "attachment-{:02}-{}.{}",
                             stream_seq, self.handle.attachment_id, ext
                         ));
