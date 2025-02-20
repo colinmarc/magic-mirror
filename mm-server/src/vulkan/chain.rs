@@ -79,7 +79,7 @@ macro_rules! vk_chain {
 
             impl Default for $Chain {
                 fn default() -> Self {
-                    Self::new(__replace_expr!($HeadStruct Default::default()), $(__replace_expr!($Struct Default::default()),)*)
+                    Self::new(__replace_expr!(($HeadStruct) Default::default()), $(__replace_expr!(($Struct) Default::default()),)*)
                 }
             }
 
