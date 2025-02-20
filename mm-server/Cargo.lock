@@ -1168,7 +1168,7 @@ dependencies = [
 
 [[package]]
 name = "mm-server"
-version = "0.8.0"
+version = "0.8.2"
 dependencies = [
  "anyhow",
  "ash",

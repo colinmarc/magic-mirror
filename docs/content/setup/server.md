@@ -7,12 +7,12 @@ toc = true
 
 ## Quickstart
 
-First, grab [the latest server release](https://github.com/colinmarc/magic-mirror/releases/tag/mmserver-v0.8.0) and untar it somewhere:
+First, grab [the latest server release](https://github.com/colinmarc/magic-mirror/releases/tag/mmserver-v0.8.2) and untar it somewhere:
 
 ```sh
-curl -fsSL "https://github.com/colinmarc/magic-mirror/releases/download/mmserver-v0.8.0/mmserver-v0.8.0-linux-amd64.tar.gz" \
+curl -fsSL "https://github.com/colinmarc/magic-mirror/releases/download/mmserver-v0.8.2/mmserver-v0.8.2-linux-amd64.tar.gz" \
     | tar zxv
-cd mmserver-v0.8.0
+cd mmserver-v0.8.2
 ```
 
 Then, create a [configuration file](@/reference/config.md) with at least one application definition:
