@@ -1,3 +1,10 @@
+## [mmserver-v0.8.1] - 2025-02-20
+
+### Bugfixes
+
+- Allow waiting on one frame while encoding another (d2f571d605ea1fa352dc896f65ea7812b5ca665e)
+- Drop application frames if the application is too slow (eec8bda9126d9aa9d58f2fefb15e9dd0e66fc7e0)
+
 ## [mmclient-v0.7.0] - 2025-02-12
 
 ### New Features
