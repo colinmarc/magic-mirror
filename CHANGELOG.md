@@ -1,3 +1,9 @@
+## [mmserver-v0.8.2] - 2025-02-20
+
+### Bugfixes
+
+- Drop application frames if the application is too slow (d73d78dfc37a17fd011c1d3ef1dbfe12c85ed856)
+
 ## [mmclient-v0.7.0] - 2025-02-12
 
 ### New Features
