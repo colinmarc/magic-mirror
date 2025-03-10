@@ -374,7 +374,7 @@ impl Reactor {
 
                                 // Usually, TERM doesn't work, because the
                                 // process is PID 1 in the container.
-                                self.child.signal(rustix::process::Signal::Kill)?;
+                                self.child.signal(rustix::process::Signal::KILL)?;
                             }
                             Ok(msg) => self.handle_control_message(msg)?,
                             Err(crossbeam::TryRecvError::Empty) => break,
@@ -448,7 +448,7 @@ impl Reactor {
             if self.ready_once.is_some() && self.compositor.surfaces_ready() {
                 self.ready_once.take().unwrap().send(control_send.clone())?;
             } else if self.ready_once.is_some() && start.elapsed() > READY_TIMEOUT {
-                self.child.signal(rustix::process::Signal::Kill)?;
+                self.child.signal(rustix::process::Signal::KILL)?;
                 bail!("timed out waiting for client");
             }
 

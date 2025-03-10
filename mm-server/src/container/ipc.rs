@@ -100,8 +100,9 @@ fn signal_eventfd(fd: impl AsFd) -> rustix::io::Result<()> {
 fn wait_eventfd(fd: impl AsFd, timeout: time::Duration) -> rustix::io::Result<()> {
     let mut pollfd = [PollFd::new(&fd, PollFlags::IN)];
     let mut buf = [0; 8];
+    let timespec = timeout.try_into().expect("invalid duration");
     loop {
-        match poll(&mut pollfd, timeout.as_millis() as _) {
+        match poll(&mut pollfd, Some(&timespec)) {
             Ok(0) => return Err(Errno::TIMEDOUT),
             Ok(_) => return read(fd, &mut buf).map(|_| ()),
             Err(Errno::INTR) => continue,

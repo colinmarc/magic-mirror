@@ -423,8 +423,7 @@ impl Container {
     }
 
     // Signal safety dictates what we can do here, and it's not a lot. The main
-    // thing we avoid is allocations. Note that rustix is added as a dependency
-    // without the 'alloc' feature.
+    // thing we avoid is allocations.
     unsafe fn child_after_fork<FD>(
         mut self,
         stderr: Option<FD>,
@@ -444,7 +443,7 @@ impl Container {
         // is particularly important because we're PID 1, so the kernel won't
         // kill on SIGINT/SIGQUIT/etc if the child process doesn't have a signal
         // handler set up for them.
-        must!(set_parent_process_death_signal(Some(Signal::Kill)));
+        must!(set_parent_process_death_signal(Some(Signal::KILL)));
 
         preexec_debug!("starting container setup");
 
@@ -694,7 +693,7 @@ where
                 let _ = rustix::stdio::dup2_stderr(fd.as_fd()); // Replace stderr.
             }
 
-            must!(set_parent_process_death_signal(Some(Signal::Kill)));
+            must!(set_parent_process_death_signal(Some(Signal::KILL)));
 
             must!(move_into_link_name_space(
                 ns_pidfd.as_fd(),
@@ -721,7 +720,7 @@ where
             WaitOptions::empty(),
         ) {
             Ok(st) => match st {
-                Some(st) if st.as_raw() == 0 => return Ok(()),
+                Some((_, st)) if st.as_raw() == 0 => return Ok(()),
                 _ => return Err(io::Error::other("forked process exited with error")),
             },
             Err(Errno::INTR) => continue,

@@ -50,7 +50,7 @@ impl DisplaySocket {
         loop {
             let dp = DisplaySocket(display);
 
-            match rustix::net::bind_unix(
+            match rustix::net::bind(
                 &sock,
                 // By convention, the name is the same as the path.
                 &SocketAddrUnix::new_abstract_name(dp.inner_path().as_os_str().as_encoded_bytes())?,
@@ -188,5 +188,5 @@ impl XWayland {
 }
 
 fn unset_cloexec(socket_fd: impl AsFd) -> Result<(), rustix::io::Errno> {
-    rustix::fs::fcntl_setfd(socket_fd, rustix::fs::FdFlags::empty())
+    rustix::io::fcntl_setfd(socket_fd, rustix::io::FdFlags::empty())
 }

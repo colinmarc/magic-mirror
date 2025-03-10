@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use anyhow::bail;
+use anyhow::{bail, Context as _};
 use ash::vk;
 use drm_fourcc::DrmModifier;
 pub use modifiers::*;
@@ -365,7 +365,10 @@ pub fn validate_buffer_parameters(
 mod ioctl {
     use std::{ffi::c_void, os::fd::RawFd};
 
-    use rustix::{io::Errno, ioctl::Opcode};
+    use rustix::{
+        io::Errno,
+        ioctl::{opcode, Opcode},
+    };
 
     pub(super) const DMA_BUF_SYNC_READ: u32 = 1 << 0;
     pub(super) const DMA_BUF_SYNC_WRITE: u32 = 1 << 1;
@@ -403,8 +406,11 @@ mod ioctl {
     unsafe impl rustix::ioctl::Ioctl for ExportSyncFile {
         type Output = RawFd;
 
-        const OPCODE: Opcode = Opcode::read_write::<dma_buf_export_sync_file>(b'b', 2);
         const IS_MUTATING: bool = true;
+
+        fn opcode(&self) -> Opcode {
+            opcode::read_write::<dma_buf_export_sync_file>(b'b', 2)
+        }
 
         fn as_ptr(&mut self) -> *mut c_void {
             &mut self.0 as *mut dma_buf_export_sync_file as _
@@ -428,8 +434,11 @@ mod ioctl {
     unsafe impl rustix::ioctl::Ioctl for ImportSyncFile {
         type Output = ();
 
-        const OPCODE: Opcode = Opcode::write::<dma_buf_import_sync_file>(b'b', 3);
         const IS_MUTATING: bool = true;
+
+        fn opcode(&self) -> Opcode {
+            opcode::write::<dma_buf_import_sync_file>(b'b', 3)
+        }
 
         fn as_ptr(&mut self) -> *mut c_void {
             &mut self.0 as *mut dma_buf_import_sync_file as _
@@ -483,7 +492,8 @@ pub unsafe fn import_sync_file_as_semaphore(
 
 /// Retrieves the fd of a sync file for a dmabuf.
 pub unsafe fn export_sync_file(dmabuf: impl AsFd, flags: u32) -> anyhow::Result<OwnedFd> {
-    let raw_fd = rustix::ioctl::ioctl(dmabuf, ioctl::ExportSyncFile::new(flags))?;
+    let raw_fd = rustix::ioctl::ioctl(dmabuf, ioctl::ExportSyncFile::new(flags))
+        .context("DMA_BUF_IOCTL_EXPORT_SYNC_FILE")?;
     Ok(OwnedFd::from_raw_fd(raw_fd))
 }
 
@@ -502,7 +512,8 @@ pub unsafe fn attach_sync_file(
     rustix::ioctl::ioctl(
         dmabuf,
         ioctl::ImportSyncFile::new(sync_file.as_raw_fd(), flags),
-    )?;
+    )
+    .context("DMA_BUF_IOCTL_IMPORT_SYNC_FILE")?;
 
     Ok(())
 }

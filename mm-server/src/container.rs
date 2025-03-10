@@ -11,7 +11,7 @@ use std::{
 use anyhow::{bail, Context as _};
 use rustix::{
     mount::MountAttrFlags,
-    process::{Pid, Signal, WaitId, WaitidOptions},
+    process::{Pid, Signal, WaitId, WaitIdOptions},
 };
 use tracing::{debug, info};
 
@@ -51,7 +51,7 @@ impl ContainerHandle {
 
     pub fn wait(&mut self) -> anyhow::Result<()> {
         let exit_status =
-            rustix::process::waitid(WaitId::PidFd(self.as_fd()), WaitidOptions::EXITED)
+            rustix::process::waitid(WaitId::PidFd(self.as_fd()), WaitIdOptions::EXITED)
                 .context("waitid")?
                 .and_then(|x| x.exit_status())
                 .unwrap_or_default();

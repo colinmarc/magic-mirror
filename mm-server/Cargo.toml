@@ -25,7 +25,12 @@ crossbeam-channel = "0.5"
 cstr = "0.2"
 ctrlc = "3"
 cursor-icon = "1"
-dasp = { version = "0.11", features = ["signal", "interpolate", "interpolate-sinc", "ring_buffer"] }
+dasp = { version = "0.11", features = [
+    "signal",
+    "interpolate",
+    "interpolate-sinc",
+    "ring_buffer",
+] }
 drm = "0.14"
 drm-fourcc = "2"
 either = "1"
@@ -73,7 +78,11 @@ tracing-tracy = { version = "0.11", default-features = false }
 tracy-client = { version = "0.17", default-features = false }
 uds = "0.4"
 uuid = "1"
-wayland-protocols = { version = "0.32", features = ["server", "staging", "unstable"] }
+wayland-protocols = { version = "0.32", features = [
+    "server",
+    "staging",
+    "unstable",
+] }
 wayland-scanner = "0.31"
 wayland-server = { version = "0.31", features = ["log"] }
 x11rb = { version = "0.13", features = ["composite"] }
@@ -92,9 +101,21 @@ git = "https://github.com/colinmarc/pulseaudio-rs"
 rev = "70ddb748f20ceecc20e963e571188124aeb30186"
 
 [dependencies.rustix]
-version = "0.38"
-default-features = false
-features = ["mm", "mount", "pipe", "time", "thread", "stdio"]
+version = "1.0"
+features = [
+    "core",
+    "event",
+    "fs",
+    "mm",
+    "mount",
+    "net",
+    "pipe",
+    "time",
+    "thread",
+    "stdio",
+    "system",
+    "process",
+]
 
 [dependencies.southpaw]
 git = "https://github.com/colinmarc/southpaw"
