@@ -10,16 +10,8 @@ allow = [
     "MPL-2.0",
     "Unicode-3.0",
     "Unicode-DFS-2016",
-    "LicenseRef-ring"
 ]
 confidence-threshold = 0.8
 
 [licenses.private]
 ignore = true
-
-[[licenses.clarify]]
-name = "ring"
-expression = "LicenseRef-ring"
-license-files = [
-    { path = "LICENSE", hash = 0xbd0eed23 },
-]
