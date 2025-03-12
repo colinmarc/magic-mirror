@@ -1,3 +1,5 @@
+## [mmclient-v0.7.1] - 2025-03-12
+
 ## [mmserver-v0.8.3] - 2025-03-12
 
 ### Bugfixes
