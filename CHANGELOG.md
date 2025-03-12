@@ -1,3 +1,10 @@
+## [mmserver-v0.8.3] - 2025-03-12
+
+### Bugfixes
+
+- Try to avoid colliding with the system x11 socket (3af95ba9ab012e723d21415baf0b6f4679ba1534)
+- Follow symlinks when calling move_mount (a7505aed296cab4648e2f3752d5901e5d95ded45)
+
 ## [mmserver-v0.8.2] - 2025-02-20
 
 ### Bugfixes
