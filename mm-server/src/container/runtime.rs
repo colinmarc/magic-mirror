@@ -815,7 +815,7 @@ pub(super) fn fuse_mount_into(
             c"",
             AT_FDCWD,
             dst.as_ref(),
-            MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH,
+            MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH | MoveMountFlags::MOVE_MOUNT_T_SYMLINKS,
         )?;
 
         Ok(())
@@ -851,7 +851,7 @@ fn reattach_mount(fd: OwnedFd, path: impl AsRef<Path>) -> rustix::io::Result<()>
         "",
         AT_FDCWD,
         path.as_ref(),
-        MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH,
+        MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH | MoveMountFlags::MOVE_MOUNT_T_SYMLINKS,
     )
 }
 
@@ -882,7 +882,7 @@ fn mount_fs(
         c"",
         AT_FDCWD,
         dst,
-        MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH,
+        MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH | MoveMountFlags::MOVE_MOUNT_T_SYMLINKS,
     )?;
 
     Ok(())
