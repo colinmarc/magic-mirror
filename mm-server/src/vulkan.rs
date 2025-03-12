@@ -234,7 +234,7 @@ impl VkDeviceInfo {
 
         for ext in selected_extensions.iter() {
             if !contains_extension(&available_extensions, ext) {
-                return Err(anyhow::anyhow!("extension {:?} not available", ext));
+                bail!("extension {:?} not available", ext);
             }
         }
 
@@ -271,6 +271,10 @@ impl VkDeviceInfo {
                 supports_av1 = true;
                 selected_extensions.push(ext_av1.to_owned());
             }
+        }
+
+        if !supports_av1 && !supports_h265 && !supports_h264 {
+            bail!("hardware encode extensions not available");
         }
 
         // We want HOST_CACHED | HOST_COHERENT, but we can make do with just

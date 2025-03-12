@@ -212,12 +212,6 @@ fn preflight_checks(cfg: &config::Config, vk: &vulkan::VkContext) -> anyhow::Res
         cfg.data_home.display(),
     ))?;
 
-    if !vk.device_info.supports_h264 || !vk.device_info.supports_h265 {
-        warn!(
-            "no/partial support for hardware encoding! performance may be significantly decreased"
-        );
-    }
-
     // Check for Ubuntu's restrictions on rootless containers.
     if sysctl("apparmor_restrict_unprivileged_unconfined")
         || sysctl("apparmor_restrict_unprivileged_userns")
