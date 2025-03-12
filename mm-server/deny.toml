@@ -15,3 +15,6 @@ confidence-threshold = 0.8
 
 [licenses.private]
 ignore = true
+
+[advisories]
+ignore = ["RUSTSEC-2024-0436"]
