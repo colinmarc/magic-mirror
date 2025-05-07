@@ -50,7 +50,7 @@ The easiest is to bind to a local IP, or use a VPN like wireguard or tailscale:
 ```toml
 # config.toml
 [server]
-bind = "192.168.1.37"
+bind = "192.168.1.37:9599"
 ```
 
 Or from the command line:
