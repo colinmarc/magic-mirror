@@ -1,3 +1,9 @@
+## [mmserver-v0.8.4] - 2025-05-21
+
+### Bugfixes
+
+- Make missing hardware encode support a hard error (b16dccb01902b854a2c345406f4df416d3024811)
+
 ## [mmserver-v0.8.3] - 2025-03-12
 
 ### Bugfixes
