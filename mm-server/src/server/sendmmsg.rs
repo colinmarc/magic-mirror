@@ -42,14 +42,20 @@ impl<'a> SendMmsg<'a> {
             .map(ControlMessage::TxTime)
             .collect::<Vec<_>>();
 
-        nix::sys::socket::sendmmsg(
-            fd.as_raw_fd(),
-            &mut data,
-            &self.iovs,
-            &self.addrs,
-            &cmsgs,
-            MsgFlags::empty(),
-        )?;
+        loop {
+            match nix::sys::socket::sendmmsg(
+                fd.as_raw_fd(),
+                &mut data,
+                &self.iovs,
+                &self.addrs,
+                &cmsgs,
+                MsgFlags::empty(),
+            ) {
+                Ok(_) => break,
+                Err(nix::errno::Errno::EAGAIN) => continue,
+                Err(e) => return Err(e),
+            };
+        }
 
         Ok(())
     }
