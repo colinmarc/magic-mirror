@@ -35,12 +35,12 @@ jobs:
       - name: install deny
         run: cargo install cargo-deny
 
+      - name: server deny
+        run: (cd mm-server && cargo deny check)
       - name: server tests
         run: |
           export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='sudo -E'
           (cd mm-server && cargo test -- --test-threads=1)
-      - name: server deny
-        run: (cd mm-server && cargo deny check)
       - name: protocol tests
         run: (cd mm-protocol && cargo test)
       - name: client tests
@@ -51,5 +51,3 @@ jobs:
         run: (cd mm-protocol && cargo clippy)
       - name: client cargo clippy
         run: (cd mm-client && cargo clippy)
-
-
