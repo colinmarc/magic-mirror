@@ -79,8 +79,11 @@ impl H264Encoder {
         let h264_profile_info =
             vk::VideoEncodeH264ProfileInfoEXT::default().std_profile_idc(profile_idc);
 
-        let mut profile =
-            H264EncodeProfile::new(profile, super::default_encode_usage(), h264_profile_info);
+        let mut profile = H264EncodeProfile::new(
+            profile,
+            super::default_encode_usage(vk.device_info.driver_version.clone()),
+            h264_profile_info,
+        );
 
         let mut caps = H264EncodeCapabilities::default();
 
