@@ -1,3 +1,14 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [mmserver-v0.8.4] - 2025-07-20
+
+### Bugfixes
+
+- Make missing hardware encode support a hard error (b16dccb01902b854a2c345406f4df416d3024811)
+- Handle EAGAIN during sendmmsg (20b1bd7bebfa891501fa1e0e6c998f4d162cc960)
+
 ## [mmserver-v0.8.3] - 2025-03-12
 
 ### Bugfixes
