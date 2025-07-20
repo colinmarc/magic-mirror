@@ -1,3 +1,9 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [mmclient-v0.7.1] - 2025-07-20
+
 ## [mmserver-v0.8.4] - 2025-05-21
 
 ### Bugfixes
