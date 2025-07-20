@@ -4,7 +4,6 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
-use protocols::*;
 use slotmap::SlotMap;
 use tracing::{debug, instrument, trace};
 use wayland_protocols::{
@@ -38,7 +37,6 @@ pub mod buffers;
 mod dispatch;
 mod oneshot_render;
 mod output;
-mod protocols;
 mod sealed;
 mod seat;
 mod serial;
@@ -295,7 +293,6 @@ pub fn create_globals(dh: &wayland_server::DisplayHandle) {
     create_global::<wp_linux_drm_syncobj_manager_v1::WpLinuxDrmSyncobjManagerV1>(dh, 1);
 
     create_global::<xwayland_shell_v1::XwaylandShellV1>(dh, 1);
-    create_global::<wl_drm::WlDrm>(dh, 2);
 }
 
 fn create_global<G: wayland_server::Resource + 'static>(
