@@ -318,12 +318,18 @@ impl Renderer {
         };
 
         let descriptor_pool = {
-            let sampler_sizes = [vk::DescriptorPoolSize::default()
+            let binding_multiplier = get_ycbcr_conversion_properties(
+                self.vk.pdevice,
+                &self.vk.instance,
+                video_texture_format,
+            )?
+            .combined_image_sampler_descriptor_count;
+            let sampler_size = [vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(swapchain_images.len() as u32)];
+                .descriptor_count(swapchain_images.len() as u32 * binding_multiplier)];
 
             let info = vk::DescriptorPoolCreateInfo::default()
-                .pool_sizes(&sampler_sizes)
+                .pool_sizes(&sampler_size)
                 .max_sets(swapchain_images.len() as u32);
 
             unsafe { device.create_descriptor_pool(&info, None)? }
