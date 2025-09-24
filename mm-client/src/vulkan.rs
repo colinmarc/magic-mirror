@@ -988,6 +988,28 @@ pub fn create_ycbcr_sampler_conversion(
     Ok(conversion)
 }
 
+pub fn get_ycbcr_conversion_properties(
+    device: vk::PhysicalDevice,
+    instance: &ash::Instance,
+    format: vk::Format
+) -> anyhow::Result<vk::SamplerYcbcrConversionImageFormatProperties> {
+    let mut ycbcr_props = vk::SamplerYcbcrConversionImageFormatProperties::builder().build();
+    let mut image_format_props2 = vk::ImageFormatProperties2::builder()
+        .push_next(&mut ycbcr_props);
+    
+    let image_format_info = vk::PhysicalDeviceImageFormatInfo2::builder()
+        .format(format)
+        .ty(vk::ImageType::TYPE_2D)
+        .tiling(vk::ImageTiling::OPTIMAL)
+        .usage(vk::ImageUsageFlags::SAMPLED);
+    
+    unsafe { 
+        instance.get_physical_device_image_format_properties2(device, &image_format_info, &mut image_format_props2)?; 
+    }
+    
+    Ok(ycbcr_props)
+}
+
 unsafe extern "system" fn vulkan_debug_utils_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     message_type: vk::DebugUtilsMessageTypeFlagsEXT,
