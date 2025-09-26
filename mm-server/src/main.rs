@@ -127,7 +127,7 @@ fn main() -> Result<()> {
         closer.send(()).ok();
     })?;
 
-    info!("listening on {:?}", srv.local_addr()?);
+    info!("listening on {:?}", srv.local_addr());
     srv.run().context("server exited")?;
 
     if let Some(dir) = &bug_report_dir {

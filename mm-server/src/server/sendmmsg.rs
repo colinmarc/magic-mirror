@@ -11,6 +11,9 @@ use nix::sys::socket::{
     SockaddrStorage,
 };
 use tracing::instrument;
+
+use crate::server::LocalSocketInfo;
+
 #[derive(Default)]
 pub struct SendMmsg<'a> {
     iovs: Vec<[IoSlice<'a>; 1]>,
@@ -31,16 +34,21 @@ impl<'a> SendMmsg<'a> {
     }
 
     #[instrument(skip_all)]
-    pub fn finish(&mut self, fd: &impl AsRawFd) -> Result<(), nix::Error> {
+    pub fn finish(&mut self, fd: &impl AsRawFd, local_addr: LocalSocketInfo) -> Result<(), nix::Error> {
         let mut data: MultiHeaders<SockaddrStorage> = MultiHeaders::preallocate(
             self.iovs.len(),
-            Some(Vec::with_capacity(cmsg_space::<u64>() * self.iovs.len())),
+            Some(Vec::with_capacity(cmsg_space::<u64>() * self.iovs.len() + cmsg_space::<libc::in6_pktinfo>())),
         );
-        let cmsgs = self
+        let mut cmsgs = self
             .txtimes
             .iter()
             .map(ControlMessage::TxTime)
             .collect::<Vec<_>>();
+
+        cmsgs.push(match &local_addr {
+            LocalSocketInfo::V4(info, _) => ControlMessage::Ipv4PacketInfo(info),
+            LocalSocketInfo::V6(info, _) => ControlMessage::Ipv6PacketInfo(info),
+        });
 
         loop {
             match nix::sys::socket::sendmmsg(

@@ -9,6 +9,7 @@ pub mod stream;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 use std::time;
 
@@ -19,6 +20,7 @@ use bytes::{Buf, Bytes, BytesMut};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use hashbrown::HashMap;
 use mm_protocol as protocol;
+use nix::sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, SockaddrStorage};
 use protocol::error::ErrorCode;
 use ring::rand::{self, SecureRandom};
 use tracing::trace;
@@ -42,6 +44,7 @@ pub struct Server {
     addr: SocketAddr,
     socket: mio::net::UdpSocket,
     scratch: BytesMut,
+    cmsg_scratch: Vec<u8>,
     outgoing_packets: VecDeque<Outgoing>,
 
     poll: mio::Poll,
@@ -58,9 +61,25 @@ pub struct Server {
     shutting_down: bool,
 }
 
+#[derive(Eq,PartialEq,Hash,Clone,Copy)]
+enum LocalSocketInfo {
+    V4(libc::in_pktinfo, u16),
+    V6(libc::in6_pktinfo, u16),
+}
+
+impl Into<SocketAddr> for LocalSocketInfo {
+    fn into(self) -> SocketAddr {
+        match self {
+            Self::V4(info, port) => SocketAddr::V4(std::net::SocketAddrV4::new(info.ipi_addr.s_addr.into(), port)),
+            Self::V6(info, port) => SocketAddr::V6(std::net::SocketAddrV6::new(info.ipi6_addr.s6_addr.into(), port, 0, 0)),
+        }
+    }
+}
+
 struct Outgoing {
     buf: Bytes,
     to: SocketAddr,
+    from: LocalSocketInfo,
 }
 
 pub struct StreamWorker {
@@ -71,6 +90,7 @@ pub struct StreamWorker {
 
 pub struct ClientConnection {
     remote_addr: SocketAddr,
+    local_socket_info: LocalSocketInfo,
     conn_id: quiche::ConnectionId<'static>,
     conn: quiche::Connection,
     timer: mio_timerfd::TimerFd,
@@ -96,6 +116,7 @@ impl Server {
         let waker = Arc::new(mio::Waker::new(poll.registry(), WAKER)?);
 
         let clients = HashMap::new();
+        let local_socket_addr = socket.local_addr()?;
 
         let mut config = match (&server_config.tls_cert, &server_config.tls_key) {
             (Some(cert), Some(key)) => {
@@ -110,13 +131,12 @@ impl Server {
                 config
             }
             _ => {
-                let addr = socket.local_addr()?;
-                let ip = addr.ip();
+                let ip = local_socket_addr.ip();
                 if ip_rfc::global(&ip) || ip.is_unspecified() {
                     bail!("TLS is required for non-private addresses");
                 }
 
-                let tls_ctx = self_signed_tls_ctx(addr)?;
+                let tls_ctx = self_signed_tls_ctx(local_socket_addr)?;
                 quiche::Config::with_boring_ssl_ctx_builder(quiche::PROTOCOL_VERSION, tls_ctx)?
             }
         };
@@ -141,6 +161,12 @@ impl Server {
 
         socket.set_nonblocking(true)?;
         sendmmsg::set_so_txtime(&socket)?;
+        if local_socket_addr.ip().is_unspecified() {
+            nix::sys::socket::setsockopt(&socket, nix::sys::socket::sockopt::Ipv4PacketInfo, &true)?;
+            if local_socket_addr.is_ipv6() {
+                nix::sys::socket::setsockopt(&socket, nix::sys::socket::sockopt::Ipv6RecvPacketInfo, &true)?;
+            }
+        }
         let mut socket = mio::net::UdpSocket::from_std(socket);
         poll.registry()
             .register(&mut socket, SOCKET, mio::Interest::READABLE)?;
@@ -150,10 +176,9 @@ impl Server {
 
         let thread_pool = threadpool::ThreadPool::new(server_config.worker_threads.get() as usize);
 
-        let addr = socket.local_addr()?;
         let mdns = if server_config.mdns {
             match mdns::MdnsService::new(
-                addr,
+                local_socket_addr,
                 server_config.mdns_hostname.as_deref(),
                 server_config.mdns_instance_name.as_deref(),
             ) {
@@ -170,9 +195,10 @@ impl Server {
         Ok(Self {
             server_config,
             quiche_config: config,
-            addr: socket.local_addr()?,
+            addr: local_socket_addr,
             socket,
             scratch: BytesMut::with_capacity(65536),
+            cmsg_scratch: vec![0;256],
             outgoing_packets,
 
             poll,
@@ -190,8 +216,8 @@ impl Server {
         })
     }
 
-    pub fn local_addr(&self) -> anyhow::Result<SocketAddr> {
-        Ok(self.socket.local_addr()?)
+    pub fn local_addr(&self) -> SocketAddr {
+        self.addr
     }
 
     pub fn closer(&self) -> WakingSender<()> {
@@ -292,15 +318,40 @@ impl Server {
             // Read incoming UDP packets and handle them.
             'read: loop {
                 self.scratch.resize(MAX_QUIC_PACKET_SIZE, 0);
-                let (len, from) = match self.socket.recv_from(&mut self.scratch) {
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                let (len, from, to) = match nix::sys::socket::recvmsg(self.socket.as_raw_fd(), &mut [std::io::IoSliceMut::new(&mut self.scratch)], Some(&mut self.cmsg_scratch), MsgFlags::empty()) {
+                    Err(e) if e == nix::Error::EAGAIN || e == nix::Error::EWOULDBLOCK => {
                         break 'read;
-                    }
-                    v => v.context("recv_from error")?,
+                    },
+                    v => v.map(|msg| {
+                        let from_addr = msg.address.and_then(|addr: SockaddrStorage| {
+                            if let Some(in6) = addr.as_sockaddr_in6() {
+                                Some(SocketAddr::V6(std::net::SocketAddrV6::new(in6.ip(), in6.port(), 0, 0)))
+                            } else if let Some(in4) = addr.as_sockaddr_in() {
+                                Some(SocketAddr::V4(std::net::SocketAddrV4::new(in4.ip(),in4.port())))
+                            } else {
+                                None
+                            }
+                        }).ok_or(anyhow!("could not retrieve address")).context("getting peer address")?;
+
+                        let mut local_addr = None;
+                        for cmsg in msg.cmsgs()? {
+                            match cmsg {
+                                ControlMessageOwned::Ipv4PacketInfo(pktinfo) => { 
+                                    local_addr = Some(LocalSocketInfo::V4(pktinfo, self.addr.port()));
+                                },
+                                ControlMessageOwned::Ipv6PacketInfo(pktinfo) => {
+                                    local_addr = Some(LocalSocketInfo::V6(pktinfo, self.addr.port()));
+                                },
+                                _ => {},
+                            }
+                        }
+
+                        Ok::<_, anyhow::Error>((msg.bytes, from_addr, local_addr))
+                    }).context("recvmsg error")??,
                 };
 
                 let pkt = self.scratch.split_to(len);
-                match self.recv(pkt, from) {
+                match self.recv(pkt, from, to) {
                     Ok(_) => {}
                     Err(e) => {
                         error!("recv failed: {:?}", e);
@@ -311,8 +362,14 @@ impl Server {
             // Write out any queued packets.
             while !self.outgoing_packets.is_empty() {
                 let pkt = self.outgoing_packets.pop_front().unwrap();
-                match self.socket.send_to(&pkt.buf, pkt.to) {
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+
+                let cmsgs = match &pkt.from {
+                    LocalSocketInfo::V4(info, _) => vec![ControlMessage::Ipv4PacketInfo(info)],
+                    LocalSocketInfo::V6(info, _) => vec![ControlMessage::Ipv6PacketInfo(info)],
+                };
+
+                match nix::sys::socket::sendmsg(self.socket.as_raw_fd(), &[std::io::IoSlice::new(&pkt.buf)], &cmsgs, MsgFlags::empty(), Some::<&SockaddrStorage>(&pkt.to.into())) {
+                    Err(e) if e == nix::Error::EAGAIN || e == nix::Error::EWOULDBLOCK => {
                         self.outgoing_packets.push_front(pkt);
                         continue 'poll;
                     }
@@ -423,7 +480,7 @@ impl Server {
             }
 
             // Generate outgoing QUIC packets.
-            let mut packets = Vec::new();
+            let mut packet_map = HashMap::new();
 
             let mut off = 0;
             for client in self.clients.values_mut() {
@@ -448,6 +505,7 @@ impl Server {
                     };
 
                     off += len;
+                    let mut packets = packet_map.entry(client.local_socket_info).or_insert(vec![]);
                     packets.push((start..(start + len), send_info.to, send_info.at));
                 }
 
@@ -456,7 +514,7 @@ impl Server {
             }
 
             // Send out the packets.
-            if !packets.is_empty() {
+            for (local_addr, packets) in packet_map {
                 let mut sendmmsg = sendmmsg::new();
                 for (range, to, txtime) in packets {
                     sendmmsg = sendmmsg.sendmsg(&self.scratch[range], to, txtime);
@@ -473,7 +531,7 @@ impl Server {
                     }
                 }
 
-                sendmmsg.finish(&self.socket)?;
+                sendmmsg.finish(&self.socket, local_addr)?;
             }
 
             #[cfg(feature = "tracy")]
@@ -482,7 +540,7 @@ impl Server {
     }
 
     /// Handles an incoming datagram.
-    fn recv(&mut self, mut pkt: BytesMut, from: SocketAddr) -> anyhow::Result<()> {
+    fn recv(&mut self, mut pkt: BytesMut, from: SocketAddr, to: Option<LocalSocketInfo>) -> anyhow::Result<()> {
         let hdr = match quiche::Header::from_slice(&mut pkt, quiche::MAX_CONN_ID_LEN) {
             Ok(v) => v,
             Err(e) => {
@@ -507,6 +565,7 @@ impl Server {
                     }
                 }
 
+                let to = to.ok_or(anyhow!("no local address found"))?;
                 if !quiche::version_is_supported(hdr.version) {
                     debug!(
                         "version {:x} is not supported; doing version negotiation",
@@ -521,13 +580,13 @@ impl Server {
                     };
 
                     self.outgoing_packets
-                        .push_back(Outgoing { buf: out, to: from });
+                        .push_back(Outgoing { buf: out, to: from, from: to });
                     return Ok(());
                 }
 
                 let conn_id = gen_random_cid();
                 let conn =
-                    quiche::accept(&conn_id, None, self.addr, from, &mut self.quiche_config)?;
+                    quiche::accept(&conn_id, None, to.into(), from, &mut self.quiche_config)?;
 
                 let mut timer = mio_timerfd::TimerFd::new(mio_timerfd::ClockId::Monotonic)?;
                 let timeout_token = mio::Token(self.next_timer_token);
@@ -545,6 +604,7 @@ impl Server {
 
                 let c = ClientConnection {
                     remote_addr: from,
+                    local_socket_info: to,
                     conn_id: conn_id.clone(),
                     conn,
                     timer,
@@ -568,7 +628,7 @@ impl Server {
             &mut pkt,
             quiche::RecvInfo {
                 from,
-                to: self.addr,
+                to: client.local_socket_info.into(),
             },
         )?;
 
