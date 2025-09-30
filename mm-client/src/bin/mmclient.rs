@@ -568,13 +568,17 @@ impl AttachmentWindow {
                     }
                 }
                 LockPointer(x, y) => {
-                    debug!(x, y, "cursor locked");
+                    debug!(x, y, "Locking cursor.");
 
                     // On most platforms, we have to lock the cursor before we
                     // warp it. On mac, it's the other way around.
                     #[cfg(not(target_vendor = "apple"))]
                     self.window
-                        .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
+                        .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                        .or_else(|_| { 
+                            debug!("Could not lock cursor. Falling back to confining cursor.");
+                            self.window.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                        })?;
 
                     if let Some(aspect) = self.renderer.get_texture_aspect() {
                         let width = self.attachment_config.width;
@@ -595,7 +599,7 @@ impl AttachmentWindow {
                         let pos: winit::dpi::PhysicalPosition<f64> = (x, y).into();
                         self.window.set_cursor_position(pos)?;
                     }
-
+                    
                     #[cfg(target_vendor = "apple")]
                     self.window
                         .set_cursor_grab(winit::window::CursorGrabMode::Locked)?;
