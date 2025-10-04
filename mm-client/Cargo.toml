@@ -21,7 +21,7 @@ ash = "0.38"
 ash-window = "0.13.0"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
-cpal = "0.15"
+cpal = { git = "https://github.com/colinmarc/cpal", branch = "pulse", version = "0.16.0", features = ["pulseaudio"] }
 crossbeam-channel = "0.5"
 cstr = "0.2"
 ffmpeg-next = "7"
