@@ -1,3 +1,9 @@
+## [mmclient-v0.7.1] - 2025-10-04
+
+### Bugfixes
+
+- Correctly size descriptor pool (a70b6f95df4857b2c63a9891d49a7a692e0969e6)
+
 ## [mmserver-v0.8.4] - 2025-05-21
 
 ### Bugfixes
