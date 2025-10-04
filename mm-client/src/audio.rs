@@ -358,7 +358,12 @@ fn select_conf(
         let buffer_size = match conf_range.buffer_size() {
             cpal::SupportedBufferSize::Unknown => cpal::BufferSize::Default,
             cpal::SupportedBufferSize::Range { min, .. } => {
-                cpal::BufferSize::Fixed(std::cmp::max(*min, sample_rate / 100))
+                let size = std::cmp::max(*min, sample_rate / 100);
+                let mut buffer_size = 2;
+                while buffer_size < size {
+                    buffer_size *= 2;
+                }
+                cpal::BufferSize::Fixed(buffer_size)
             }
         };
 
