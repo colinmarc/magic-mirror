@@ -126,7 +126,7 @@ impl Renderer {
         let mut imgui = imgui::Context::create();
         imgui.set_ini_filename(None);
 
-        let mut imgui_platform = imgui_winit_support::WinitPlatform::init(&mut imgui);
+        let mut imgui_platform = imgui_winit_support::WinitPlatform::new(&mut imgui);
         imgui_platform.attach_window(
             imgui.io_mut(),
             &window,
@@ -216,7 +216,7 @@ impl Renderer {
             );
         }
 
-        let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+        let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
             .surface(self.vk.surface)
             .min_image_count(desired_image_count)
             .image_color_space(surface_format.color_space)
@@ -259,11 +259,10 @@ impl Renderer {
             create_ycbcr_sampler_conversion(device, video_texture_format, &video_params)?;
 
         let sampler = {
-            let mut conversion_info = vk::SamplerYcbcrConversionInfo::builder()
-                .conversion(sampler_conversion)
-                .build();
+            let mut conversion_info =
+                vk::SamplerYcbcrConversionInfo::default().conversion(sampler_conversion);
 
-            let create_info = vk::SamplerCreateInfo::builder()
+            let create_info = vk::SamplerCreateInfo::default()
                 .mag_filter(vk::Filter::LINEAR)
                 .min_filter(vk::Filter::LINEAR)
                 .compare_enable(true)
@@ -303,39 +302,40 @@ impl Renderer {
             // We're required to use an immutable sampler for YCbCr conversion
             // by the vulkan spec.
             let samplers = [sampler];
-            let binding = vk::DescriptorSetLayoutBinding::builder()
+            let binding = vk::DescriptorSetLayoutBinding::default()
                 .binding(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                 .immutable_samplers(&samplers);
 
-            let bindings = [binding.build()];
-            let create_info = vk::DescriptorSetLayoutCreateInfo::builder().bindings(&bindings);
-            unsafe { device.create_descriptor_set_layout(&create_info, None)? }
+            unsafe {
+                device.create_descriptor_set_layout(
+                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&[binding]),
+                    None,
+                )?
+            }
         };
 
         let descriptor_pool = {
-            let sampler_size = vk::DescriptorPoolSize::builder()
+            let sampler_sizes = [vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(swapchain_images.len() as u32);
+                .descriptor_count(swapchain_images.len() as u32)];
 
-            let pool_sizes = &[sampler_size.build()];
-            let info = vk::DescriptorPoolCreateInfo::builder()
-                .pool_sizes(pool_sizes)
+            let info = vk::DescriptorPoolCreateInfo::default()
+                .pool_sizes(&sampler_sizes)
                 .max_sets(swapchain_images.len() as u32);
 
             unsafe { device.create_descriptor_pool(&info, None)? }
         };
 
         let pipeline_layout = {
-            let pc_ranges = [vk::PushConstantRange::builder()
+            let pc_ranges = [vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
-                .size(std::mem::size_of::<PushConstants>() as u32)
-                .build()];
+                .size(std::mem::size_of::<PushConstants>() as u32)];
             let set_layouts = [descriptor_set_layout];
-            let create_info = vk::PipelineLayoutCreateInfo::builder()
+            let create_info = vk::PipelineLayoutCreateInfo::default()
                 .set_layouts(&set_layouts)
                 .push_constant_ranges(&pc_ranges);
 
@@ -348,42 +348,40 @@ impl Renderer {
             let vert_shader = load_shader(device, vert_bytes).context("loading vert.spv")?;
             let frag_shader = load_shader(device, frag_bytes).context("loading frag.spv")?;
 
-            let vert_stage = vk::PipelineShaderStageCreateInfo::builder()
+            let vert_stage = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::VERTEX)
                 .module(vert_shader)
                 .name(cstr!("main"));
 
-            let frag_stage = vk::PipelineShaderStageCreateInfo::builder()
+            let frag_stage = vk::PipelineShaderStageCreateInfo::default()
                 .stage(vk::ShaderStageFlags::FRAGMENT)
                 .module(frag_shader)
                 .name(cstr!("main"));
 
-            let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::builder();
+            let vertex_input_state = vk::PipelineVertexInputStateCreateInfo::default();
 
-            let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
+            let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::default()
                 .topology(vk::PrimitiveTopology::TRIANGLE_STRIP)
                 .primitive_restart_enable(false);
 
-            let viewport = vk::Viewport::builder()
+            let viewport = [vk::Viewport::default()
                 .x(0.0)
                 .y(0.0)
                 .width(self.width as f32)
                 .height(self.height as f32)
                 .min_depth(0.0)
-                .max_depth(1.0);
+                .max_depth(1.0)];
 
-            let scissor = vk::Rect2D::builder().extent(vk::Extent2D {
+            let scissor = [vk::Rect2D::default().extent(vk::Extent2D {
                 width: self.width,
                 height: self.height,
-            });
+            })];
 
-            let viewports = [viewport.build()];
-            let scissors = [scissor.build()];
-            let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
-                .viewports(&viewports)
-                .scissors(&scissors);
+            let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+                .viewports(&viewport)
+                .scissors(&scissor);
 
-            let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
+            let rasterization_state = vk::PipelineRasterizationStateCreateInfo::default()
                 .depth_clamp_enable(false)
                 .rasterizer_discard_enable(false)
                 .polygon_mode(vk::PolygonMode::FILL)
@@ -393,11 +391,11 @@ impl Renderer {
                 .cull_mode(vk::CullModeFlags::FRONT)
                 .front_face(vk::FrontFace::COUNTER_CLOCKWISE);
 
-            let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
+            let multisample_state = vk::PipelineMultisampleStateCreateInfo::default()
                 .sample_shading_enable(false)
                 .rasterization_samples(vk::SampleCountFlags::TYPE_1);
 
-            let attachment = vk::PipelineColorBlendAttachmentState::builder()
+            let attachment = [vk::PipelineColorBlendAttachmentState::default()
                 .color_write_mask(vk::ColorComponentFlags::RGBA)
                 .blend_enable(true)
                 .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
@@ -405,20 +403,18 @@ impl Renderer {
                 .color_blend_op(vk::BlendOp::ADD)
                 .src_alpha_blend_factor(vk::BlendFactor::ONE)
                 .dst_alpha_blend_factor(vk::BlendFactor::ZERO)
-                .alpha_blend_op(vk::BlendOp::ADD);
+                .alpha_blend_op(vk::BlendOp::ADD)];
 
-            let attachments = [attachment.build()];
-            let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
+            let color_blend_state = vk::PipelineColorBlendStateCreateInfo::default()
                 .logic_op_enable(false)
-                .attachments(&attachments);
+                .attachments(&attachment);
 
             let formats = [surface_format.format];
-            let mut pipeline_rendering = vk::PipelineRenderingCreateInfo::builder()
-                .color_attachment_formats(&formats)
-                .build();
+            let mut pipeline_rendering =
+                vk::PipelineRenderingCreateInfo::default().color_attachment_formats(&formats);
 
-            let stages = [vert_stage.build(), frag_stage.build()];
-            let create_info = vk::GraphicsPipelineCreateInfo::builder()
+            let stages = [vert_stage, frag_stage];
+            let create_info = vk::GraphicsPipelineCreateInfo::default()
                 .stages(&stages)
                 .vertex_input_state(&vertex_input_state)
                 .input_assembly_state(&input_assembly_state)
@@ -432,7 +428,7 @@ impl Renderer {
             unsafe {
                 let pipeline = match device.create_graphics_pipelines(
                     vk::PipelineCache::null(),
-                    &[create_info.build()],
+                    &[create_info],
                     None,
                 ) {
                     Ok(pipelines) => Ok(pipelines[0]),
@@ -447,7 +443,7 @@ impl Renderer {
 
         let create_frame = || -> Result<InFlightFrame> {
             let render_cb = {
-                let create_info = vk::CommandBufferAllocateInfo::builder()
+                let create_info = vk::CommandBufferAllocateInfo::default()
                     .level(vk::CommandBufferLevel::PRIMARY)
                     .command_pool(self.vk.present_queue.command_pool)
                     .command_buffer_count(1);
@@ -461,7 +457,7 @@ impl Renderer {
 
             let descriptor_set = {
                 let layouts = &[descriptor_set_layout];
-                let create_info = vk::DescriptorSetAllocateInfo::builder()
+                let create_info = vk::DescriptorSetAllocateInfo::default()
                     .descriptor_pool(descriptor_pool)
                     .set_layouts(layouts);
 
@@ -472,19 +468,18 @@ impl Renderer {
 
                 // TODO: do the write in bind_video_texture?
                 if let Some(tex) = bound_video_texture.as_ref() {
-                    let info = vk::DescriptorImageInfo::builder()
+                    let info = [vk::DescriptorImageInfo::default()
                         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                        .image_view(tex.view);
+                        .image_view(tex.view)];
 
-                    let image_info = &[info.build()];
-                    let sampler_write = vk::WriteDescriptorSet::builder()
+                    let sampler_write = vk::WriteDescriptorSet::default()
                         .dst_set(ds)
                         .dst_binding(0)
                         .dst_array_element(0)
                         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .image_info(image_info);
+                        .image_info(&info);
 
-                    device.update_descriptor_sets(&[sampler_write.build()], &[]);
+                    device.update_descriptor_sets(&[sampler_write], &[]);
                 }
 
                 ds
@@ -708,7 +703,7 @@ impl Renderer {
 
         // Begin the command buffer.
         {
-            let begin_info = vk::CommandBufferBeginInfo::builder()
+            let begin_info = vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
 
             device.begin_command_buffer(frame.render_cb, &begin_info)?;
@@ -738,12 +733,10 @@ impl Renderer {
 
         // Begin rendering.
         {
-            let rect: vk::Rect2D = vk::Rect2D::builder()
-                .extent(vk::Extent2D {
-                    width: self.width,
-                    height: self.height,
-                })
-                .build();
+            let rect: vk::Rect2D = vk::Rect2D::default().extent(vk::Extent2D {
+                width: self.width,
+                height: self.height,
+            });
 
             let clear_value = vk::ClearValue {
                 color: vk::ClearColorValue {
@@ -751,16 +744,15 @@ impl Renderer {
                 },
             };
 
-            let color_attachment = vk::RenderingAttachmentInfo::builder()
+            let color_attachment = vk::RenderingAttachmentInfo::default()
                 .image_view(present_image.view)
                 .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .load_op(vk::AttachmentLoadOp::CLEAR)
                 .store_op(vk::AttachmentStoreOp::STORE)
-                .clear_value(clear_value)
-                .build();
+                .clear_value(clear_value);
 
             let color_attachments = [color_attachment];
-            let rendering_info = vk::RenderingInfo::builder()
+            let rendering_info = vk::RenderingInfo::default()
                 .render_area(rect)
                 .color_attachments(&color_attachments)
                 .layer_count(1);
@@ -871,7 +863,7 @@ impl Renderer {
             let wait_semas = [frame.image_acquired_sema];
             let signal_semas = [frame.render_complete_sema];
             let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
-            let submit_info = vk::SubmitInfo::builder()
+            let submit_info = vk::SubmitInfo::default()
                 .command_buffers(&cbs)
                 .wait_semaphores(&wait_semas)
                 .wait_dst_stage_mask(&wait_stages)
@@ -879,8 +871,7 @@ impl Renderer {
 
             trace!(queue = ?present_queue, "queue submit for render");
 
-            let submits = [submit_info.build()];
-            device.queue_submit(present_queue, &submits, frame.render_fence)?;
+            device.queue_submit(present_queue, &[submit_info], frame.render_fence)?;
 
             // This "helps winit [with stuff]". It also seems to increase latency.
             self.window.pre_present_notify();
@@ -890,7 +881,7 @@ impl Renderer {
             let wait_semas = [frame.render_complete_sema];
             let swapchains = [swapchain.swapchain];
             let image_indices = [swapchain_index];
-            let present_info = vk::PresentInfoKHR::builder()
+            let present_info = vk::PresentInfoKHR::default()
                 .wait_semaphores(&wait_semas)
                 .swapchains(&swapchains)
                 .image_indices(&image_indices);

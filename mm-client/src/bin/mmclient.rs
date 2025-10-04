@@ -897,10 +897,12 @@ fn init_window(
     };
 
     let window = Arc::new(event_loop.create_window(window_attr)?);
-    let vk = Arc::new(vulkan::VkContext::new(
-        window.clone(),
-        cfg!(debug_assertions),
-    )?);
+    let vk = unsafe {
+        Arc::new(vulkan::VkContext::new(
+            window.clone(),
+            cfg!(debug_assertions),
+        )?)
+    };
 
     let renderer = Renderer::new(vk.clone(), window.clone(), args.hdr)?;
 

@@ -341,7 +341,7 @@ impl LatencyTest {
 
         // Begin the command buffer.
         {
-            let begin_info = vk::CommandBufferBeginInfo::builder()
+            let begin_info = vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
 
             device.begin_command_buffer(self.copy_cb, &begin_info)?;
@@ -362,7 +362,7 @@ impl LatencyTest {
 
         // Copy the texture to the staging buffer.
         {
-            let region = vk::BufferImageCopy::builder()
+            let region = vk::BufferImageCopy::default()
                 .buffer_row_length(256)
                 .buffer_image_height(256)
                 .image_subresource(vk::ImageSubresourceLayers {
@@ -375,8 +375,7 @@ impl LatencyTest {
                     width: 256,
                     height: 256,
                     depth: 1,
-                })
-                .build();
+                });
 
             let regions = [region];
             device.cmd_copy_image_to_buffer(
@@ -390,12 +389,12 @@ impl LatencyTest {
 
         device.end_command_buffer(self.copy_cb)?;
 
-        let submit_info = vk::SubmitInfo::builder()
-            .command_buffers(&[self.copy_cb])
-            .build();
-
         device.reset_fences(&[self.copy_fence])?;
-        device.queue_submit(self.vk.present_queue.queue, &[submit_info], self.copy_fence)?;
+        device.queue_submit(
+            self.vk.present_queue.queue,
+            &[vk::SubmitInfo::default().command_buffers(&[self.copy_cb])],
+            self.copy_fence,
+        )?;
         device.wait_for_fences(&[self.copy_fence], true, u64::MAX)?;
         Ok(())
     }
@@ -410,7 +409,7 @@ fn start_test(
     let attr = winit::window::Window::default_attributes().with_visible(false);
 
     let window = Arc::new(event_loop.create_window(attr)?);
-    let vk = Arc::new(VkContext::new(window.clone(), cfg!(debug_assertions))?);
+    let vk = unsafe { Arc::new(VkContext::new(window.clone(), cfg!(debug_assertions))?) };
 
     let codec = match args.codec.as_deref() {
         Some("h264") => protocol::VideoCodec::H264,

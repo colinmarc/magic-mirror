@@ -765,7 +765,7 @@ impl CPUDecoder {
         // The command buffer was prerecorded, so we can directly submit it.
         {
             let cbs = [self.upload_cb];
-            let submit_info = vk::SubmitInfo::builder().command_buffers(&cbs).build();
+            let submit_info = vk::SubmitInfo::default().command_buffers(&cbs);
 
             self.vk.device.reset_fences(&[self.upload_fence])?;
 
@@ -790,7 +790,7 @@ impl CPUDecoder {
 
         // Begin the command buffer.
         {
-            let begin_info = vk::CommandBufferBeginInfo::builder()
+            let begin_info = vk::CommandBufferBeginInfo::default()
                 .flags(vk::CommandBufferUsageFlags::SIMULTANEOUS_USE);
 
             device.begin_command_buffer(self.upload_cb, &begin_info)?;
@@ -863,7 +863,7 @@ impl CPUDecoder {
                     _ => unreachable!(),
                 };
 
-                vk::BufferImageCopy::builder()
+                vk::BufferImageCopy::default()
                     .buffer_offset(self.yuv_buffer_offsets[plane] as u64)
                     .buffer_row_length((self.yuv_buffer_strides[plane] / texel_width) as u32) // In texels.
                     .image_subresource(vk::ImageSubresourceLayers {
@@ -877,7 +877,6 @@ impl CPUDecoder {
                         height,
                         depth: 1,
                     })
-                    .build()
             })
             .collect::<Vec<_>>();
 
