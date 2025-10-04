@@ -5,7 +5,6 @@
 mod wl_buffer;
 mod wl_compositor;
 mod wl_data_device_manager;
-mod wl_drm;
 mod wl_output;
 mod wl_seat;
 mod wl_shm;
