@@ -297,7 +297,7 @@ fn girls_axis_to_proto(axis: gilrs::Axis) -> Option<GamepadAxis> {
         gilrs::Axis::LeftStickY => GamepadAxis::LeftY,
         gilrs::Axis::RightStickX => GamepadAxis::RightX,
         gilrs::Axis::RightStickY => GamepadAxis::RightY,
-        gilrs::Axis::LeftZ => GamepadAxis::RightTrigger,
+        gilrs::Axis::LeftZ => GamepadAxis::LeftTrigger,
         gilrs::Axis::RightZ => GamepadAxis::RightTrigger,
         _ => return None,
     };
