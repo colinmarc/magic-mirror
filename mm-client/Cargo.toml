@@ -24,8 +24,8 @@ clap = { version = "4", features = ["derive"] }
 cpal = "0.15"
 crossbeam-channel = "0.5"
 cstr = "0.2"
-ffmpeg-next = "7"
-ffmpeg-sys-next = "7"
+ffmpeg-next = "7.1"
+ffmpeg-sys-next = "7.1.3"
 font-kit = "0.11"
 gilrs = "0.10"
 glam = "0.26"
@@ -77,3 +77,26 @@ features = ["from-source"]
 default = []
 moltenvk_static = ["dep:ash-molten"]
 tracy = ["tracy-client/enable"]
+ffmpeg_build_licensed = [
+    "ffmpeg_build",
+    "ffmpeg-sys-next/build-license-nonfree",
+    "ffmpeg-sys-next/build-license-gpl",
+    "ffmpeg-sys-next/build-lib-x265",
+    "ffmpeg-sys-next/build-lib-x264",
+    "ffmpeg-sys-next/build-lib-xvid"
+]
+ffmpeg_build = [
+    "ffmpeg-next/build",
+    "ffmpeg-sys-next/build",
+    "ffmpeg-sys-next/build-vulkan",
+    "ffmpeg-sys-next/build-drm",
+    "ffmpeg-sys-next/build-lib-webp",
+    "ffmpeg-sys-next/build-lib-vpx",
+    "ffmpeg-sys-next/build-lib-dxva2",
+    "ffmpeg-sys-next/build-lib-dav1d",
+    "ffmpeg-sys-next/build-mediacodec",
+    "ffmpeg-sys-next/build-vaapi",
+    "ffmpeg-sys-next/build-videotoolbox",
+    "ffmpeg-sys-next/build-pic",
+]
+ffmpeg_static = ["ffmpeg-next/static", "ffmpeg-sys-next/static"]
